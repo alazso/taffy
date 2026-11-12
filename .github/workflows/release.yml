@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build only; do not publish
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & Publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          GRADLE_VERSION="$(sed -n 's/^version=//p' gradle.properties | tr -d '[:space:]')"
+          if [ -z "$GRADLE_VERSION" ]; then
+            echo "Could not read version from gradle.properties" >&2
+            exit 1
+          fi
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG="${GITHUB_REF_NAME}"
+            TAG_VERSION="${TAG#v}"
+            if [ "$TAG_VERSION" != "$GRADLE_VERSION" ]; then
+              echo "Tag $TAG (${TAG_VERSION}) does not match gradle.properties (${GRADLE_VERSION})" >&2
+              exit 1
+            fi
+          else
+            TAG="v${GRADLE_VERSION}"
+          fi
+          echo "version=${GRADLE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if release already published
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Release already published; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK 25
+        if: steps.published.outputs.skip != 'true'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        if: steps.published.outputs.skip != 'true'
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build
+        if: steps.published.outputs.skip != 'true'
+        run: ./gradlew build --no-configuration-cache --stacktrace
+
+      # The GitHub Release is created last, so a failed Maven publish leaves the tag retryable.
+      - name: Publish to repo.alaz.so
+        if: steps.published.outputs.skip != 'true' && (github.event_name == 'push' || inputs.dry_run != true)
+        env:
+          ALAZSO_REPO_USER: ${{ secrets.ALAZSO_REPO_USER }}
+          ALAZSO_REPO_TOKEN: ${{ secrets.ALAZSO_REPO_TOKEN }}
+        run: ./gradlew publishAllPublicationsToAlazsoRepository --no-configuration-cache --stacktrace
+
+      - name: Publish GitHub Release
+        if: steps.published.outputs.skip != 'true' && (github.event_name == 'push' || inputs.dry_run != true)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
+
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" {f=1; next}
+            /^## \[/ {f=0}
+            f
+          ' CHANGELOG.md > release-notes.md || true
+
+          if [ -s release-notes.md ]; then
+            gh release create "$TAG" --title "v${VERSION}" --notes-file release-notes.md
+          else
+            gh release create "$TAG" --title "v${VERSION}" --generate-notes
+          fi
