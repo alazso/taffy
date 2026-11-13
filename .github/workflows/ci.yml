@@ -15,17 +15,24 @@ concurrency:
 
 jobs:
   build:
-    name: Build & Test (Java 25)
+    name: Build & Test (Gradle on Java ${{ matrix.daemon }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        daemon: [ "17", "25" ]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up JDK 25
+      # The last listed version becomes JAVA_HOME and runs Gradle; 25 stays installed as the compile toolchain.
+      - name: Set up JDK 25 and the Gradle JDK
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: "25"
+          java-version: |
+            25
+            ${{ matrix.daemon }}
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -37,7 +44,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-reports
+          name: test-reports-java-${{ matrix.daemon }}
           path: |
             **/build/reports/tests/**
+            **/build/reports/jacoco/**
           if-no-files-found: ignore

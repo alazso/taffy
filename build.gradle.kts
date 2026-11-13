@@ -2,38 +2,32 @@ plugins {
     base
 }
 
-subprojects {
-    plugins.withId("maven-publish") {
-        configure<PublishingExtension> {
-            repositories {
-                maven {
-                    name = "alazso"
-                    val isRelease = !project.version.toString().endsWith("-SNAPSHOT")
-                    url = uri(
-                        if (isRelease) "https://repo.alaz.so/releases"
-                        else "https://repo.alaz.so/snapshots"
-                    )
-                    credentials {
-                        username = System.getenv("ALAZSO_REPO_USER")
-                        password = System.getenv("ALAZSO_REPO_TOKEN")
-                    }
-                }
-                maven {
-                    name = "test"
-                    url = uri(rootProject.layout.buildDirectory.dir("test-repo"))
-                }
-            }
-            publications.withType<MavenPublication>().configureEach {
-                pom {
-                    url.set("https://github.com/alazso/taffy-api")
-                    licenses {
-                        license {
-                            name.set("MIT License")
-                            url.set("https://opensource.org/licenses/MIT")
-                        }
-                    }
-                }
-            }
-        }
-    }
+// The convention plugins and the catalog are built by the included build; these tasks carry the root lifecycle to it.
+// clean is not forwarded: Gradle cannot clean a plugin build in the invocation that loads plugins from it.
+val tooling: IncludedBuild = gradle.includedBuild("tooling")
+
+tasks.named("assemble") {
+    dependsOn(tooling.task(":taffy-gradle:assemble"), tooling.task(":taffy-catalog:generateCatalogAsToml"))
+}
+
+tasks.named("check") {
+    dependsOn(tooling.task(":taffy-gradle:check"))
+}
+
+tasks.register("publishAllPublicationsToAlazsoRepository") {
+    group = "publishing"
+    description = "Publishes the convention plugins and the catalog to repo.alaz.so."
+    dependsOn(
+        tooling.task(":taffy-gradle:publishAllPublicationsToAlazsoRepository"),
+        tooling.task(":taffy-catalog:publishAllPublicationsToAlazsoRepository"),
+    )
+}
+
+tasks.register("publishToMavenLocal") {
+    group = "publishing"
+    description = "Publishes the convention plugins and the catalog to the local Maven repository."
+    dependsOn(
+        tooling.task(":taffy-gradle:publishToMavenLocal"),
+        tooling.task(":taffy-catalog:publishToMavenLocal"),
+    )
 }

@@ -1,4 +1,5 @@
 plugins {
+    base
     `version-catalog`
     `maven-publish`
 }
@@ -7,7 +8,7 @@ description = "Version catalog shared by the so.alaz plugins"
 
 catalog {
     versionCatalog {
-        from(files(rootProject.layout.projectDirectory.file("gradle/libs.versions.toml")))
+        from(files(rootProject.layout.projectDirectory.file("../gradle/libs.versions.toml")))
     }
 }
 

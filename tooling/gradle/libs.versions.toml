@@ -1,0 +1,12 @@
+# Dependencies of the convention plugins themselves. The catalog published to plugins is ../gradle/libs.versions.toml.
+
+[versions]
+shadow = "9.6.1"
+foojay = "1.0.0"
+
+[libraries]
+shadow-gradle-plugin = { module = "com.gradleup.shadow:shadow-gradle-plugin", version.ref = "shadow" }
+foojay-resolver      = { module = "org.gradle.toolchains:foojay-resolver",    version.ref = "foojay" }
+
+[plugins]
+foojay = { id = "org.gradle.toolchains.foojay-resolver-convention", version.ref = "foojay" }

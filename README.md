@@ -49,8 +49,11 @@ dependencies {
     testRuntimeOnly(alaz.junit.platform.launcher)
 }
 
+coverage {
+    exclusions.addAll("**/command/**", "**/hook/**")
+}
+
 paperPlugin {
-    coverageExclusions.addAll("**/command/**", "**/hook/**")
     runtimeLibrary(alaz.hikari)
     runtimeLibrary(alaz.sqlite.jdbc)
 }
@@ -66,31 +69,48 @@ plugins {
 description = "MyPlugin public API"
 ```
 
+Gradle itself can run on Java 17 or newer. The Java 25 toolchain the plugins compile with is downloaded when
+it is not installed.
+
+To try an unpublished build, run `./gradlew publishToMavenLocal` here and add `mavenLocal()` to both
+`pluginManagement.repositories` and `dependencyResolutionManagement.repositories` in the plugin's
+`settings.gradle.kts`.
+
 <br>
 
 ## Modules
 
 | Module | What it provides |
 |---|---|
-| `taffy-gradle` | The `so.alaz.settings`, `so.alaz.paper-plugin` and `so.alaz.paper-api` Gradle plugins. |
-| `taffy-catalog` | The version catalog, built from [`gradle/libs.versions.toml`](gradle/libs.versions.toml). |
+| [`tooling/taffy-gradle`](tooling/taffy-gradle) | The Gradle plugins listed below, published as `so.alaz.taffy:taffy-gradle`. |
+| [`tooling/taffy-catalog`](tooling/taffy-catalog) | The version catalog, built from [`gradle/libs.versions.toml`](gradle/libs.versions.toml). |
 
-**`so.alaz.settings`** applies the foojay toolchain resolver, declares the Paper, repo.alaz.so and
-integration repositories, and creates the `alaz` catalog at the same version as the plugin.
+`tooling` is an included build, so the modules of this repository apply the same plugins they publish.
+`./gradlew clean` does not reach it; `./gradlew -p tooling clean` does.
 
-**`so.alaz.paper-plugin`** applies `java-library`, `jacoco` and Shadow, then configures:
+| Plugin | Applied in | What it does |
+|---|---|---|
+| `so.alaz.settings` | `settings.gradle.kts` | `so.alaz.repositories` plus the `alaz` catalog at the same version as the plugin. |
+| `so.alaz.repositories` | `settings.gradle.kts` | The foojay toolchain resolver and the Paper, repo.alaz.so and integration repositories. |
+| `so.alaz.paper-plugin` | a plugin module | `so.alaz.coverage` plus the shaded plugin jar. |
+| `so.alaz.paper-api` | a published API module | `so.alaz.java` plus sources and javadoc jars and the `library` publication. |
+| `so.alaz.library` | a tested library module | `so.alaz.paper-api` plus `so.alaz.coverage`. |
+| `so.alaz.coverage` | any Java module | `so.alaz.java` plus a JaCoCo report and an instruction coverage gate on `check`. |
+| `so.alaz.java` | any Java module | The Java 25 toolchain, UTF-8, the compiler lint flags, JUnit Platform and `LICENSE` in `META-INF`. |
 
-- the Java 25 toolchain, UTF-8 and the compiler lint flags,
-- JUnit Platform tests with a JaCoCo report and an instruction coverage gate on `check`
-  (`paperPlugin.coverageMinimum`, default 0.80, minus `paperPlugin.coverageExclusions`),
-- `${version}` expansion in `paper-plugin.yml` and `LICENSE` in `META-INF`,
+**`so.alaz.coverage`** reads `coverage.minimum` (default 0.80) and leaves out the class files matched by
+`coverage.exclusions`. `check` fails when the module has classes under the gate and no test ran.
+
+**`so.alaz.paper-plugin`** adds:
+
+- `${version}` expansion in `paper-plugin.yml`,
 - one shadow jar with no classifier and the plain `jar` disabled,
 - relocation of `org.bstats`, `dev.faststats` and `so.alaz.taffy` to `<group>.libs.*`,
 - `RuntimeLibraries.COORDINATES` in the `<group>` package when `paperPlugin.runtimeLibraries` is not empty.
 
-**`so.alaz.paper-api`** applies `java-library` and `maven-publish`, adds sources and javadoc jars, and
-creates the `library` publication as `<group>:<module name>` with the `alazso` repository
-(`ALAZSO_REPO_USER`, `ALAZSO_REPO_TOKEN`).
+**`so.alaz.paper-api`** creates the `library` publication as `<group>:<module name>` with the `alazso` repository
+(`ALAZSO_REPO_USER`, `ALAZSO_REPO_TOKEN`). The POM url is `https://github.com/alazso/<root project name>`
+unless the Gradle property `alaz.repositoryUrl` is set.
 
 <br>
 

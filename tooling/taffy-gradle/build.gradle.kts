@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     `kotlin-dsl`
     `maven-publish`
@@ -5,8 +7,17 @@ plugins {
 
 description = "Gradle convention plugins shared by the so.alaz plugins"
 
+// Gradle loads these plugins into its own JVM, which may be older than the Java 25 toolchain the plugins configure.
 kotlin {
     jvmToolchain(25)
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+        freeCompilerArgs.add("-Xjdk-release=17")
+    }
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.release.set(17)
 }
 
 dependencies {
@@ -14,9 +25,9 @@ dependencies {
     implementation(libs.foojay.resolver)
 
     testImplementation(gradleTestKit())
-    testImplementation(libs.junit.jupiter)
-    testImplementation(libs.assertj.core)
-    testRuntimeOnly(libs.junit.platform.launcher)
+    testImplementation(alaz.junit.jupiter)
+    testImplementation(alaz.assertj.core)
+    testRuntimeOnly(alaz.junit.platform.launcher)
 }
 
 val generatedSourcesDirectory: Provider<Directory> =
@@ -48,7 +59,7 @@ kotlin.sourceSets.named("main") {
 }
 
 tasks.withType<Jar>().configureEach {
-    from(rootProject.layout.projectDirectory.file("LICENSE")) {
+    from(rootProject.layout.projectDirectory.file("../LICENSE")) {
         into("META-INF")
     }
 }
@@ -61,8 +72,12 @@ tasks.withType<Test>().configureEach {
         events("passed", "skipped", "failed")
     }
     dependsOn(":taffy-catalog:publishCatalogPublicationToTestRepository")
-    systemProperty("taffy.testRepository", testRepository.get().asFile.toURI().toString())
-    systemProperty("taffy.version", project.version.toString())
+    inputs.file(rootProject.layout.projectDirectory.file("../gradle/libs.versions.toml"))
+        .withPropertyName("publishedCatalog").withPathSensitivity(PathSensitivity.NONE)
+    inputs.file(rootProject.layout.projectDirectory.file("taffy-catalog/build.gradle.kts"))
+        .withPropertyName("catalogBuildScript").withPathSensitivity(PathSensitivity.NONE)
+    val repositoryUri = testRepository.map { it.asFile.toURI().toString().trimEnd('/') + "/" }
+    jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dtaffy.testRepository=" + repositoryUri.get()) })
 }
 
 publishing {

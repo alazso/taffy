@@ -1,8 +1,6 @@
 # Published as so.alaz.taffy:taffy-catalog and consumed by plugins as the `alaz` catalog.
 
 [versions]
-shadow           = "9.6.1"
-foojay           = "1.0.0"
 paper            = "26.1.2.build.66-stable"
 annotations      = "26.1.0"
 placeholderapi   = "2.12.3"
@@ -63,10 +61,3 @@ testcontainers-junit      = { module = "org.testcontainers:junit-jupiter",      
 testcontainers-mysql      = { module = "org.testcontainers:mysql",                         version.ref = "testcontainers" }
 testcontainers-mariadb    = { module = "org.testcontainers:mariadb",                       version.ref = "testcontainers" }
 testcontainers-postgresql = { module = "org.testcontainers:postgresql",                    version.ref = "testcontainers" }
-# Plugin artifacts the convention plugins are compiled against.
-shadow-gradle-plugin      = { module = "com.gradleup.shadow:shadow-gradle-plugin",         version.ref = "shadow" }
-foojay-resolver           = { module = "org.gradle.toolchains:foojay-resolver",            version.ref = "foojay" }
-
-[plugins]
-shadow  = { id = "com.gradleup.shadow",                              version.ref = "shadow" }
-foojay  = { id = "org.gradle.toolchains.foojay-resolver-convention", version.ref = "foojay" }

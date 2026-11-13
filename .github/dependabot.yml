@@ -38,6 +38,7 @@ updates:
     open-pull-requests-limit: 10
     ignore:
       - dependency-name: "io.papermc.paper:paper-api"
+      - dependency-name: "org.gradle.toolchains.foojay-resolver-convention"
       - dependency-name: "com.sk89q.worldedit:*"
       - dependency-name: "org.mariadb.jdbc:mariadb-java-client"
         update-types: ["version-update:semver-major"]
@@ -69,6 +70,14 @@ updates:
           - "org.assertj:*"
           - "org.mockito:*"
           - "org.testcontainers:*"
+
+  - package-ecosystem: gradle
+    directory: /tooling
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: "com.gradleup.shadow:*"
+      - dependency-name: "org.gradle.toolchains*"
 
   - package-ecosystem: github-actions
     directory: /
