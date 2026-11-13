@@ -6,6 +6,7 @@ All notable changes to Taffy are documented here. This project follows
 ## [Unreleased]
 
 ### Added
+- `taffy-platform` module with `TaskGate`, `PendingSettlements` and `CooldownManager`.
 - `so.alaz.settings` settings plugin: applies `so.alaz.repositories` and exposes the shared version
   catalog as `alaz`.
 - `so.alaz.repositories` settings plugin: applies the Java toolchain resolver and declares every

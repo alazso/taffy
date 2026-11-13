@@ -82,11 +82,15 @@ To try an unpublished build, run `./gradlew publishToMavenLocal` here and add `m
 
 | Module | What it provides |
 |---|---|
+| [`taffy-platform`](taffy-platform) | JDK-only building blocks: `TaskGate` and `PendingSettlements` for work still running when a plugin disables, and `CooldownManager`. Published as `so.alaz.taffy:taffy-platform`. |
 | [`tooling/taffy-gradle`](tooling/taffy-gradle) | The Gradle plugins listed below, published as `so.alaz.taffy:taffy-gradle`. |
 | [`tooling/taffy-catalog`](tooling/taffy-catalog) | The version catalog, built from [`gradle/libs.versions.toml`](gradle/libs.versions.toml). |
 
 `tooling` is an included build, so the modules of this repository apply the same plugins they publish.
 `./gradlew clean` does not reach it; `./gradlew -p tooling clean` does.
+
+[`ROADMAP.md`](ROADMAP.md) lists the modules still to come and the stages that lead to the first plugin
+running on Taffy.
 
 | Plugin | Applied in | What it does |
 |---|---|---|

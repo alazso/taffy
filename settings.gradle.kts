@@ -7,3 +7,5 @@ plugins {
 }
 
 rootProject.name = "taffy"
+
+include(":taffy-platform")
