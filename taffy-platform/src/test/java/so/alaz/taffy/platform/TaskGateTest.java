@@ -82,6 +82,61 @@ class TaskGateTest {
     }
 
     @Test
+    void anExitThatMatchesNoAdmittedTaskDoesNothing() {
+        TaskGate gate = new TaskGate();
+        gate.exit();
+
+        assertThat(gate.enter()).isTrue();
+        assertThat(gate.close(Duration.ZERO)).isEqualTo(1);
+        gate.exit();
+        gate.exit();
+
+        assertThat(gate.close(Duration.ZERO)).isZero();
+        assertThat(gate.enter()).isFalse();
+    }
+
+    @Test
+    void aRefusedEntryIsNeverCountedAsRunning() throws Exception {
+        TaskGate gate = new TaskGate();
+        assertThat(gate.close(Duration.ZERO)).isZero();
+        int callers = 4;
+        AtomicBoolean stop = new AtomicBoolean();
+        AtomicBoolean admitted = new AtomicBoolean();
+        CyclicBarrier start = new CyclicBarrier(callers + 1);
+        ExecutorService pool = Executors.newFixedThreadPool(callers);
+        try {
+            List<Future<?>> runs = new ArrayList<>();
+            for (int i = 0; i < callers; i++) {
+                runs.add(pool.submit(() -> {
+                    start.await(30, TimeUnit.SECONDS);
+                    while (!stop.get() && !Thread.currentThread().isInterrupted()) {
+                        if (gate.enter()) {
+                            admitted.set(true);
+                        }
+                    }
+                    return null;
+                }));
+            }
+            start.await(30, TimeUnit.SECONDS);
+            int reportedRunning = 0;
+            for (int i = 0; i < 20_000; i++) {
+                if (gate.close(Duration.ZERO) != 0) {
+                    reportedRunning++;
+                }
+            }
+            stop.set(true);
+            for (Future<?> run : runs) {
+                run.get(30, TimeUnit.SECONDS);
+            }
+            assertThat(reportedRunning).isZero();
+            assertThat(admitted).isFalse();
+        } finally {
+            stop.set(true);
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     void noAdmittedTaskIsRunningOnceCloseReportsNone() throws Exception {
         TaskGate gate = new TaskGate();
         int workers = 8;
@@ -95,7 +150,7 @@ class TaskGateTest {
             for (int i = 0; i < workers; i++) {
                 runs.add(pool.submit(() -> {
                     start.await(30, TimeUnit.SECONDS);
-                    while (gate.enter()) {
+                    while (!Thread.currentThread().isInterrupted() && gate.enter()) {
                         try {
                             admitted.incrementAndGet();
                             if (closed.get()) {
@@ -116,11 +171,14 @@ class TaskGateTest {
             }
             assertThat(gate.close(Duration.ofSeconds(30))).isZero();
             closed.set(true);
+            pool.shutdown();
+            boolean everyWorkerStopped = pool.awaitTermination(30, TimeUnit.SECONDS);
+            assertThat(admittedAfterClose).isFalse();
+            assertThat(everyWorkerStopped).isTrue();
             for (Future<?> run : runs) {
                 run.get(30, TimeUnit.SECONDS);
             }
             assertThat(admitted.get()).isGreaterThanOrEqualTo(1_000);
-            assertThat(admittedAfterClose).isFalse();
         } finally {
             pool.shutdownNow();
         }

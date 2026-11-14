@@ -1,0 +1,144 @@
+package so.alaz.taffy.platform;
+
+import org.junit.jupiter.api.Test;
+import so.alaz.taffy.test.JvmDefaults;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+class ExpiryTest {
+
+    private static final Instant NOW = Instant.parse("2026-06-05T00:00:00Z");
+
+    @Test
+    void blankOrNullNeverExpires() {
+        assertThat(Expiry.resolve(null, NOW)).isNull();
+        assertThat(Expiry.resolve("", NOW)).isNull();
+        assertThat(Expiry.resolve("   ", NOW)).isNull();
+    }
+
+    @Test
+    void parsesIsoInstant() {
+        Instant expiry = Expiry.resolve("2026-12-31T23:59:59Z", NOW);
+        assertThat(expiry).isEqualTo(Instant.parse("2026-12-31T23:59:59Z"));
+    }
+
+    @Test
+    void parsesRelativeDurations() {
+        assertThat(Expiry.resolve("30d", NOW)).isEqualTo(NOW.plusSeconds(30L * 86_400));
+        assertThat(Expiry.resolve("12h", NOW)).isEqualTo(NOW.plusSeconds(12L * 3_600));
+        assertThat(Expiry.resolve("90m", NOW)).isEqualTo(NOW.plusSeconds(90L * 60));
+        assertThat(Expiry.resolve("45s", NOW)).isEqualTo(NOW.plusSeconds(45));
+    }
+
+    @Test
+    void parsesPlainDateAsEndOfDay() {
+        Instant expiry = Expiry.resolve("2026-06-10", NOW);
+        Instant expected = LocalDate.parse("2026-06-10").plusDays(1)
+            .atStartOfDay(ZoneId.systemDefault()).toInstant();
+        assertThat(expiry).isEqualTo(expected);
+        assertThat(Expiry.isExpired(expiry,
+            LocalDate.parse("2026-06-10").atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant())).isFalse();
+    }
+
+    @Test
+    void parsesLocalDateTime() {
+        Instant expiry = Expiry.resolve("2026-06-10T15:30:00", NOW);
+        assertThat(expiry).isEqualTo(
+            LocalDateTime.parse("2026-06-10T15:30:00").atZone(ZoneId.systemDefault()).toInstant());
+    }
+
+    @Test
+    void aDateWithoutAZoneIsReadInTheDefaultTimeZone() throws Exception {
+        // Auckland is twelve hours ahead of UTC in June.
+        JvmDefaults.withTimeZone("Pacific/Auckland", () -> {
+            assertThat(Expiry.resolve("2026-06-10", NOW)).isEqualTo(Instant.parse("2026-06-10T12:00:00Z"));
+            assertThat(Expiry.resolve("2026-06-10T15:30:00", NOW)).isEqualTo(Instant.parse("2026-06-10T03:30:00Z"));
+            assertThat(Expiry.resolveStart("2026-06-10")).isEqualTo(Instant.parse("2026-06-09T12:00:00Z"));
+            assertThat(Expiry.resolve("2026-06-10T15:30:00Z", NOW)).isEqualTo(Instant.parse("2026-06-10T15:30:00Z"));
+        });
+    }
+
+    @Test
+    void rejectsGarbage() {
+        assertThatThrownBy(() -> Expiry.resolve("not-a-date", NOW))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void relativeExpiryIsAnchoredToTheReferenceInstant() {
+        Instant reference = Instant.parse("2026-01-01T00:00:00Z");
+        Instant expiry = Expiry.resolve("30d", reference);
+        assertThat(expiry).isEqualTo(reference.plus(Duration.ofDays(30)));
+        assertThat(Expiry.isExpired(expiry, reference.plus(Duration.ofDays(31)))).isTrue();
+        assertThat(Expiry.isExpired(expiry, reference.plus(Duration.ofDays(29)))).isFalse();
+    }
+
+    @Test
+    void isRelativeOnlyForDurations() {
+        assertThat(Expiry.isRelative("30d")).isTrue();
+        assertThat(Expiry.isRelative(" 12h ")).isTrue();
+        assertThat(Expiry.isRelative(null)).isFalse();
+        assertThat(Expiry.isRelative("")).isFalse();
+        assertThat(Expiry.isRelative("2026-12-31T23:59:59Z")).isFalse();
+        assertThat(Expiry.isRelative("2026-12-31")).isFalse();
+    }
+
+    @Test
+    void resolveStartTreatsPlainDateAsStartOfDay() {
+        Instant start = Expiry.resolveStart("2026-06-10");
+        assertThat(start).isEqualTo(
+            LocalDate.parse("2026-06-10").atStartOfDay(ZoneId.systemDefault()).toInstant());
+        assertThat(Expiry.resolveStart("2026-06-10T15:30:00Z"))
+            .isEqualTo(Instant.parse("2026-06-10T15:30:00Z"));
+        assertThat(Expiry.resolveStart(" 2026-06-10 ")).isEqualTo(start);
+        assertThat(Expiry.resolveStart("\t2026-06-10T15:30:00Z\n")).isEqualTo(Instant.parse("2026-06-10T15:30:00Z"));
+        assertThat(Expiry.resolveStart(null)).isNull();
+        assertThat(Expiry.resolveStart("  ")).isNull();
+        assertThatThrownBy(() -> Expiry.resolveStart("not-a-date"))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void isExpiredComparesAgainstNow() {
+        Instant past = NOW.minusSeconds(1);
+        Instant future = NOW.plusSeconds(1);
+        assertThat(Expiry.isExpired(past, NOW)).isTrue();
+        assertThat(Expiry.isExpired(NOW, NOW)).isTrue();
+        assertThat(Expiry.isExpired(future, NOW)).isFalse();
+        assertThat(Expiry.isExpired(null, NOW)).isFalse();
+    }
+
+    @Test
+    void relativeDurationsFollowTheDurationsForm() {
+        assertThat(Expiry.resolve("250ms", NOW)).isEqualTo(NOW.plusMillis(250));
+        assertThat(Expiry.resolve("30D", NOW)).isEqualTo(NOW.plus(Duration.ofDays(30)));
+        assertThat(Expiry.isRelative("250ms")).isTrue();
+        assertThat(Expiry.isRelative("30D")).isTrue();
+        assertThat(Expiry.isRelative("-5d")).isFalse();
+        assertThatThrownBy(() -> Expiry.resolve("-5d", NOW))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("invalid expiry '-5d': expected " + Expiry.EXPECTED);
+        assertThat(Expiry.EXPECTED).isEqualTo("a date (2026-12-31), a date-time (2026-12-31T23:59:59), an ISO-8601"
+            + " instant (2026-12-31T23:59:59Z) or a relative duration such as 30d, 12h or 90m");
+        assertThatThrownBy(() -> Expiry.resolve("+5d", NOW))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> Expiry.resolve("9223372036854775807d", NOW))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void resolveStartRejectsARelativeDurationAndNamesTheValue() {
+        assertThatThrownBy(() -> Expiry.resolveStart("30d"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("invalid start '30d': expected " + Expiry.EXPECTED_START);
+        assertThat(Expiry.EXPECTED_START)
+            .isEqualTo("a date (2026-12-31), a date-time (2026-12-31T10:00:00) or an ISO-8601 instant");
+    }
+}

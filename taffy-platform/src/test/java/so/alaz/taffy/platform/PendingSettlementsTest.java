@@ -54,7 +54,7 @@ class PendingSettlementsTest {
     void aFailingSettlementDoesNotStopTheRest() {
         PendingSettlements settlements = new PendingSettlements();
         AtomicInteger settled = new AtomicInteger();
-        List<RuntimeException> failures = new ArrayList<>();
+        List<Throwable> failures = new ArrayList<>();
         settlements.track(settled::incrementAndGet);
         settlements.track(() -> {
             throw new IllegalStateException("storage is gone");
@@ -64,6 +64,61 @@ class PendingSettlementsTest {
         assertThat(settlements.settleAll(failures::add)).isEqualTo(3);
         assertThat(settled).hasValue(2);
         assertThat(failures).singleElement().isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void aSettlementThatThrowsAnErrorDoesNotStopTheRest() {
+        PendingSettlements settlements = new PendingSettlements();
+        AtomicInteger settled = new AtomicInteger();
+        List<Throwable> failures = new ArrayList<>();
+        for (int i = 0; i < 4; i++) {
+            settlements.track(settled::incrementAndGet);
+            settlements.track(() -> {
+                throw new NoClassDefFoundError("other/plugin/Api");
+            });
+        }
+
+        assertThat(settlements.settleAll(failures::add)).isEqualTo(8);
+        assertThat(settled).hasValue(4);
+        assertThat(failures).hasSize(4).allMatch(NoClassDefFoundError.class::isInstance);
+        assertThat(settlements.size()).isZero();
+    }
+
+    @Test
+    void aFailureCallbackThatThrowsDoesNotStopTheRest() {
+        PendingSettlements settlements = new PendingSettlements();
+        AtomicInteger settled = new AtomicInteger();
+        AtomicInteger reported = new AtomicInteger();
+        for (int i = 0; i < 4; i++) {
+            settlements.track(settled::incrementAndGet);
+            settlements.track(() -> {
+                throw new IllegalStateException("storage is gone");
+            });
+        }
+
+        int ran = settlements.settleAll(failure -> {
+            reported.incrementAndGet();
+            throw new AssertionError("the callback failed too");
+        });
+
+        assertThat(ran).isEqualTo(8);
+        assertThat(settled).hasValue(4);
+        assertThat(reported).hasValue(4);
+    }
+
+    @Test
+    void aStartedEntryIsNoLongerTracked() {
+        PendingSettlements settlements = new PendingSettlements();
+        PendingSettlements.Entry first = settlements.track(() -> { });
+        settlements.track(() -> { });
+        assertThat(settlements.size()).isEqualTo(2);
+
+        first.start();
+        first.start();
+        assertThat(settlements.size()).isEqualTo(1);
+
+        settlements.settleAll(ex -> { });
+        assertThat(settlements.size()).isZero();
     }
 
     @Test

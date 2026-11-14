@@ -10,6 +10,12 @@ abstract class CoverageExtension {
     /** Minimum instruction coverage the `check` task requires. Defaults to 0.80. */
     abstract val minimum: Property<BigDecimal>
 
+    /**
+     * Minimum instruction coverage the `check` task requires of each class under the gate. Zero turns the
+     * per-class check off. Defaults to 0, and to 0.50 under `so.alaz.library`.
+     */
+    abstract val classMinimum: Property<BigDecimal>
+
     /** Ant patterns of class files left out of the coverage gate, relative to the classes directory. */
     abstract val exclusions: ListProperty<String>
 

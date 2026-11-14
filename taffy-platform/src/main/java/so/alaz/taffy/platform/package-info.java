@@ -1,0 +1,17 @@
+/**
+ * The classes every other Taffy module builds on: scheduling, shutdown, text, items, time, logging and a
+ * Discord webhook.
+ *
+ * <p>The shutdown classes assume one order while the owning plugin disables, with each step run through
+ * {@link so.alaz.taffy.platform.Shutdown#closeQuietly} so that a failing step does not stop the next:
+ * <ol>
+ *   <li>{@link so.alaz.taffy.platform.Scheduler#close()}, which stops the repeating tasks;</li>
+ *   <li>{@link so.alaz.taffy.platform.TaskGate#close}, which refuses new async tasks and waits for the
+ *       admitted ones;</li>
+ *   <li>{@link so.alaz.taffy.platform.PendingSettlements#settleAll}, which settles the work no callback
+ *       started;</li>
+ *   <li>the close of whatever the settlements write to, such as storage;</li>
+ *   <li>{@link so.alaz.taffy.platform.DiscordWebhook#close()}, which waits for the posts still in flight.</li>
+ * </ol>
+ */
+package so.alaz.taffy.platform;

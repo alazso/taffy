@@ -1,3 +1,4 @@
+import java.math.BigDecimal
 import so.alaz.taffy.gradle.CoverageExtension
 
 plugins {
@@ -7,6 +8,7 @@ plugins {
 
 val coverage = extensions.create<CoverageExtension>("coverage")
 coverage.minimum.convention("0.80".toBigDecimal())
+coverage.classMinimum.convention(BigDecimal.ZERO)
 
 tasks.withType<Test>().configureEach {
     finalizedBy(tasks.named("jacocoTestReport"))
@@ -41,12 +43,15 @@ val verifyCoverageData = tasks.register("verifyCoverageData") {
     val classes = gatedClasses
     val executionData = layout.buildDirectory.file("jacoco/test.exec")
     val minimum = coverage.minimum
+    val classMinimum = coverage.classMinimum
     val projectPath = project.path
     doLast {
-        if (minimum.get().signum() > 0 && !classes.isEmpty && !executionData.get().asFile.exists()) {
+        val gated = minimum.get().signum() > 0 || classMinimum.get().signum() > 0
+        if (gated && !classes.isEmpty && !executionData.get().asFile.exists()) {
             throw GradleException(
                 "No coverage data for $projectPath: it has classes under the coverage gate but no test ran. " +
-                    "Add tests, exclude the classes with coverage.exclusions, or set coverage.minimum to 0.",
+                    "Add tests, exclude the classes with coverage.exclusions, or set coverage.minimum and " +
+                    "coverage.classMinimum to 0.",
             )
         }
     }
@@ -62,6 +67,16 @@ afterEvaluate {
                     counter = "INSTRUCTION"
                     value = "COVEREDRATIO"
                     minimum = coverage.minimum.get()
+                }
+            }
+            if (coverage.classMinimum.get().signum() > 0) {
+                rule {
+                    element = "CLASS"
+                    limit {
+                        counter = "INSTRUCTION"
+                        value = "COVEREDRATIO"
+                        minimum = coverage.classMinimum.get()
+                    }
                 }
             }
         }

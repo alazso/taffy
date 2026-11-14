@@ -53,12 +53,22 @@ public final class PendingSettlements {
         return entry;
     }
 
+    /** How many entries are tracked and not yet started. */
+    int size() {
+        return pending.size();
+    }
+
     /**
      * Starts every pending entry and runs its settlement on the calling thread, returning how many ran. An
-     * entry a callback starts meanwhile is left to that callback, and a settlement that throws is passed to
-     * {@code onFailure}, so the rest still run.
+     * entry a callback starts meanwhile is left to that callback. A settlement that throws anything, an
+     * {@link Error} included, is passed to {@code onFailure}, and whatever {@code onFailure} itself throws is
+     * discarded, so the rest still run.
+     *
+     * <p>The owning plugin calls this while it disables: after every {@link TaskGate} whose tasks track work
+     * here has closed, and before it closes what the settlements write to. An entry tracked after the call
+     * began may be left pending, and no later call is made for it.
      */
-    public int settleAll(Consumer<RuntimeException> onFailure) {
+    public int settleAll(Consumer<Throwable> onFailure) {
         int settled = 0;
         for (Entry entry : pending) {
             if (!entry.start()) {
@@ -67,8 +77,12 @@ public final class PendingSettlements {
             settled++;
             try {
                 entry.settlement.run();
-            } catch (RuntimeException ex) {
-                onFailure.accept(ex);
+            } catch (Throwable failure) {
+                try {
+                    onFailure.accept(failure);
+                } catch (Throwable ignored) {
+                    // A failing callback must not keep the remaining entries from settling.
+                }
             }
         }
         return settled;

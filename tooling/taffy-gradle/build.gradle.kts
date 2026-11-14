@@ -76,6 +76,8 @@ tasks.withType<Test>().configureEach {
         .withPropertyName("publishedCatalog").withPathSensitivity(PathSensitivity.NONE)
     inputs.file(rootProject.layout.projectDirectory.file("taffy-catalog/build.gradle.kts"))
         .withPropertyName("catalogBuildScript").withPathSensitivity(PathSensitivity.NONE)
+    inputs.file(rootProject.layout.projectDirectory.file("../gradle.properties"))
+        .withPropertyName("taffyProperties").withPathSensitivity(PathSensitivity.NONE)
     val repositoryUri = testRepository.map { it.asFile.toURI().toString().trimEnd('/') + "/" }
     jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dtaffy.testRepository=" + repositoryUri.get()) })
 }

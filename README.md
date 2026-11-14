@@ -82,15 +82,17 @@ To try an unpublished build, run `./gradlew publishToMavenLocal` here and add `m
 
 | Module | What it provides |
 |---|---|
-| [`taffy-platform`](taffy-platform) | JDK-only building blocks: `TaskGate` and `PendingSettlements` for work still running when a plugin disables, and `CooldownManager`. Published as `so.alaz.taffy:taffy-platform`. |
+| [`taffy-platform`](taffy-platform) | The classes every other module builds on: the Folia-safe `Scheduler`, shutdown helpers, `Text` and `Messages`, item and skull builders, durations and cooldowns, rate-limited logging and a Discord webhook. Published as `so.alaz.taffy:taffy-platform`, `alaz.taffy.platform` in the catalog. |
+| [`taffy-config`](taffy-config) | Strict YAML config loading: `ConfigLoader` writes and upgrades `config.yml`, `ConfigReader` reads typed values and reports every problem at once, `ConfigHolder` keeps the settings in effect when a reload fails, `YamlFolder` loads a folder of files. `alaz.taffy.config` in the catalog. |
+| [`taffy-test`](taffy-test) | Test helpers: `ApiRules`, `CapturedLog`, `FakeItems`, `FakeFolders`, `JvmDefaults`, `RaceRunner`, `SimulatedClasspath`. `alaz.taffy.test` in the catalog. |
 | [`tooling/taffy-gradle`](tooling/taffy-gradle) | The Gradle plugins listed below, published as `so.alaz.taffy:taffy-gradle`. |
 | [`tooling/taffy-catalog`](tooling/taffy-catalog) | The version catalog, built from [`gradle/libs.versions.toml`](gradle/libs.versions.toml). |
 
 `tooling` is an included build, so the modules of this repository apply the same plugins they publish.
 `./gradlew clean` does not reach it; `./gradlew -p tooling clean` does.
 
-[`ROADMAP.md`](ROADMAP.md) lists the modules still to come and the stages that lead to the first plugin
-running on Taffy.
+[`ROADMAP.md`](ROADMAP.md) lists what each module holds, the design defaults, and the modules still to
+come.
 
 | Plugin | Applied in | What it does |
 |---|---|---|
@@ -98,12 +100,18 @@ running on Taffy.
 | `so.alaz.repositories` | `settings.gradle.kts` | The foojay toolchain resolver and the Paper, repo.alaz.so and integration repositories. |
 | `so.alaz.paper-plugin` | a plugin module | `so.alaz.coverage` plus the shaded plugin jar. |
 | `so.alaz.paper-api` | a published API module | `so.alaz.java` plus sources and javadoc jars and the `library` publication. |
-| `so.alaz.library` | a tested library module | `so.alaz.paper-api` plus `so.alaz.coverage`. |
+| `so.alaz.library` | a tested library module | `so.alaz.paper-api` plus `so.alaz.coverage`, with a per-class floor of 0.50. |
 | `so.alaz.coverage` | any Java module | `so.alaz.java` plus a JaCoCo report and an instruction coverage gate on `check`. |
-| `so.alaz.java` | any Java module | The Java 25 toolchain, UTF-8, the compiler lint flags, JUnit Platform and `LICENSE` in `META-INF`. |
+| `so.alaz.java` | any Java module | The Java 25 toolchain, UTF-8, the compiler lint flags, JUnit Platform, the test defaults below and `LICENSE` in `META-INF`. |
 
 **`so.alaz.coverage`** reads `coverage.minimum` (default 0.80) and leaves out the class files matched by
-`coverage.exclusions`. `check` fails when the module has classes under the gate and no test ran.
+`coverage.exclusions`. `coverage.classMinimum` (default 0, off) is the minimum each class must hold. `check`
+fails when the module has classes under the gate and no test ran.
+
+**`so.alaz.java`** runs every test task under the `tr-TR` locale and the `Pacific/Auckland` time zone, so
+code that depends on the machine's defaults fails here instead of on a server. A test task can override
+them with `systemProperty`. It passes the `mockito-core` jar on a test task's classpath as a Java agent,
+and runs javadoc with `-Xdoclint:all,-missing` and `--no-fonts`, so a broken comment fails the build.
 
 **`so.alaz.paper-plugin`** adds:
 

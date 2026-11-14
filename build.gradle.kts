@@ -10,8 +10,28 @@ tasks.named("assemble") {
     dependsOn(tooling.task(":taffy-gradle:assemble"), tooling.task(":taffy-catalog:generateCatalogAsToml"))
 }
 
+val verifyPublicApiRulesTests = tasks.register("verifyPublicApiRulesTests") {
+    group = "verification"
+    description = "Fails when a module listed in taffy.modules has no PublicApiRulesTest."
+    val rulesTests = providers.gradleProperty("taffy.modules").get().split(",").map { it.trim() }.associateWith { module ->
+        fileTree(layout.projectDirectory.dir("$module/src/test/java")) { include("**/PublicApiRulesTest.java") }
+    }
+    inputs.files(rulesTests.values)
+    doLast {
+        val missing = rulesTests.filterValues { it.isEmpty }.keys
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                missing.joinToString("\n") { module ->
+                    "$module has no src/test/java/**/PublicApiRulesTest.java. Every module listed in " +
+                        "taffy.modules checks its design rules with ApiRules from taffy-test."
+                },
+            )
+        }
+    }
+}
+
 tasks.named("check") {
-    dependsOn(tooling.task(":taffy-gradle:check"))
+    dependsOn(tooling.task(":taffy-gradle:check"), verifyPublicApiRulesTests)
 }
 
 // Registered here because a task name given on the command line selects every project that has it:

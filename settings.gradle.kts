@@ -8,4 +8,5 @@ plugins {
 
 rootProject.name = "taffy"
 
-include(":taffy-platform")
+// Also read by tooling/taffy-catalog, which gives every module listed a catalog entry.
+providers.gradleProperty("taffy.modules").get().split(",").forEach { include(":" + it.trim()) }
