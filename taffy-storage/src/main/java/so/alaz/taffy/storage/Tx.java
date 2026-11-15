@@ -1,0 +1,215 @@
+package so.alaz.taffy.storage;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+
+/**
+ * One database transaction, handed to a {@link TxWork} for the length of that work.
+ *
+ * <p>A transaction is confined to the database thread that opened it and is open only while its work runs. Every
+ * method that touches the database, and {@link #afterCommit}, throws {@link IllegalStateException} when it is
+ * called from another thread or after the work has returned.
+ */
+public final class Tx {
+
+    /** Binds the values of a statement's placeholders. */
+    @FunctionalInterface
+    public interface Binder {
+
+        /** A binder for a statement without placeholders. */
+        Binder NONE = params -> {
+        };
+
+        /**
+         * Binds the values of the statement.
+         *
+         * @param params the placeholders of the statement, bound in order
+         * @throws SQLException if the driver refuses a value
+         */
+        void bind(Params params) throws SQLException;
+    }
+
+    /**
+     * Turns the current row of a query result into a value.
+     *
+     * @param <T> the type of the value
+     */
+    @FunctionalInterface
+    public interface Mapper<T> {
+
+        /**
+         * Reads the current row.
+         *
+         * @param row the row the result is positioned on
+         * @return the value of the row
+         * @throws SQLException if a column cannot be read
+         */
+        T map(Row row) throws SQLException;
+    }
+
+    private final Connection connection;
+    private final Dialect dialect;
+    private final String prefix;
+    private final Instant now;
+    private final Thread owner = Thread.currentThread();
+    private final List<Runnable> afterCommit = new ArrayList<>();
+    private boolean open = true;
+
+    Tx(Connection connection, Dialect dialect, String prefix, Instant now) {
+        this.connection = connection;
+        this.dialect = dialect;
+        this.prefix = prefix;
+        this.now = now;
+    }
+
+    /**
+     * The database this transaction runs on.
+     *
+     * @return the dialect
+     */
+    public Dialect dialect() {
+        return dialect;
+    }
+
+    /**
+     * The full name of a table: the table prefix followed by the name.
+     *
+     * @param name the table name without the prefix
+     * @return the prefixed name, to concatenate into SQL
+     */
+    public String table(String name) {
+        return prefix + name;
+    }
+
+    /**
+     * The instant of the storage clock taken when this transaction opened. It is the same for every call during
+     * one transaction.
+     *
+     * @return the instant the transaction opened
+     */
+    public Instant now() {
+        return now;
+    }
+
+    /**
+     * Runs an {@code INSERT}, {@code UPDATE} or {@code DELETE} statement.
+     *
+     * <p>The count differs between dialects. On MySQL and MariaDB an {@code UPDATE} counts only the rows whose
+     * values it changed, so a row it matches and writes with its current values counts 0. SQLite and PostgreSQL
+     * count every row the statement matches. {@link Dialect#upsert} gives the counts of an upsert.
+     *
+     * @param sql the statement, with a {@code ?} for each value
+     * @param binder binds the values
+     * @return the number of rows the statement counts, as described above
+     * @throws SQLException if the statement fails
+     * @throws IllegalStateException if called from another thread or after the work has returned
+     */
+    public int update(String sql, Binder binder) throws SQLException {
+        check();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            binder.bind(new Params(statement, dialect));
+            return statement.executeUpdate();
+        }
+    }
+
+    /**
+     * Runs a query and maps every row of its result, in the order the result returns them.
+     *
+     * @param <T> the type of a mapped row
+     * @param sql the query, with a {@code ?} for each value
+     * @param binder binds the values
+     * @param mapper maps one row
+     * @return the mapped rows, empty when the query found none
+     * @throws SQLException if the query or the mapper fails
+     * @throws IllegalStateException if called from another thread or after the work has returned
+     */
+    public <T> List<T> query(String sql, Binder binder, Mapper<T> mapper) throws SQLException {
+        check();
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            binder.bind(new Params(statement, dialect));
+            try (ResultSet result = statement.executeQuery()) {
+                Row row = new Row(result, dialect);
+                List<T> rows = new ArrayList<>();
+                while (result.next()) {
+                    rows.add(mapper.map(row));
+                }
+                return rows;
+            }
+        }
+    }
+
+    /**
+     * Runs a query that finds at most one row.
+     *
+     * @param <T> the type of the mapped row
+     * @param sql the query, with a {@code ?} for each value
+     * @param binder binds the values
+     * @param mapper maps the row
+     * @return the mapped row, or empty when the query found none or the mapper returned {@code null}
+     * @throws SQLException if the query or the mapper fails, or the query found more than one row
+     * @throws IllegalStateException if called from another thread or after the work has returned
+     */
+    public <T> Optional<T> queryOne(String sql, Binder binder, Mapper<T> mapper) throws SQLException {
+        List<T> rows = query(sql, binder, mapper);
+        if (rows.size() > 1) {
+            throw new SQLException("expected at most one row, found " + rows.size() + ": " + sql);
+        }
+        return rows.isEmpty() ? Optional.empty() : Optional.ofNullable(rows.getFirst());
+    }
+
+    /**
+     * Runs a statement without values, such as DDL.
+     *
+     * @param sql the statement
+     * @throws SQLException if the statement fails
+     * @throws IllegalStateException if called from another thread or after the work has returned
+     */
+    public void execute(String sql) throws SQLException {
+        check();
+        try (Statement statement = connection.createStatement()) {
+            statement.execute(sql);
+        }
+    }
+
+    /**
+     * Adds an action to run once this transaction has committed. The actions run on the database thread after the
+     * commit and before the future of the work completes, in the order they were added. They never run for a
+     * transaction that rolled back or whose commit has an unknown outcome. Work that
+     * {@link Storage#asyncRetrying} or {@link Storage#readRetrying} runs again gets a new transaction for each run,
+     * so only the actions added during the run that committed take effect.
+     *
+     * @param action the action
+     * @throws NullPointerException if the action is {@code null}
+     * @throws IllegalStateException if called from another thread or after the work has returned
+     */
+    public void afterCommit(Runnable action) {
+        check();
+        afterCommit.add(Objects.requireNonNull(action, "action"));
+    }
+
+    List<Runnable> committedActions() {
+        return afterCommit;
+    }
+
+    void close() {
+        open = false;
+    }
+
+    private void check() {
+        if (!open) {
+            throw new IllegalStateException("this transaction has ended");
+        }
+        if (Thread.currentThread() != owner) {
+            throw new IllegalStateException("a transaction runs only on the database thread that opened it, not on "
+                + Thread.currentThread().getName());
+        }
+    }
+}

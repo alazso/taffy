@@ -24,12 +24,16 @@ All notable changes to Taffy are documented here. This project follows
   `ConfigReader` (typed reading that collects every problem, with range, choice, decimal, long and
   `parsed` readers), `ConfigHolder` (reload guard), `RestartKeys`, `YamlFolder` (folder of files) and
   `ConfigLoadException`.
-- `taffy-test` module: `ApiRules`, `CapturedLog`, `FakeItems`, `FakeFolders`, `JvmDefaults`,
-  `RaceRunner` and `SimulatedClasspath`.
+- `taffy-storage` module: `Storage` (SQLite, MySQL, MariaDB and PostgreSQL over HikariCP, transactions
+  on its own database threads, opt-in rollback retry), `StorageSettings`, `Dialect`, `Migration` with
+  an internal migrator, `Tx`, `TxWork`, `Params`, `Row`, `MoneyColumn` and the storage exceptions.
+  HikariCP and the drivers are compile-only and appear in no published dependency.
+- `taffy-test` module: `ApiRules`, `CapturedLog`, `FakeItems`, `FakeFolders`, `FaultyDataSource`,
+  `JvmDefaults`, `RaceRunner` and `SimulatedClasspath`.
 - `Durations`, `Colors` and `Expiry` expose a public `EXPECTED` text and fail with
   `invalid <thing> '<value>': expected <EXPECTED>`.
 - Catalog entries for Taffy's own modules: `alaz.taffy.platform`, `alaz.taffy.test` and
-  `alaz.taffy.config` resolve at the catalog's version. The module list is the Gradle property
+  `alaz.taffy.config` and `alaz.taffy.storage` resolve at the catalog's version. The module list is the Gradle property
   `taffy.modules`.
 - `so.alaz.java` passes the Mockito jar on each test task's classpath as a Java agent, runs tests
   under the `tr-TR` locale and the `Pacific/Auckland` zone, and runs javadoc with

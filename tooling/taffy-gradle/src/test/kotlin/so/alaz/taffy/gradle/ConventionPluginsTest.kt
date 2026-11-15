@@ -447,11 +447,13 @@ class ConventionPluginsTest {
                 val platform = alaz.taffy.platform
                 val test = alaz.taffy.test
                 val config = alaz.taffy.config
+                val storage = alaz.taffy.storage
                 doLast {
                     println("paper=" + paper.get())
                     println("platform=" + platform.get())
                     println("test=" + test.get())
                     println("config=" + config.get())
+                    println("storage=" + storage.get())
                 }
             }
             """,
@@ -463,6 +465,7 @@ class ConventionPluginsTest {
         assertThat(result.output).containsPattern("platform=so\\.alaz\\.taffy:taffy-platform:\\d+\\.\\d+")
         assertThat(result.output).containsPattern("test=so\\.alaz\\.taffy:taffy-test:\\d+\\.\\d+")
         assertThat(result.output).containsPattern("config=so\\.alaz\\.taffy:taffy-config:\\d+\\.\\d+")
+        assertThat(result.output).containsPattern("storage=so\\.alaz\\.taffy:taffy-storage:\\d+\\.\\d+")
         val pom = projectDirectory.resolve("demo-api/build/publications/library/pom-default.xml").readText()
         assertThat(pom).contains(
             "<groupId>so.alaz.demo</groupId>",
@@ -505,6 +508,10 @@ class ConventionPluginsTest {
             }
             paperPlugin {
                 runtimeLibrary(alaz.hikari)
+                runtimeLibrary(alaz.sqlite.jdbc)
+                runtimeLibrary(alaz.mysql.connector)
+                runtimeLibrary(alaz.mariadb.jdbc)
+                runtimeLibrary(alaz.postgresql.jdbc)
             }
             """,
         )
@@ -514,7 +521,12 @@ class ConventionPluginsTest {
         assertThat(result.task(":generateRuntimeLibraries")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
         val generated = projectDirectory
             .resolve("build/generated/sources/runtimeLibraries/java/main/so/alaz/demo/RuntimeLibraries.java")
-        assertThat(generated.readText()).containsPattern("\"com\\.zaxxer:HikariCP:\\d+(\\.\\d+)+\"")
+        assertThat(generated.readText())
+            .containsPattern("\"com\\.zaxxer:HikariCP:\\d+(\\.\\d+)+\"")
+            .containsPattern("\"org\\.xerial:sqlite-jdbc:\\d+(\\.\\d+)+\"")
+            .containsPattern("\"com\\.mysql:mysql-connector-j:\\d+(\\.\\d+)+\"")
+            .containsPattern("\"org\\.mariadb\\.jdbc:mariadb-java-client:\\d+(\\.\\d+)+\"")
+            .containsPattern("\"org\\.postgresql:postgresql:\\d+(\\.\\d+)+\"")
     }
 
     @Test

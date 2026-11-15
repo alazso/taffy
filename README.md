@@ -84,7 +84,8 @@ To try an unpublished build, run `./gradlew publishToMavenLocal` here and add `m
 |---|---|
 | [`taffy-platform`](taffy-platform) | The classes every other module builds on: the Folia-safe `Scheduler`, shutdown helpers, `Text` and `Messages`, item and skull builders, durations and cooldowns, rate-limited logging and a Discord webhook. Published as `so.alaz.taffy:taffy-platform`, `alaz.taffy.platform` in the catalog. |
 | [`taffy-config`](taffy-config) | Strict YAML config loading: `ConfigLoader` writes and upgrades `config.yml`, `ConfigReader` reads typed values and reports every problem at once, `ConfigHolder` keeps the settings in effect when a reload fails, `YamlFolder` loads a folder of files. `alaz.taffy.config` in the catalog. |
-| [`taffy-test`](taffy-test) | Test helpers: `ApiRules`, `CapturedLog`, `FakeItems`, `FakeFolders`, `JvmDefaults`, `RaceRunner`, `SimulatedClasspath`. `alaz.taffy.test` in the catalog. |
+| [`taffy-storage`](taffy-storage) | Database access over HikariCP for SQLite, MySQL, MariaDB and PostgreSQL: `Storage` runs work in transactions on its own threads and migrates the schema from the plugin's own scripts. HikariCP and the drivers are not bundled: list them in `paperPlugin.runtimeLibraries`. `alaz.taffy.storage` in the catalog. |
+| [`taffy-test`](taffy-test) | Test helpers: `ApiRules`, `CapturedLog`, `FakeItems`, `FakeFolders`, `FaultyDataSource`, `JvmDefaults`, `RaceRunner`, `SimulatedClasspath`. `alaz.taffy.test` in the catalog. |
 | [`tooling/taffy-gradle`](tooling/taffy-gradle) | The Gradle plugins listed below, published as `so.alaz.taffy:taffy-gradle`. |
 | [`tooling/taffy-catalog`](tooling/taffy-catalog) | The version catalog, built from [`gradle/libs.versions.toml`](gradle/libs.versions.toml). |
 

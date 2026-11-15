@@ -10,7 +10,8 @@ class PublicApiRulesTest {
     @Test
     void scanFindsTheModuleClasses() throws Exception {
         assertThat(ApiRules.classes(CapturedLog.class))
-            .contains(CapturedLog.class, FakeItems.class, ApiRules.class)
+            .contains(CapturedLog.class, FakeItems.class, ApiRules.class, FaultyDataSource.class,
+                FaultyDataSource.Faults.class)
             .allSatisfy(type -> assertThat(type.getPackageName()).startsWith(getClass().getPackageName()));
     }
 

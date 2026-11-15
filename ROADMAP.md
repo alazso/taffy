@@ -14,7 +14,9 @@ Taffy is built out and made stable first. Plugins move onto it after that.
 - Every runtime module depends only on `taffy-platform`, plus `taffy-test` for its tests. `taffy-test`
   depends on no Taffy module.
 - The library ships no resource files and holds no static plugin, logger, executor or thread. The owner
-  passes them in. A `taffy-test` helper may own a thread for the length of one call.
+  passes them in. Two classes own threads on purpose: `Storage` (its database threads, which it drains
+  at close) and `DiscordWebhook` (its HTTP client). A `taffy-test` helper may own a thread for the
+  length of one call.
 - A class arrives together with its tests. Each module holds 80 percent instruction coverage with no
   exclusions, and each class at least 50 percent.
 - Code under a copyleft license is read for ideas only and never copied in.
@@ -28,9 +30,10 @@ root `check` fails when a module listed in `taffy.modules` has none.
 |---|---|
 | Build tooling (`tooling/taffy-gradle`, `tooling/taffy-catalog`) | Built and tested. Not published. |
 | `taffy-platform` | Complete for the planned list: 26 classes, 346 tests. Not published. |
-| `taffy-test` | 7 helpers, 64 tests. Not published. |
+| `taffy-test` | 8 helpers, 88 tests. Not published. |
 | `taffy-config` | 7 classes, 161 tests. Not published. |
-| `taffy-storage`, `taffy-hooks`, `taffy-gui`, `taffy-metrics`, `taffy-comficonf` | Not started. |
+| `taffy-storage` | 15 classes, 324 tests, 55 of them against MySQL, MariaDB and PostgreSQL in Docker. Not published. |
+| `taffy-hooks`, `taffy-gui`, `taffy-metrics`, `taffy-comficonf` | Not started. |
 
 ## What `taffy-platform` holds
 
@@ -57,6 +60,7 @@ Test helpers for Taffy's modules, published so plugin test suites can use them t
 | `JvmDefaults` | Runs a block under another default locale or time zone, then restores it. |
 | `RaceRunner` | Starts several threads at once to race one operation. |
 | `SimulatedClasspath` | A class loader that hides or adds named classes. |
+| `FaultyDataSource` | Wraps a `DataSource` and fails connections or statements on demand. |
 
 ## What `taffy-config` holds
 
@@ -71,6 +75,25 @@ Test helpers for Taffy's modules, published so plugin test suites can use them t
 | `ConfigLoadException` | The one checked exception of the module. Its message is written for the server owner. |
 
 The package Javadoc of `taffy-config` walks through loading and reloading a plugin's settings with these.
+
+## What `taffy-storage` holds
+
+| Class | What it does |
+|---|---|
+| `Storage` | Starts a database from `StorageSettings`, runs the plugin's migrations, and runs work in transactions on its own database threads. `async` writes, `read` reads, `asyncRetrying` and `readRetrying` rerun work that a deadlock or serialization failure rolled back. `close` drains queued work. |
+| `StorageSettings` | The dialect, the SQLite file or server address, credentials, SSL mode, pool sizes, thread count and backup count, validated when built. |
+| `Dialect` | SQLite, MySQL, MariaDB and PostgreSQL: the SQL that differs between them and each driver's class name. |
+| `Migration` | One numbered migration whose script the plugin ships at `db/migration/<dialect>/V<n>__<name>.sql`. |
+| `Tx`, `TxWork`, `Params`, `Row` | A transaction, the work run in it, statement parameters and result rows, including UUID, JSON and money columns. |
+| `MoneyColumn` | Stores an amount as a scaled whole number, with the range it accepts. |
+| `StorageException`, `CommitUnknownException` | A start or migration that cannot go on, and a commit whose outcome is unknown. |
+
+The migrator is internal: it creates its own version table, checks each applied script's checksum,
+refuses a database newer than the plugin, takes a SQLite backup before changing an existing file, and
+takes a database lock on the server dialects so two servers sharing one database do not migrate at once.
+
+A plugin lists HikariCP and each driver it offers in `paperPlugin.runtimeLibraries`, and the same on its
+test runtime classpath. `taffy-storage` publishes no dependency on them.
 
 ## Design defaults
 
@@ -89,6 +112,8 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 | Testing Paper code | Mockito mocks of Paper interfaces, static and construction mocks where code touches a static or `new ItemStack`. No mock server library. |
 | Package layout | One flat package per module. `so.alaz.taffy.platform` is not split: growth goes into modules. |
 | Disable order | `Scheduler.close`, `TaskGate.close`, `PendingSettlements.settleAll`, storage close, `DiscordWebhook.close`. The package Javadoc states it. |
+| Storage base | Tradefloor's storage package. The plugin passes its migrations and a function that opens their scripts, such as `plugin::getResource`. Config reading stays in the plugin, which builds `StorageSettings`. |
+| Rollback retry | Opt in, through `asyncRetrying` and `readRetrying`. Plain `async` and `read` never rerun work, because work may have effects outside the database. |
 | Config base | `ConfigLoader` and `ConfigReader` take a data folder `Path`, a supplier of the shipped file and a `Logger` or a line consumer. Nothing calls `JavaPlugin.getConfig` or `reloadConfig`. |
 | Config problems | Collected, never thrown one at a time. A warning uses the fallback and loading goes on; an error is collected and the caller decides. Lines name no plugin: the logger already does. |
 | Parser convention | `Durations`, `Colors` and `Expiry` expose a public `EXPECTED` text and fail with `invalid <thing> '<value>': expected <EXPECTED>`. Null is treated like any other bad value. `ItemBuilder`, `SkullBuilder` and `DiscordWebhook` are outside it. |
@@ -100,12 +125,10 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 
 In this order, each as its own module that depends only on `taffy-platform`:
 
-1. `taffy-storage`: JDBC over HikariCP for SQLite, MySQL, MariaDB and PostgreSQL, with transactions,
-   dialects and a migrator. Its storage contract test base goes into `taffy-test`.
-2. `taffy-hooks`: custom items, economy, permissions, regions, PlaceholderAPI expansion builder.
-3. `taffy-gui`: chest menus, pagination, click handling.
-4. `taffy-metrics`: bStats and FastStats wrappers that install into `ErrorReports`.
-5. `taffy-comficonf`: the ComfiConf registration, connect guard and YAML file provider. It builds on
+1. `taffy-hooks`: custom items, economy, permissions, regions, PlaceholderAPI expansion builder.
+2. `taffy-gui`: chest menus, pagination, click handling.
+3. `taffy-metrics`: bStats and FastStats wrappers that install into `ErrorReports`.
+4. `taffy-comficonf`: the ComfiConf registration, connect guard and YAML file provider. It builds on
    `StrictYaml`, `ConfigHolder` and `RestartKeys`, and is the one module allowed ComfiConf types in its
    public signatures.
 
@@ -116,11 +139,14 @@ A `v*` tag publishes everything, runtime modules included, and makes these perma
 | Decision | Today |
 |---|---|
 | Plugin ids | `so.alaz.settings`, `so.alaz.repositories`, `so.alaz.java`, `so.alaz.coverage`, `so.alaz.paper-api`, `so.alaz.library`, `so.alaz.paper-plugin` |
-| Version model | One version for the plugins, the catalog and the runtime modules. The catalog has a `taffy` version and one library per module: `alaz.taffy.platform`, `alaz.taffy.test`, `alaz.taffy.config`. |
+| Version model | One version for the plugins, the catalog and the runtime modules. The catalog has a `taffy` version and one library per module: `alaz.taffy.platform`, `alaz.taffy.test`, `alaz.taffy.config`, `alaz.taffy.storage`. |
 | Repository name | `taffy-api` on GitHub, `taffy` everywhere else |
 
 Also unverified: the publish credentials for this repository, whether the token may write the plugin
-marker paths outside `so/alaz/taffy`, and CI on Gradle running Java 17 and Java 25.
+marker paths outside `so/alaz/taffy`, and CI on Gradle running Java 17 and Java 25. The MySQL, MariaDB
+and PostgreSQL suites of `taffy-storage` pass against MySQL 8.4, MariaDB 11.4 and PostgreSQL 17 in
+containers, including two starts migrating one shared database at once, but only over unencrypted
+connections: the `TRUST` and `VERIFY_FULL` SSL modes have not run against a real server.
 
 ## Differences from the plugin copies
 
@@ -147,7 +173,9 @@ plugin copy did.
 | `Messages` | Takes the data folder, the bundled English file as a supplier and a logger. Prefix is opt-in. A missing key renders a marker. Every non-section YAML value is kept as text. `renderTemplate` replaces `format`; `fill` has no equivalent. Locale codes match in lower case with `-` read as `_`. A default locale with no file is warned about. A language file that is not valid UTF-8 is skipped with a warning. |
 | `ConfigLoader` | Messages name no plugin. Owner-keyed sections are a constructor argument. The upgrade write is atomic, forced to disk, and gives a new file the usual permissions. A shipped file that is not UTF-8 stops the load. |
 | `ConfigReader` | `parsed` with a fallback text replaces `charge`. Messages name no plugin. Blank counts as absent. New range, choice, decimal and long readers. An unquoted date with a time asks for quotes. |
-| `DiscordWebhook` | New `isWebhookUrl`. Otherwise unchanged; it still owns its HTTP client threads, the one exception to the rule on passed-in executors. |
+| `DiscordWebhook` | New `isWebhookUrl`. Otherwise unchanged; it still owns its HTTP client threads. |
+| `Storage` | From Tradefloor's copy. Starts PostgreSQL and MySQL as well. Takes the name, logger, error sink, migrations and script function. Names no plugin in threads, pools or messages. A cancelled start releases what it built. `close` logs how much work it dropped. |
+| `Migrator` | Creates its own version table, refuses migrations that are not strictly increasing, reads and splits every pending script before the backup, names the failing migration and statement, runs SQLite migrations with foreign keys off and checks them before commit, and locks the database on the server dialects. |
 
 ## Open API questions
 
@@ -171,6 +199,12 @@ None blocks the next module. Each is settled before the first publish.
   module.
 - The convention changes in `so.alaz.java` reach every plugin build that applies them. Only Taffy's own
   modules have run under them.
+- `Storage.start` takes nine positional arguments; `name` and `pluginVersion` can be swapped unnoticed.
+- SQLite writes share the database threads with reads, so a write waits on the writer connection rather
+  than queueing behind one writer thread.
+- The migration lock on MySQL and MariaDB is server-wide, so two databases on one server with the same
+  table prefix take turns migrating.
+- `Storage.close` interrupts work still running when the drain runs out.
 
 ## Tooling notes
 
@@ -203,7 +237,7 @@ plugins on a server.
 - `UpdateChecker`, `SemanticVersion` and a generic HTTP helper: neither plugin has one to extract.
 - A plugin context or kernel type: neither plugin has one. Constructor parameters are the default.
 - Tradefloor's `Delay`: it fires on the JDK common pool and cannot be cancelled at disable.
-  `Scheduler.delayedAsync` is the delay. It is looked at again with `taffy-storage`.
+  `Scheduler.delayedAsync` is the delay.
 - Tradefloor's `ItemCodec`: it is the shape of one plugin's storage row.
 - Single-plugin helpers (`InFlightGuard`, `ClaimLedger`, `ConfirmationTracker`, `CallGuard`,
   `CommandAliases`, `Materials`, `Placeholders`): they stay in their plugin until a second user appears.
