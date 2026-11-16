@@ -149,6 +149,145 @@ class ConventionPluginsTest {
     }
 
     @Test
+    fun aPluginShadesTaffyMetricsWithTheSdksRelocatedAndOffItsCompileClasspath() {
+        val sourceRoot = File(System.getProperty("taffy.sourceRoot"))
+        val library = projectDirectory.resolve("taffy")
+        val modules = projectDirectory.resolve("modules")
+        val modulesUri = modules.toURI().toString()
+        for (module in listOf("taffy-platform", "taffy-metrics")) {
+            sourceRoot.resolve("$module/build.gradle.kts").copyTo(library.resolve("$module/build.gradle.kts"))
+            sourceRoot.resolve("$module/src/main").copyRecursively(library.resolve("$module/src/main"))
+        }
+        sourceRoot.resolve("gradle/libs.versions.toml").copyTo(library.resolve("gradle/libs.versions.toml"))
+        write("taffy/LICENSE", "MIT License\n")
+        write("taffy/gradle.properties", "group=so.alaz.taffy\nversion=${TaffyBuild.VERSION}\n")
+        write(
+            "taffy/settings.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.repositories")
+            }
+            rootProject.name = "taffy"
+            include(":taffy-platform", ":taffy-test", ":taffy-metrics")
+            """,
+        )
+        write("taffy/taffy-test/build.gradle.kts", "plugins {\n    id(\"java-library\")\n}")
+        write(
+            "taffy/build.gradle.kts",
+            """
+            subprojects {
+                plugins.withId("maven-publish") {
+                    configure<PublishingExtension> {
+                        repositories {
+                            maven("$modulesUri") { name = "modules" }
+                        }
+                    }
+                }
+            }
+            """,
+        )
+
+        val published = runner(
+            library,
+            ":taffy-platform:publishLibraryPublicationToModulesRepository",
+            ":taffy-metrics:publishLibraryPublicationToModulesRepository",
+        ).build()
+
+        assertThat(published.task(":taffy-metrics:publishLibraryPublicationToModulesRepository")?.outcome)
+            .isEqualTo(TaskOutcome.SUCCESS)
+        val pom = modules.walk().single { it.name.startsWith("taffy-metrics-") && it.name.endsWith(".pom") }.readText()
+        val scope = "</artifactId>\\s*<version>[^<]+</version>\\s*<scope>"
+        assertThat(pom)
+            .containsPattern("<groupId>so\\.alaz\\.taffy</groupId>\\s*<artifactId>taffy-platform${scope}compile<")
+            .containsPattern("<groupId>org\\.bstats</groupId>\\s*<artifactId>bstats-bukkit${scope}runtime<")
+            .containsPattern("<groupId>dev\\.faststats\\.metrics</groupId>\\s*<artifactId>bukkit${scope}runtime<")
+
+        project()
+        write(
+            "settings.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.settings")
+            }
+            rootProject.name = "demo"
+            dependencyResolutionManagement {
+                repositories {
+                    exclusiveContent {
+                        forRepositories(
+                            maven("$testRepository") { name = "test" },
+                            maven("$modulesUri") { name = "modules" },
+                        )
+                        filter {
+                            includeGroup("so.alaz.taffy")
+                        }
+                    }
+                }
+            }
+            """,
+        )
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.paper-plugin")
+            }
+            dependencies {
+                implementation(alaz.taffy.metrics)
+            }
+            tasks.register("showCompileClasspath") {
+                val classpath: FileCollection = configurations.compileClasspath.get()
+                doLast {
+                    classpath.files.forEach { println("compile=" + it.absolutePath) }
+                }
+            }
+            """,
+        )
+        write(
+            "src/main/java/so/alaz/demo/Charts.java",
+            """
+            package so.alaz.demo;
+
+            import so.alaz.taffy.metrics.MetricChart;
+
+            final class Charts {
+                static final MetricChart ONLINE = MetricChart.number("online", () -> 1);
+            }
+            """,
+        )
+
+        val result = run("shadowJar", "showCompileClasspath")
+
+        val compileClasspath = result.output.lines()
+            .filter { it.startsWith("compile=") }
+            .map { File(it.substringAfter("=")) }
+        assertThat(compileClasspath.map { it.name }).anyMatch { it.startsWith("taffy-metrics-") }
+        assertThat(compileClasspath.map { it.name }).anyMatch { it.startsWith("taffy-platform-") }
+        for (file in compileClasspath.filter { it.isFile }) {
+            ZipFile(file).use { jar ->
+                assertThat(jar.entries().asSequence().map { it.name }.toList()).`as`(file.name)
+                    .noneMatch { it.startsWith("org/bstats/") || it.startsWith("dev/faststats/") }
+            }
+        }
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            val names = jar.entries().asSequence().map { it.name }.toList()
+            assertThat(names).contains(
+                "so/alaz/demo/Charts.class",
+                "so/alaz/demo/libs/taffy/metrics/MetricsBuilder.class",
+                "so/alaz/demo/libs/taffy/platform/ErrorReports.class",
+                "so/alaz/demo/libs/bstats/MetricsBase.class",
+                "so/alaz/demo/libs/bstats/bukkit/Metrics.class",
+                "so/alaz/demo/libs/faststats/ErrorTracker.class",
+                "so/alaz/demo/libs/faststats/bukkit/BukkitContext.class",
+            )
+            assertThat(names).noneMatch {
+                it.startsWith("org/bstats/") || it.startsWith("dev/faststats/") || it.startsWith("so/alaz/taffy/")
+            }
+            assertThat(names.filter { it == "META-INF/faststats.properties" }).hasSize(1)
+            assertThat(names).noneMatch { it.contains("gson", ignoreCase = true) }
+        }
+    }
+
+    @Test
     fun coverageGateFailsBelowTheMinimum() {
         project()
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
@@ -450,6 +589,7 @@ class ConventionPluginsTest {
                 val storage = alaz.taffy.storage
                 val hooks = alaz.taffy.hooks
                 val gui = alaz.taffy.gui
+                val metrics = alaz.taffy.metrics
                 doLast {
                     println("paper=" + paper.get())
                     println("platform=" + platform.get())
@@ -458,6 +598,7 @@ class ConventionPluginsTest {
                     println("storage=" + storage.get())
                     println("hooks=" + hooks.get())
                     println("gui=" + gui.get())
+                    println("metrics=" + metrics.get())
                 }
             }
             """,
@@ -472,6 +613,7 @@ class ConventionPluginsTest {
         assertThat(result.output).containsPattern("storage=so\\.alaz\\.taffy:taffy-storage:\\d+\\.\\d+")
         assertThat(result.output).containsPattern("hooks=so\\.alaz\\.taffy:taffy-hooks:\\d+\\.\\d+")
         assertThat(result.output).containsPattern("gui=so\\.alaz\\.taffy:taffy-gui:\\d+\\.\\d+")
+        assertThat(result.output).containsPattern("metrics=so\\.alaz\\.taffy:taffy-metrics:\\d+\\.\\d+")
         val pom = projectDirectory.resolve("demo-api/build/publications/library/pom-default.xml").readText()
         assertThat(pom).contains(
             "<groupId>so.alaz.demo</groupId>",
@@ -851,9 +993,11 @@ class ConventionPluginsTest {
 
     private fun run(vararg arguments: String): BuildResult = runner(*arguments).build()
 
-    private fun runner(vararg arguments: String): GradleRunner =
+    private fun runner(vararg arguments: String): GradleRunner = runner(projectDirectory, *arguments)
+
+    private fun runner(directory: File, vararg arguments: String): GradleRunner =
         GradleRunner.create()
-            .withProjectDir(projectDirectory)
+            .withProjectDir(directory)
             .withPluginClasspath()
             .withArguments(*arguments, "--stacktrace")
 

@@ -16,7 +16,9 @@ Taffy is built out and made stable first. Plugins move onto it after that.
 - The library ships no resource files and holds no static plugin, logger, executor or thread. The owner
   passes them in. Two classes own threads on purpose: `Storage` (its database threads, which it drains
   at close) and `DiscordWebhook` (its HTTP client). A `taffy-test` helper may own a thread for the
-  length of one call.
+  length of one call. The SDKs behind `taffy-metrics` own threads of their own: a bStats-Metrics thread per
+  started bStats instance, and FastStats' HTTP client with its tasks on Paper's async scheduler. FastStats
+  error tracking installs the JVM default uncaught exception handler, which `Metrics.shutdown` detaches.
 - A class arrives together with its tests. Each module holds 80 percent instruction coverage with no
   exclusions, and each class at least 50 percent.
 - Code under a copyleft license is read for ideas only and never copied in.
@@ -29,13 +31,14 @@ root `check` fails when a module listed in `taffy.modules` has none.
 | Part | State |
 |---|---|
 | Build tooling (`tooling/taffy-gradle`, `tooling/taffy-catalog`) | Built and tested. Not published. |
-| `taffy-platform` | Complete for the planned list: 26 classes, 355 tests. Not published. |
+| `taffy-platform` | Complete for the planned list: 26 classes, 366 tests. Not published. |
 | `taffy-test` | 8 helpers, 96 tests. Not published. |
 | `taffy-config` | 7 classes, 161 tests. Not published. |
 | `taffy-storage` | 15 classes, 324 tests, 55 of them against MySQL, MariaDB and PostgreSQL in Docker. Not published. |
 | `taffy-hooks` | 30 classes, 13 of them public, 313 tests. Not published. |
 | `taffy-gui` | 41 classes, 23 of them public, 650 tests. Not published. |
-| `taffy-metrics`, `taffy-comficonf` | Not started. |
+| `taffy-metrics` | 10 classes, 3 of them public, 172 tests. Not published. |
+| `taffy-comficonf` | Not started. |
 
 ## What `taffy-platform` holds
 
@@ -130,6 +133,19 @@ The plugin reads its layout files and settings and passes the values in; the lib
 `Menus.keys(kinds)` and `Prompts.KEYS` list the lang keys a plugin ships. The package Javadoc walks through
 building, opening, prompting, reloading and disabling.
 
+## What `taffy-metrics` holds
+
+| Area | Classes |
+|---|---|
+| Charts | `MetricChart`: string, number, bool, string list and counter charts from one definition for both providers, taking only JDK types. Ids match `^[a-z0-9_]+$` and may not be one FastStats fills itself. A counter reads one running total, and each provider reports its own increase since it last reported. |
+| Start | `MetricsBuilder`: the owner `Plugin`, its `ErrorReports` and its switch, then the bStats service id, the FastStats token and the charts, then `start()` once at the end of enable. An unset id or token leaves that provider off; a provider that fails to start logs one warning. |
+| Running metrics | `Metrics`: readers for a diagnostics command (`bStatsStarted`, `fastStatsSdk`, `fastStatsEnabled`, `fastStatsSubmitting`, `fastStatsCharts`, `fastStatsErrorTracking`), `report` for a plugin that sends its handled errors to two places, and `shutdown` as the last disable step. |
+| Handled errors | `start()` installs the FastStats route into `ErrorReports`, which delivers the reports held from enable. Each source gets its own FastStats tracker, so repeats merge with a count; the number of sources and kinds is bounded. Messages pass eight anonymize rules on top of the SDK's own. |
+| Taffy usage | A `taffy_version` chart on Taffy's own bStats and FastStats entries, started from every plugin with its switch on. It ships inert, below. |
+
+No public signature names a bStats or FastStats type. The package Javadoc walks through enable, an enable that
+gives up early, handled errors, diagnostics and disable.
+
 ## Design defaults
 
 These were open and are now fixed in code. Nothing is published, so each can still change.
@@ -143,10 +159,10 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 | Message prefix | Shown only where a template writes `<prefix>`. Never prepended. |
 | Missing message key | Renders as red `missing:key`. Never throws. A menu button whose name key is missing shows the marker of its last key. |
 | Scheduler at disable | It never waits and never runs leftover work. Every method reports refusal: `false`, a failed future, the `retired` callback, or `RejectedExecutionException` from `asyncExecutor()`. Work that must settle is tracked in `PendingSettlements`. |
-| Error sink | One `ErrorReports` instance the plugin creates and passes around. A metrics module installs its reporter into it. |
+| Error sink | One `ErrorReports` instance the plugin creates and passes around, with one target. Reports made before the first install or clear are held, the first per source and at most 16, and the first install receives them. `taffy-metrics` installs the FastStats route at `start()`, so a plugin installs no target of its own before it. |
 | Testing Paper code | Mockito mocks of Paper interfaces, static and construction mocks where code touches a static or `new ItemStack`. No mock server library. |
 | Package layout | One flat package per module. `so.alaz.taffy.platform` is not split: growth goes into modules. |
-| Disable order | `PlaceholderRegistration.unregister`, `Menus.shutdown`, `Scheduler.close`, `TaskGate.close`, `PendingSettlements.settleAll`, storage close, `DiscordWebhook.close`. The package Javadoc states it. |
+| Disable order | `PlaceholderRegistration.unregister`, `Menus.shutdown`, `Scheduler.close`, `TaskGate.close`, `PendingSettlements.settleAll`, storage close, `DiscordWebhook.close`, `Metrics.shutdown`. The package Javadoc states it. |
 | Storage base | Tradefloor's storage package. The plugin passes its migrations and a function that opens their scripts, such as `plugin::getResource`. Config reading stays in the plugin, which builds `StorageSettings`. |
 | Rollback retry | Opt in, through `asyncRetrying` and `readRetrying`. Plain `async` and `read` never rerun work, because work may have effects outside the database. |
 | Config base | `ConfigLoader` and `ConfigReader` take a data folder `Path`, a supplier of the shipped file and a `Logger` or a line consumer. Nothing calls `JavaPlugin.getConfig` or `reloadConfig`. |
@@ -158,6 +174,7 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 | Hook failures | At detection, not visible and missing the API log one warning; could not be hooked logs one warning and is reported to `ErrorReports` under `hook.<name>`. Each economy lookup is a detection of its own, so it warns again. Later, a failure inside an integration is logged at most once a minute per kind of call; item builds and every LuckPerms and WorldGuard call are also reported, item id reads and placeholder requests are not. |
 | Menu layouts | Values the plugin builds in code or reads from its own files. Taffy reads no menu file and ships no lang file. |
 | Menu threads | A menu opens, draws and closes on the viewer's entity thread. Work from a click goes through `openLater`, `rerenderLater`, `closeLater` and `askLater`. |
+| Metrics SDKs | bStats and FastStats are runtime dependencies of `taffy-metrics`: a plugin compiles without them and shades them relocated. `so.alaz.paper-plugin` relocates both and keeps one `META-INF/faststats.properties`. Neither is ever a Paper runtime library. |
 | ComfiConf | Its own opt-in module, `taffy-comficonf`, so a plugin that does not use ComfiConf carries none of it. |
 | Test conventions | `so.alaz.java` runs tests under the `tr-TR` locale and the `Pacific/Auckland` zone, passes the Mockito jar on each test task's classpath as a Java agent, and runs javadoc with `-Xdoclint:all,-missing` and `--no-fonts`. |
 
@@ -165,8 +182,7 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 
 In this order, each as its own module that depends only on `taffy-platform`:
 
-1. `taffy-metrics`: bStats and FastStats wrappers that install into `ErrorReports`.
-2. `taffy-comficonf`: the ComfiConf registration, connect guard and YAML file provider. It builds on
+1. `taffy-comficonf`: the ComfiConf registration, connect guard and YAML file provider. It builds on
    `StrictYaml`, `ConfigHolder` and `RestartKeys`, and is the one module allowed ComfiConf types in its
    public signatures.
 
@@ -177,7 +193,7 @@ A `v*` tag publishes everything, runtime modules included, and makes these perma
 | Decision | Today |
 |---|---|
 | Plugin ids | `so.alaz.settings`, `so.alaz.repositories`, `so.alaz.java`, `so.alaz.coverage`, `so.alaz.paper-api`, `so.alaz.library`, `so.alaz.paper-plugin` |
-| Version model | One version for the plugins, the catalog and the runtime modules. The catalog has a `taffy` version and one library per module: `alaz.taffy.platform`, `alaz.taffy.test`, `alaz.taffy.config`, `alaz.taffy.storage`, `alaz.taffy.hooks`, `alaz.taffy.gui`. |
+| Version model | One version for the plugins, the catalog and the runtime modules. The catalog has a `taffy` version and one library per module: `alaz.taffy.platform`, `alaz.taffy.test`, `alaz.taffy.config`, `alaz.taffy.storage`, `alaz.taffy.hooks`, `alaz.taffy.gui`, `alaz.taffy.metrics`. |
 | Repository name | `taffy-api` on GitHub, `taffy` everywhere else |
 
 Also unverified: the publish credentials for this repository, whether the token may write the plugin
@@ -197,6 +213,12 @@ data components hid, the lifetime of a cancel link's click callback, chat event 
 messages, the crafting or creative screen check that decides whether a finished prompt reopens its menu,
 and `registerEvents` on the two package-private listeners (a unit test covers Paper's `EventExecutor.create`).
 
+`taffy-metrics` is tested against the real SDK classes with a loopback HTTP sink in place of the metrics
+servers. Only a server run and a real dashboard cover: real bStats and FastStats submissions, bStats taking one
+Taffy service id from many plugin jars, Paper's `ServerExceptionEvent` path into FastStats, the uncaught
+exception handler chain across several shaded copies, and how long the final send blocks the disabling thread
+on a stalled network.
+
 ## Differences from the plugin copies
 
 A plugin that replaces its own class with the Taffy one meets these. Classes not listed behave as their
@@ -214,7 +236,7 @@ plugin copy did.
 | `Sounds` | A null spec reads as blank: valid, and nothing is played. |
 | `Classes` | `present` takes the logger to warn on. No static logger. The warning says the class is treated as absent. |
 | `ItemBuilder` | Glow uses the enchantment glint override, with no enchantment and no item flag. A glowing item built this way does not stack with one built by the enchantment form. |
-| `ErrorReports` | An instance, not static methods. `install` takes a `BiConsumer<String, Throwable>`. `report` discards anything the target throws. |
+| `ErrorReports` | An instance, not static methods. `install` takes a `BiConsumer<String, Throwable>`. `report` discards anything the target throws. Reports made before the first install are held, the first per source and at most 16, and delivered on that install; `clear()` or `install(null)` first discards them. |
 | `Shutdown` | `closeQuietly` is static and takes the logger and the `ErrorReports`. It logs plain text. |
 | `Scheduler` | `new Scheduler(plugin)`. `global`, `async`, `delayedAsync` and `repeatingAsync` return `boolean` and never throw at disable. Delays are `Duration`. `repeatingAsync` returns no task handle: `close()` cancels the repeating tasks. No database tag or executor. A failed Folia lookup logs the `Classes.present` warning. |
 | `SkullBuilder` | `fromName` and `fromUuid` are instance methods on `new SkullBuilder(executor)`. No thread pool of its own; the cache belongs to the instance. A rejected lookup gives a blank head. `fromUrl` rejects a quote or backslash. |
@@ -233,6 +255,10 @@ plugin copy did.
 | `MenuListener` | Built by `Menus` over its marker and registered through `menus.listener()`. Cancels at `LOWEST` and again at `HIGHEST`, dispatches plain clicks only, and reports a failing button to `ErrorReports` under `gui.click`. |
 | `Prompts` | Chat and anvil only: the sign prompt stays in Tradefloor. Built from the menus, the mode, the Bedrock check and the timer; one listener holds the chat and anvil handlers. A second `Prompts` over one `Menus`, or over menus that were shut down, is refused. `askLater` asks from a button. Taffy `Messages` adds no prefix, so prompt and error lines show one only where the lang text writes `<prefix>`. |
 | `IconStacks` | Hides an item's details through `ItemMeta` and `ItemFlag` instead of data components, so it runs off a server. |
+| `MetricChart` | Ids are checked against `^[a-z0-9_]+$` and the FastStats built-in field names when the chart is declared, and nulls are refused. The string, number and bool suppliers may return null, which leaves the value out. On FastStats a supplier that throws is also reported to error tracking on every read. |
+| `MetricsBuilder` | Takes a `Plugin`, the `ErrorReports` and the switch. `bStats(int)` and `fastStats(String)` replace `enable(MetricProvider, String)`; error tracking is always on with FastStats. A second `start()`, or a chart added after it, throws. A token that is not 32 lowercase letters and digits is refused before FastStats writes its shared config. A failed FastStats start is shut down without a send, and the JVM uncaught exception handler is detached when no error service exists. |
+| `Metrics` | Readers read false or null once shut down, and `bStatsStarted` reads false when the server owner turned bStats off. New `fastStatsCharts`. `report` is public. `shutdown` clears the error sink, stops the Taffy usage metrics, then bStats, then makes the FastStats final send, and detaches the handler only while it is this copy's. Handled errors go to one tracker per source instead of one attribute per report, so identical reports merge. |
+| `CounterMark` | After a total goes down, the FastStats mark follows it as the bStats mark does. |
 | `Migrator` | Creates its own version table, refuses migrations that are not strictly increasing, reads and splits every pending script before the backup, names the failing migration and statement, runs SQLite migrations with foreign keys off and checks them before commit, and locks the database on the server dialects. |
 
 ## Open API questions
@@ -275,12 +301,26 @@ None blocks the next module. Each is settled before the first publish.
 - On Folia, a menu or prompt anvil of a player the disabling thread does not own stays open after disable.
 - A placeholder name outside MiniMessage's tag characters works in PlaceholderAPI and never resolves in
   MiniPlaceholders. Names that differ only in case collide in MiniPlaceholders.
+- `Metrics.fastStatsErrorTracking()` cannot see a target the plugin installs after `start()`, which takes the
+  FastStats route away. A composed target that also calls `Metrics.report` keeps it.
+- `Metrics.shutdown`'s final send runs on the disabling thread with no upper bound on a stalled name lookup
+  or response. Bounding it needs a short-lived thread, which the thread rule above does not allow.
+- FastStats 0.31.0 drops a handled report made while an accepted error send is in flight, because the send
+  clears every tracker afterwards. Only the SDK can fix it.
+- A shadow jar without `META-INF/faststats.properties` still writes the shared FastStats config before it
+  fails. `so.alaz.paper-plugin` keeps the file; a hand-built shadow jar may not.
+- After 32 kinds of error in one source, new kinds from that source are dropped for the life of the handle.
+- Skipping a send writes `SimpleContext.submissionActive`, a public FastStats field the SDK does not document.
+  Re-check it, with the first-run and opt-out behaviour, at every FastStats version bump.
 
 ## Tooling notes
 
 - With the build cache on, `cleanTest` restores test results. A forced rerun needs `--no-build-cache`.
 - `--no-fonts` needs javadoc from JDK 23 or newer. `so.alaz.java` assumes the Java 25 toolchain.
 - A plugin can override the test locale and zone with `systemProperty` on its test task.
+- The tooling TestKit suite builds a plugin against copies of `taffy-platform` and `taffy-metrics`. Its first
+  run in a fresh TestKit Gradle home needs network access to the Paper repository, Maven Central and
+  repo.faststats.dev, and takes about half a minute.
 
 ## A usage graph for a shaded library
 
@@ -288,7 +328,12 @@ A shaded library has no download counter. It can still have a live graph: `taffy
 metrics page that belongs to Taffy, from inside every plugin that shades it, with a chart of the Taffy
 version. Every server running any so.alaz plugin then counts toward one Taffy graph.
 
-This needs a metrics entry created for Taffy, and `taffy-metrics` to exist.
+`taffy-metrics` builds it and ships it inert: Taffy's bStats service id and FastStats token are unset in
+`TaffyUsage`, so nothing starts. Turning it on is the owner's action: register Taffy on bStats (Bukkit) and
+on FastStats, then set the two constants. Each plugin with its metrics switch on then runs a second bStats
+instance, with its own thread, and a second FastStats context that sends metrics only and makes no final
+send. bStats' default plugin version chart on Taffy's page shows the host plugins' versions, so only the
+`taffy_version` chart identifies Taffy.
 
 Taffy stays shaded. Libraries shipped as a separately installed plugin show a download count that
 mostly mirrors their own dependents, and pay for it with version drift between the library and the

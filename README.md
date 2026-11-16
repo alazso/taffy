@@ -43,8 +43,7 @@ plugins {
 
 dependencies {
     compileOnly(alaz.paper.api)
-    implementation(alaz.bstats.bukkit)
-    implementation(alaz.faststats.bukkit)
+    implementation(alaz.taffy.metrics)
     testImplementation(alaz.junit.jupiter)
     testRuntimeOnly(alaz.junit.platform.launcher)
 }
@@ -87,6 +86,7 @@ To try an unpublished build, run `./gradlew publishToMavenLocal` here and add `m
 | [`taffy-storage`](taffy-storage) | Database access over HikariCP for SQLite, MySQL, MariaDB and PostgreSQL: `Storage` runs work in transactions on its own threads and migrates the schema from the plugin's own scripts. HikariCP and the drivers are not bundled: list them in `paperPlugin.runtimeLibraries`. `alaz.taffy.storage` in the catalog. |
 | [`taffy-hooks`](taffy-hooks) | Integrations behind Taffy interfaces: `CustomItems` (ItemsAdder, Nexo, Oraxen, HeadDatabase), a Vault economy through `EconomyProvider.vault`, LuckPerms through `PermissionProvider`, WorldGuard through `RegionProvider`, and `PlaceholderExpansionBuilder` for PlaceholderAPI and MiniPlaceholders. The integration APIs are not bundled or published; a plugin lists each integration in `paper-plugin.yml` under `dependencies.server` with `load: BEFORE` and `required: false`. `alaz.taffy.hooks` in the catalog. |
 | [`taffy-gui`](taffy-gui) | Chest menus: layouts built in code or from the plugin's own files, icons, pagination and a footer, menus opened on the viewer's thread, click safety that keeps shown items from leaking, and text prompts in chat or an anvil. `Messages` lists from `taffy-platform` give the lore. `alaz.taffy.gui` in the catalog. |
+| [`taffy-metrics`](taffy-metrics) | bStats and FastStats from one set of charts through `MetricsBuilder`, with the plugin's handled errors sent from `ErrorReports` to FastStats error tracking. The SDKs come as runtime dependencies, resolve from repo.faststats.dev and are relocated by `so.alaz.paper-plugin`. A server owner turns them off in `plugins/bStats/config.yml` and `plugins/faststats/config.properties` (`enabled`, `submitMetrics`, `submitErrors`, `submitAdditionalMetrics`). FastStats data is pseudonymous. `alaz.taffy.metrics` in the catalog. |
 | [`taffy-test`](taffy-test) | Test helpers: `ApiRules`, `CapturedLog`, `FakeItems`, `FakeFolders`, `FaultyDataSource`, `JvmDefaults`, `RaceRunner`, `SimulatedClasspath`. `alaz.taffy.test` in the catalog. |
 | [`tooling/taffy-gradle`](tooling/taffy-gradle) | The Gradle plugins listed below, published as `so.alaz.taffy:taffy-gradle`. |
 | [`tooling/taffy-catalog`](tooling/taffy-catalog) | The version catalog, built from [`gradle/libs.versions.toml`](gradle/libs.versions.toml). |

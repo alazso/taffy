@@ -80,6 +80,16 @@ tasks.withType<Test>().configureEach {
         .withPropertyName("taffyProperties").withPathSensitivity(PathSensitivity.NONE)
     val repositoryUri = testRepository.map { it.asFile.toURI().toString().trimEnd('/') + "/" }
     jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dtaffy.testRepository=" + repositoryUri.get()) })
+    // A test builds and publishes copies of these runtime modules in its own directory.
+    val taffyRoot = rootProject.layout.projectDirectory.dir("..")
+    inputs.files(
+        taffyRoot.file("taffy-platform/build.gradle.kts"),
+        taffyRoot.dir("taffy-platform/src/main"),
+        taffyRoot.file("taffy-metrics/build.gradle.kts"),
+        taffyRoot.dir("taffy-metrics/src/main"),
+    ).withPropertyName("shadedModules").withPathSensitivity(PathSensitivity.RELATIVE)
+    val taffyRootPath = taffyRoot.asFile.canonicalPath
+    jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dtaffy.sourceRoot=$taffyRootPath") })
 }
 
 publishing {

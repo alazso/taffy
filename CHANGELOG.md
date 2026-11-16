@@ -41,13 +41,20 @@ All notable changes to Taffy are documented here. This project follows
   with click safety from `Menus.listener()`, and text prompts in chat or an anvil (`Prompts`,
   `PromptRequest`, `Answer`) with their listener from `Prompts.listener()`.
 - `Messages` keeps a YAML list as its lines and gains `has` and `lines`.
+- `taffy-metrics` module: `MetricChart` (string, number, bool, string list and counter charts for bStats and
+  FastStats from one definition), `MetricsBuilder` and `Metrics` (diagnostics readers, `report`, `shutdown`).
+  Handled errors reported to `ErrorReports` reach FastStats error tracking under their source. A
+  `taffy_version` usage chart for Taffy's own metrics ships inert until Taffy's entries exist. bStats and
+  FastStats are runtime dependencies, relocated by the plugin.
+- `ErrorReports` holds the reports made before its first install, the first per source and at most 16, and
+  delivers them on that install.
 - `taffy-test` module: `ApiRules`, `CapturedLog`, `FakeItems`, `FakeFolders`, `FaultyDataSource`,
   `JvmDefaults`, `RaceRunner` and `SimulatedClasspath`. `SimulatedClasspath.hiding` copies a module's own
   classes onto a loader that hides chosen packages, with their code source kept so coverage counts them.
 - `Durations`, `Colors` and `Expiry` expose a public `EXPECTED` text and fail with
   `invalid <thing> '<value>': expected <EXPECTED>`.
 - Catalog entries for Taffy's own modules: `alaz.taffy.platform`, `alaz.taffy.test` and
-  `alaz.taffy.config`, `alaz.taffy.storage`, `alaz.taffy.hooks` and `alaz.taffy.gui` resolve at the catalog's version. The module list is the Gradle property
+  `alaz.taffy.config`, `alaz.taffy.storage`, `alaz.taffy.hooks`, `alaz.taffy.gui` and `alaz.taffy.metrics` resolve at the catalog's version. The module list is the Gradle property
   `taffy.modules`.
 - `so.alaz.java` passes the Mockito jar on each test task's classpath as a Java agent, runs tests
   under the `tr-TR` locale and the `Pacific/Auckland` zone, and runs javadoc with
