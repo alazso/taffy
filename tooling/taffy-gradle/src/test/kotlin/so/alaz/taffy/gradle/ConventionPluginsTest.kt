@@ -448,12 +448,14 @@ class ConventionPluginsTest {
                 val test = alaz.taffy.test
                 val config = alaz.taffy.config
                 val storage = alaz.taffy.storage
+                val hooks = alaz.taffy.hooks
                 doLast {
                     println("paper=" + paper.get())
                     println("platform=" + platform.get())
                     println("test=" + test.get())
                     println("config=" + config.get())
                     println("storage=" + storage.get())
+                    println("hooks=" + hooks.get())
                 }
             }
             """,
@@ -466,6 +468,7 @@ class ConventionPluginsTest {
         assertThat(result.output).containsPattern("test=so\\.alaz\\.taffy:taffy-test:\\d+\\.\\d+")
         assertThat(result.output).containsPattern("config=so\\.alaz\\.taffy:taffy-config:\\d+\\.\\d+")
         assertThat(result.output).containsPattern("storage=so\\.alaz\\.taffy:taffy-storage:\\d+\\.\\d+")
+        assertThat(result.output).containsPattern("hooks=so\\.alaz\\.taffy:taffy-hooks:\\d+\\.\\d+")
         val pom = projectDirectory.resolve("demo-api/build/publications/library/pom-default.xml").readText()
         assertThat(pom).contains(
             "<groupId>so.alaz.demo</groupId>",

@@ -30,10 +30,11 @@ root `check` fails when a module listed in `taffy.modules` has none.
 |---|---|
 | Build tooling (`tooling/taffy-gradle`, `tooling/taffy-catalog`) | Built and tested. Not published. |
 | `taffy-platform` | Complete for the planned list: 26 classes, 346 tests. Not published. |
-| `taffy-test` | 8 helpers, 88 tests. Not published. |
+| `taffy-test` | 8 helpers, 96 tests. Not published. |
 | `taffy-config` | 7 classes, 161 tests. Not published. |
 | `taffy-storage` | 15 classes, 324 tests, 55 of them against MySQL, MariaDB and PostgreSQL in Docker. Not published. |
-| `taffy-hooks`, `taffy-gui`, `taffy-metrics`, `taffy-comficonf` | Not started. |
+| `taffy-hooks` | 30 classes, 13 of them public, 313 tests. Not published. |
+| `taffy-gui`, `taffy-metrics`, `taffy-comficonf` | Not started. |
 
 ## What `taffy-platform` holds
 
@@ -59,7 +60,7 @@ Test helpers for Taffy's modules, published so plugin test suites can use them t
 | `FakeFolders` | A folder whose listing fails, to test unreadable directories. |
 | `JvmDefaults` | Runs a block under another default locale or time zone, then restores it. |
 | `RaceRunner` | Starts several threads at once to race one operation. |
-| `SimulatedClasspath` | A class loader that hides or adds named classes. |
+| `SimulatedClasspath` | A class loader that adds named classes, or copies a module's own classes onto a loader that hides whole packages. The copies keep their code source, so coverage counts them. |
 | `FaultyDataSource` | Wraps a `DataSource` and fails connections or statements on demand. |
 
 ## What `taffy-config` holds
@@ -95,6 +96,25 @@ takes a database lock on the server dialects so two servers sharing one database
 A plugin lists HikariCP and each driver it offers in `paperPlugin.runtimeLibraries`, and the same on its
 test runtime classpath. `taffy-storage` publishes no dependency on them.
 
+## What `taffy-hooks` holds
+
+| Class | What it does |
+|---|---|
+| `CustomItems`, `CustomItemPlugin`, `CustomItemRef` | Detects ItemsAdder, Nexo, Oraxen and HeadDatabase, builds an item from a reference such as `itemsadder:ns:id` or `hdb:7129`, and reads a stack back to its `<key>:<id>`. Plugins are tried in that order. `statuses()` gives each plugin's state as it is now. |
+| `EconomyProvider`, `EconomyResult`, `EconomyWatcher` | The Vault economy in `BigDecimal` and `UUID`, with `has`, `withdraw` (with a start check that runs before money moves), `deposit` and a result status. `EconomyProvider.vault` finds it and gives its state with a reason for the owner when there is none, such as no economy plugin registered with Vault. `EconomyWatcher` triggers a new lookup when an economy registers late. |
+| `PermissionProvider` | LuckPerms groups and permissions: primary group, groups, add, add for a time, remove, set and unset a permission. |
+| `RegionProvider` | The WorldGuard region ids at a location. |
+| `PlaceholderExpansionBuilder`, `PlaceholderRegistration` | Registers one set of player, offline and global placeholders with PlaceholderAPI and MiniPlaceholders, whichever are present, gives the state of each backend, and unregisters them at disable. |
+| `HookState`, `HookStatus`, `Detected` | What detection found for one integration, worded for the server owner: switched off, not installed, not enabled, not visible, missing the API, nothing registered, could not be hooked, on, or waiting for its items. A status can carry a reason that says what the owner can do. `Detected` holds the provider and reads its status when asked. |
+
+Each integration sits behind one of these types. The class that calls it loads only after its plugin is found
+installed and enabled and its API classes visible, so a server without the integration never loads a class that
+names it. `AbsentIntegrationsTest` runs every entry point on a copy of the module that cannot see any integration.
+
+A plugin lists each integration it uses in `paper-plugin.yml` under `dependencies.server` with `load: BEFORE`
+and `required: false`. One that is enabled but not listed is `NOT_VISIBLE`, and its warning names the missing
+entry. The package Javadoc walks through enable, showing the state to the owner, failures and disable.
+
 ## Design defaults
 
 These were open and are now fixed in code. Nothing is published, so each can still change.
@@ -111,13 +131,16 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 | Error sink | One `ErrorReports` instance the plugin creates and passes around. A metrics module installs its reporter into it. |
 | Testing Paper code | Mockito mocks of Paper interfaces, static and construction mocks where code touches a static or `new ItemStack`. No mock server library. |
 | Package layout | One flat package per module. `so.alaz.taffy.platform` is not split: growth goes into modules. |
-| Disable order | `Scheduler.close`, `TaskGate.close`, `PendingSettlements.settleAll`, storage close, `DiscordWebhook.close`. The package Javadoc states it. |
+| Disable order | `PlaceholderRegistration.unregister`, `Scheduler.close`, `TaskGate.close`, `PendingSettlements.settleAll`, storage close, `DiscordWebhook.close`. The package Javadoc states it. |
 | Storage base | Tradefloor's storage package. The plugin passes its migrations and a function that opens their scripts, such as `plugin::getResource`. Config reading stays in the plugin, which builds `StorageSettings`. |
 | Rollback retry | Opt in, through `asyncRetrying` and `readRetrying`. Plain `async` and `read` never rerun work, because work may have effects outside the database. |
 | Config base | `ConfigLoader` and `ConfigReader` take a data folder `Path`, a supplier of the shipped file and a `Logger` or a line consumer. Nothing calls `JavaPlugin.getConfig` or `reloadConfig`. |
 | Config problems | Collected, never thrown one at a time. A warning uses the fallback and loading goes on; an error is collected and the caller decides. Lines name no plugin: the logger already does. |
 | Parser convention | `Durations`, `Colors` and `Expiry` expose a public `EXPECTED` text and fail with `invalid <thing> '<value>': expected <EXPECTED>`. Null is treated like any other bad value. `ItemBuilder`, `SkullBuilder` and `DiscordWebhook` are outside it. |
 | Values that must be quoted | A date with a time, a hex colour and a code such as `0451`. `ConfigReader` warns and asks for quotes when it meets one unquoted. |
+| Integration loading | Detected once at enable: switched on, installed, enabled, API classes visible, then the adapter is built. An adapter class loads only after every check passes and re-checks that its plugin is enabled on each call. No listener for an integration enabled later; the Vault economy is looked up again when `EconomyWatcher` fires. |
+| Integration entry points | The owner `Plugin`, then `ErrorReports`, then the owner's switch (a `boolean`, or a `Set<CustomItemPlugin>` for custom items), then the integration's own options. One integration gives a `Detected`, a group gives `statuses()`. Every status is read when asked and reads not enabled while its plugin is disabled, except the economy's, which a new lookup replaces. |
+| Hook failures | At detection, not visible and missing the API log one warning; could not be hooked logs one warning and is reported to `ErrorReports` under `hook.<name>`. Each economy lookup is a detection of its own, so it warns again. Later, a failure inside an integration is logged at most once a minute per kind of call; item builds and every LuckPerms and WorldGuard call are also reported, item id reads and placeholder requests are not. |
 | ComfiConf | Its own opt-in module, `taffy-comficonf`, so a plugin that does not use ComfiConf carries none of it. |
 | Test conventions | `so.alaz.java` runs tests under the `tr-TR` locale and the `Pacific/Auckland` zone, passes the Mockito jar on each test task's classpath as a Java agent, and runs javadoc with `-Xdoclint:all,-missing` and `--no-fonts`. |
 
@@ -125,10 +148,9 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 
 In this order, each as its own module that depends only on `taffy-platform`:
 
-1. `taffy-hooks`: custom items, economy, permissions, regions, PlaceholderAPI expansion builder.
-2. `taffy-gui`: chest menus, pagination, click handling.
-3. `taffy-metrics`: bStats and FastStats wrappers that install into `ErrorReports`.
-4. `taffy-comficonf`: the ComfiConf registration, connect guard and YAML file provider. It builds on
+1. `taffy-gui`: chest menus, pagination, click handling.
+2. `taffy-metrics`: bStats and FastStats wrappers that install into `ErrorReports`.
+3. `taffy-comficonf`: the ComfiConf registration, connect guard and YAML file provider. It builds on
    `StrictYaml`, `ConfigHolder` and `RestartKeys`, and is the one module allowed ComfiConf types in its
    public signatures.
 
@@ -139,7 +161,7 @@ A `v*` tag publishes everything, runtime modules included, and makes these perma
 | Decision | Today |
 |---|---|
 | Plugin ids | `so.alaz.settings`, `so.alaz.repositories`, `so.alaz.java`, `so.alaz.coverage`, `so.alaz.paper-api`, `so.alaz.library`, `so.alaz.paper-plugin` |
-| Version model | One version for the plugins, the catalog and the runtime modules. The catalog has a `taffy` version and one library per module: `alaz.taffy.platform`, `alaz.taffy.test`, `alaz.taffy.config`, `alaz.taffy.storage`. |
+| Version model | One version for the plugins, the catalog and the runtime modules. The catalog has a `taffy` version and one library per module: `alaz.taffy.platform`, `alaz.taffy.test`, `alaz.taffy.config`, `alaz.taffy.storage`, `alaz.taffy.hooks`. |
 | Repository name | `taffy-api` on GitHub, `taffy` everywhere else |
 
 Also unverified: the publish credentials for this repository, whether the token may write the plugin
@@ -147,6 +169,11 @@ marker paths outside `so/alaz/taffy`, and CI on Gradle running Java 17 and Java 
 and PostgreSQL suites of `taffy-storage` pass against MySQL 8.4, MariaDB 11.4 and PostgreSQL 17 in
 containers, including two starts migrating one shared database at once, but only over unencrypted
 connections: the `TRUST` and `VERIFY_FULL` SSL modes have not run against a real server.
+
+`taffy-hooks` is tested against the integrations' API jars with Mockito. Only a server run covers: Paper's
+class loader isolation that gives `NOT_VISIBLE`, the Nexo, Oraxen and WorldGuard calls whose entry classes
+cannot start off a server, PlaceholderAPI registration and request dispatch, and how LuckPerms merges a
+temporary group with an existing one.
 
 ## Differences from the plugin copies
 
@@ -175,6 +202,11 @@ plugin copy did.
 | `ConfigReader` | `parsed` with a fallback text replaces `charge`. Messages name no plugin. Blank counts as absent. New range, choice, decimal and long readers. An unquoted date with a time asks for quotes. |
 | `DiscordWebhook` | New `isWebhookUrl`. Otherwise unchanged; it still owns its HTTP client threads. |
 | `Storage` | From Tradefloor's copy. Starts PostgreSQL and MySQL as well. Takes the name, logger, error sink, migrations and script function. Names no plugin in threads, pools or messages. A cancelled start releases what it built. `close` logs how much work it dropped. |
+| `CustomItems` | Merges the id reading of Tradefloor's copy with the item building of ProVouchers' copy. Plugins are tried ItemsAdder, Nexo, Oraxen, HeadDatabase. An unqualified reference is tried with its bare id. ItemsAdder items are built only once ItemsAdder has loaded them. An id read from a plugin still loading its items counts as a failure. An `Error` other than `LinkageError` propagates. |
+| `HookStatus` | Tradefloor's detection states as an enum, plus a reason for the owner. The wording names no plugin or config key. A factory that returns `null` is `FAILED`. `NOT_VISIBLE` and `NOT_REGISTERED` are new, and every integration can be switched off. |
+| `EconomyProvider` | From Tradefloor's provider, synchronous, with no transaction id, display name or offline policy. ProVouchers' `double` and `boolean` become `BigDecimal` and `EconomyResult`. A withdraw is covered only by the unrounded balance, and an unrounded overdraft is `OVERDRAWN`. |
+| `PermissionProvider` | Takes a `UUID`, not a `Player`. LuckPerms loads only after detection. A temporary group replaces an existing one only when it ends later. A duration past `Instant.MAX` is refused. Failures are logged as well as reported. |
+| `RegionProvider` | The owner plugin is passed in. A disabled WorldGuard gives no regions. Failures are logged as well as reported. Ids are compared with `equalsIgnoreCase`. |
 | `Migrator` | Creates its own version table, refuses migrations that are not strictly increasing, reads and splits every pending script before the backup, names the failing migration and statement, runs SQLite migrations with foreign keys off and checks them before commit, and locks the database on the server dialects. |
 
 ## Open API questions
@@ -205,6 +237,13 @@ None blocks the next module. Each is settled before the first publish.
 - The migration lock on MySQL and MariaDB is server-wide, so two databases on one server with the same
   table prefix take turns migrating.
 - `Storage.close` interrupts work still running when the drain runs out.
+- A Vault that is not visible, lacks the API or fails warns again on every economy lookup, at least
+  twice at startup. Holding back a repeat would need state in the caller.
+- Plugins join `HookStatus.describe()` and `reason()` themselves for a diagnostics line.
+- Each `CustomItems.detect` registers another ItemsAdder listener that stays until the plugin disables.
+- `new CustomItemRef(" ", id)` keeps a blank hint, while `parse` turns it into `null`.
+- A placeholder name outside MiniMessage's tag characters works in PlaceholderAPI and never resolves in
+  MiniPlaceholders. Names that differ only in case collide in MiniPlaceholders.
 
 ## Tooling notes
 

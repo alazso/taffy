@@ -28,12 +28,21 @@ All notable changes to Taffy are documented here. This project follows
   on its own database threads, opt-in rollback retry), `StorageSettings`, `Dialect`, `Migration` with
   an internal migrator, `Tx`, `TxWork`, `Params`, `Row`, `MoneyColumn` and the storage exceptions.
   HikariCP and the drivers are compile-only and appear in no published dependency.
+- `taffy-hooks` module: `CustomItems`, `CustomItemPlugin` and `CustomItemRef` for ItemsAdder, Nexo,
+  Oraxen and HeadDatabase; `EconomyProvider`, `EconomyResult` and `EconomyWatcher` for a Vault
+  economy; `PermissionProvider` for LuckPerms; `RegionProvider` for WorldGuard;
+  `PlaceholderExpansionBuilder` and `PlaceholderRegistration` for PlaceholderAPI and MiniPlaceholders; and
+  `HookState`, `HookStatus` and `Detected` for what detection found. Every entry point takes the owner
+  plugin, the `ErrorReports` and the owner's switch, and every integration gives a `HookStatus` with a
+  reason for the owner where there is something to do. The integration APIs are compile-only and appear
+  in no published dependency.
 - `taffy-test` module: `ApiRules`, `CapturedLog`, `FakeItems`, `FakeFolders`, `FaultyDataSource`,
-  `JvmDefaults`, `RaceRunner` and `SimulatedClasspath`.
+  `JvmDefaults`, `RaceRunner` and `SimulatedClasspath`. `SimulatedClasspath.hiding` copies a module's own
+  classes onto a loader that hides chosen packages, with their code source kept so coverage counts them.
 - `Durations`, `Colors` and `Expiry` expose a public `EXPECTED` text and fail with
   `invalid <thing> '<value>': expected <EXPECTED>`.
 - Catalog entries for Taffy's own modules: `alaz.taffy.platform`, `alaz.taffy.test` and
-  `alaz.taffy.config` and `alaz.taffy.storage` resolve at the catalog's version. The module list is the Gradle property
+  `alaz.taffy.config`, `alaz.taffy.storage` and `alaz.taffy.hooks` resolve at the catalog's version. The module list is the Gradle property
   `taffy.modules`.
 - `so.alaz.java` passes the Mockito jar on each test task's classpath as a Java agent, runs tests
   under the `tr-TR` locale and the `Pacific/Auckland` zone, and runs javadoc with

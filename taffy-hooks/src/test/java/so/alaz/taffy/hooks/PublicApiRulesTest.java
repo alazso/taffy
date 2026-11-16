@@ -1,0 +1,39 @@
+package so.alaz.taffy.hooks;
+
+import org.junit.jupiter.api.Test;
+import so.alaz.taffy.test.ApiRules;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/** Checks the module's design rules against every class and file of its compiled main output. */
+class PublicApiRulesTest {
+
+    @Test
+    void scanFindsTheModuleClasses() throws Exception {
+        assertThat(ApiRules.classes(ApiLink.class))
+            .contains(ApiLink.class, HookState.class, HookStatus.class, Detected.class, Detection.class, Presence.class,
+                PluginPresence.class, CustomItemProvider.class, CustomItemPlugin.class, CustomItemRef.class,
+                ItemsAdderProvider.class, NexoProvider.class, OraxenProvider.class, HeadDatabaseProvider.class,
+                CustomItems.class, CustomItems.Resolution.class, EconomyResult.class, EconomyResult.Status.class,
+                EconomyProvider.class, Emulated.class, VaultEconomy.class, MissingEconomy.class, EconomyLookup.class,
+                EconomyWatcher.class, PermissionProvider.class, LuckPermsPermissions.class,
+                RegionProvider.class, WorldGuardRegions.class, PlaceholderExpansionBuilder.class,
+                PlaceholderRegistration.class, PapiExpansion.class, MiniExpansion.class)
+            .allSatisfy(type -> assertThat(type.getPackageName()).startsWith(getClass().getPackageName()));
+    }
+
+    @Test
+    void publicSignaturesNameOnlyAllowedTypes() throws Exception {
+        assertThat(ApiRules.signatureViolations(ApiLink.class)).isEmpty();
+    }
+
+    @Test
+    void noStaticFieldHoldsAPluginLoggerExecutorOrThread() throws Exception {
+        assertThat(ApiRules.staticHolderViolations(ApiLink.class)).isEmpty();
+    }
+
+    @Test
+    void mainOutputHoldsNoResourceFiles() throws Exception {
+        assertThat(ApiRules.resourceFiles(ApiLink.class)).isEmpty();
+    }
+}

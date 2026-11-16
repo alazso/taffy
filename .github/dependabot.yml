@@ -39,6 +39,7 @@ updates:
     ignore:
       - dependency-name: "io.papermc.paper:paper-api"
       - dependency-name: "org.gradle.toolchains.foojay-resolver-convention"
+      - dependency-name: "com.sk89q.worldguard:*"
       - dependency-name: "com.sk89q.worldedit:*"
       - dependency-name: "org.mariadb.jdbc:mariadb-java-client"
         update-types: ["version-update:semver-major"]
