@@ -29,12 +29,13 @@ root `check` fails when a module listed in `taffy.modules` has none.
 | Part | State |
 |---|---|
 | Build tooling (`tooling/taffy-gradle`, `tooling/taffy-catalog`) | Built and tested. Not published. |
-| `taffy-platform` | Complete for the planned list: 26 classes, 346 tests. Not published. |
+| `taffy-platform` | Complete for the planned list: 26 classes, 355 tests. Not published. |
 | `taffy-test` | 8 helpers, 96 tests. Not published. |
 | `taffy-config` | 7 classes, 161 tests. Not published. |
 | `taffy-storage` | 15 classes, 324 tests, 55 of them against MySQL, MariaDB and PostgreSQL in Docker. Not published. |
 | `taffy-hooks` | 30 classes, 13 of them public, 313 tests. Not published. |
-| `taffy-gui`, `taffy-metrics`, `taffy-comficonf` | Not started. |
+| `taffy-gui` | 41 classes, 23 of them public, 650 tests. Not published. |
+| `taffy-metrics`, `taffy-comficonf` | Not started. |
 
 ## What `taffy-platform` holds
 
@@ -115,6 +116,20 @@ A plugin lists each integration it uses in `paper-plugin.yml` under `dependencie
 and `required: false`. One that is enabled but not listed is `NOT_VISIBLE`, and its warning names the missing
 entry. The package Javadoc walks through enable, showing the state to the owner, failures and disable.
 
+## What `taffy-gui` holds
+
+| Area | Classes |
+|---|---|
+| Layouts | `MenuLayout`, `ItemLayout`, `PagerLayout` and `MenuKind`: the rows, items and list slots of a menu, built in code or from the plugin's own files, and the actions a menu has. |
+| Drawing | `Icon` (a button, a filler, a copy of a real item, or a stored item), `MenuText` (titles, names and lore from the layout or the lang file), `Frame` (with its footer) and `Pager`. Every shown copy carries the plugin's preview key. |
+| Runtime | `Menus` registers menus, opens them on the viewer's thread, pages, loads data in the background, plays the menu sounds, reloads layouts and shuts down. `Menu`, `MenuSession`, `Click`, `ClickHandler`, `Route`, `MenuSettings`, `ViewMemory` and `Cue` go with it. |
+| Click safety | The listener from `menus.listener()` cancels every click and drag in a menu, dispatches only plain clicks after a short opening window and a per-button debounce, and deletes a marked copy found anywhere outside a menu. `ClickGuard` names the clicks a button can get. |
+| Text prompts | `Prompts` asks a player for text in chat or in an anvil, with a timeout and a cancel link, and returns to the menu. It is built from the menus and reads everything else from them; the listener from `prompts.listener()` reads chat answers and guards the prompt anvil. `PromptRequest`, `Answer`, `PromptMode` and `BedrockPlayers` go with it. |
+
+The plugin reads its layout files and settings and passes the values in; the library ships no lang file.
+`Menus.keys(kinds)` and `Prompts.KEYS` list the lang keys a plugin ships. The package Javadoc walks through
+building, opening, prompting, reloading and disabling.
+
 ## Design defaults
 
 These were open and are now fixed in code. Nothing is published, so each can still change.
@@ -126,12 +141,12 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 | Message values | MiniMessage placeholders passed as `TagResolver`, inserted after the template is parsed. A template may write `{name}` as well as `<name>`. |
 | Placeholder order | `{name}` rewrite, then PlaceholderAPI on the template, then MiniMessage with the values. PlaceholderAPI never runs on a supplied value. |
 | Message prefix | Shown only where a template writes `<prefix>`. Never prepended. |
-| Missing message key | Renders as red `missing:key`. Never throws. |
+| Missing message key | Renders as red `missing:key`. Never throws. A menu button whose name key is missing shows the marker of its last key. |
 | Scheduler at disable | It never waits and never runs leftover work. Every method reports refusal: `false`, a failed future, the `retired` callback, or `RejectedExecutionException` from `asyncExecutor()`. Work that must settle is tracked in `PendingSettlements`. |
 | Error sink | One `ErrorReports` instance the plugin creates and passes around. A metrics module installs its reporter into it. |
 | Testing Paper code | Mockito mocks of Paper interfaces, static and construction mocks where code touches a static or `new ItemStack`. No mock server library. |
 | Package layout | One flat package per module. `so.alaz.taffy.platform` is not split: growth goes into modules. |
-| Disable order | `PlaceholderRegistration.unregister`, `Scheduler.close`, `TaskGate.close`, `PendingSettlements.settleAll`, storage close, `DiscordWebhook.close`. The package Javadoc states it. |
+| Disable order | `PlaceholderRegistration.unregister`, `Menus.shutdown`, `Scheduler.close`, `TaskGate.close`, `PendingSettlements.settleAll`, storage close, `DiscordWebhook.close`. The package Javadoc states it. |
 | Storage base | Tradefloor's storage package. The plugin passes its migrations and a function that opens their scripts, such as `plugin::getResource`. Config reading stays in the plugin, which builds `StorageSettings`. |
 | Rollback retry | Opt in, through `asyncRetrying` and `readRetrying`. Plain `async` and `read` never rerun work, because work may have effects outside the database. |
 | Config base | `ConfigLoader` and `ConfigReader` take a data folder `Path`, a supplier of the shipped file and a `Logger` or a line consumer. Nothing calls `JavaPlugin.getConfig` or `reloadConfig`. |
@@ -141,6 +156,8 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 | Integration loading | Detected once at enable: switched on, installed, enabled, API classes visible, then the adapter is built. An adapter class loads only after every check passes and re-checks that its plugin is enabled on each call. No listener for an integration enabled later; the Vault economy is looked up again when `EconomyWatcher` fires. |
 | Integration entry points | The owner `Plugin`, then `ErrorReports`, then the owner's switch (a `boolean`, or a `Set<CustomItemPlugin>` for custom items), then the integration's own options. One integration gives a `Detected`, a group gives `statuses()`. Every status is read when asked and reads not enabled while its plugin is disabled, except the economy's, which a new lookup replaces. |
 | Hook failures | At detection, not visible and missing the API log one warning; could not be hooked logs one warning and is reported to `ErrorReports` under `hook.<name>`. Each economy lookup is a detection of its own, so it warns again. Later, a failure inside an integration is logged at most once a minute per kind of call; item builds and every LuckPerms and WorldGuard call are also reported, item id reads and placeholder requests are not. |
+| Menu layouts | Values the plugin builds in code or reads from its own files. Taffy reads no menu file and ships no lang file. |
+| Menu threads | A menu opens, draws and closes on the viewer's entity thread. Work from a click goes through `openLater`, `rerenderLater`, `closeLater` and `askLater`. |
 | ComfiConf | Its own opt-in module, `taffy-comficonf`, so a plugin that does not use ComfiConf carries none of it. |
 | Test conventions | `so.alaz.java` runs tests under the `tr-TR` locale and the `Pacific/Auckland` zone, passes the Mockito jar on each test task's classpath as a Java agent, and runs javadoc with `-Xdoclint:all,-missing` and `--no-fonts`. |
 
@@ -148,9 +165,8 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 
 In this order, each as its own module that depends only on `taffy-platform`:
 
-1. `taffy-gui`: chest menus, pagination, click handling.
-2. `taffy-metrics`: bStats and FastStats wrappers that install into `ErrorReports`.
-3. `taffy-comficonf`: the ComfiConf registration, connect guard and YAML file provider. It builds on
+1. `taffy-metrics`: bStats and FastStats wrappers that install into `ErrorReports`.
+2. `taffy-comficonf`: the ComfiConf registration, connect guard and YAML file provider. It builds on
    `StrictYaml`, `ConfigHolder` and `RestartKeys`, and is the one module allowed ComfiConf types in its
    public signatures.
 
@@ -161,7 +177,7 @@ A `v*` tag publishes everything, runtime modules included, and makes these perma
 | Decision | Today |
 |---|---|
 | Plugin ids | `so.alaz.settings`, `so.alaz.repositories`, `so.alaz.java`, `so.alaz.coverage`, `so.alaz.paper-api`, `so.alaz.library`, `so.alaz.paper-plugin` |
-| Version model | One version for the plugins, the catalog and the runtime modules. The catalog has a `taffy` version and one library per module: `alaz.taffy.platform`, `alaz.taffy.test`, `alaz.taffy.config`, `alaz.taffy.storage`, `alaz.taffy.hooks`. |
+| Version model | One version for the plugins, the catalog and the runtime modules. The catalog has a `taffy` version and one library per module: `alaz.taffy.platform`, `alaz.taffy.test`, `alaz.taffy.config`, `alaz.taffy.storage`, `alaz.taffy.hooks`, `alaz.taffy.gui`. |
 | Repository name | `taffy-api` on GitHub, `taffy` everywhere else |
 
 Also unverified: the publish credentials for this repository, whether the token may write the plugin
@@ -174,6 +190,12 @@ connections: the `TRUST` and `VERIFY_FULL` SSL modes have not run against a real
 class loader isolation that gives `NOT_VISIBLE`, the Nexo, Oraxen and WorldGuard calls whose entry classes
 cannot start off a server, PlaceholderAPI registration and request dispatch, and how LuckPerms merges a
 temporary group with an existing one.
+
+`taffy-gui` is tested with Mockito and fake views. Only a server run covers: the anvil built through
+`MenuType.ANVIL` and the text it returns, whether the `ItemFlag`s hide the same tooltip lines Tradefloor's
+data components hid, the lifetime of a cancel link's click callback, chat event order with signed
+messages, the crafting or creative screen check that decides whether a finished prompt reopens its menu,
+and `registerEvents` on the two package-private listeners (a unit test covers Paper's `EventExecutor.create`).
 
 ## Differences from the plugin copies
 
@@ -197,7 +219,7 @@ plugin copy did.
 | `Scheduler` | `new Scheduler(plugin)`. `global`, `async`, `delayedAsync` and `repeatingAsync` return `boolean` and never throw at disable. Delays are `Duration`. `repeatingAsync` returns no task handle: `close()` cancels the repeating tasks. No database tag or executor. A failed Folia lookup logs the `Classes.present` warning. |
 | `SkullBuilder` | `fromName` and `fromUuid` are instance methods on `new SkullBuilder(executor)`. No thread pool of its own; the cache belongs to the instance. A rejected lookup gives a blank head. `fromUrl` rejects a quote or backslash. |
 | `Text` | `new Text(logger)`. Values go in as `TagResolver` after parsing. The viewer is the parse target, so audience placeholders resolve. A supplied `{name}` inside a click or insertion value is not filled in. A section-sign code in the template or in PlaceholderAPI output is converted instead of throwing. |
-| `Messages` | Takes the data folder, the bundled English file as a supplier and a logger. Prefix is opt-in. A missing key renders a marker. Every non-section YAML value is kept as text. `renderTemplate` replaces `format`; `fill` has no equivalent. Locale codes match in lower case with `-` read as `_`. A default locale with no file is warned about. A language file that is not valid UTF-8 is skipped with a warning. |
+| `Messages` | Takes the data folder, the bundled English file as a supplier and a logger. Prefix is opt-in. A missing key renders a marker. Every non-section YAML value is kept as text, and a list as its lines (a bare `-` is an empty line). New `has` and `lines`. `renderTemplate` replaces `format`; `fill` has no equivalent. Locale codes match in lower case with `-` read as `_`. A default locale with no file is warned about. A language file that is not valid UTF-8 is skipped with a warning. |
 | `ConfigLoader` | Messages name no plugin. Owner-keyed sections are a constructor argument. The upgrade write is atomic, forced to disk, and gives a new file the usual permissions. A shipped file that is not UTF-8 stops the load. |
 | `ConfigReader` | `parsed` with a fallback text replaces `charge`. Messages name no plugin. Blank counts as absent. New range, choice, decimal and long readers. An unquoted date with a time asks for quotes. |
 | `DiscordWebhook` | New `isWebhookUrl`. Otherwise unchanged; it still owns its HTTP client threads. |
@@ -207,6 +229,10 @@ plugin copy did.
 | `EconomyProvider` | From Tradefloor's provider, synchronous, with no transaction id, display name or offline policy. ProVouchers' `double` and `boolean` become `BigDecimal` and `EconomyResult`. A withdraw is covered only by the unrounded balance, and an unrounded overdraft is `OVERDRAWN`. |
 | `PermissionProvider` | Takes a `UUID`, not a `Player`. LuckPerms loads only after detection. A temporary group replaces an existing one only when it ends later. A duration past `Instant.MAX` is refused. Failures are logged as well as reported. |
 | `RegionProvider` | The owner plugin is passed in. A disabled WorldGuard gives no regions. Failures are logged as well as reported. Ids are compared with `equalsIgnoreCase`. |
+| `Menus` | From Tradefloor's menu framework. Takes layouts as values (no YAML reading), the server, the plugin's preview key, a sounds supplier, a locale function and the thread seams, each once. Gives its listener through `listener()` and plays cues through `play`. `shutdown` ends the prompts first. A reload is checked against each menu's kind and a refused reload keeps the old layouts. Render failures from a scheduled draw are logged and reported. A cancelled load and a load after shutdown are not failures. |
+| `MenuListener` | Built by `Menus` over its marker and registered through `menus.listener()`. Cancels at `LOWEST` and again at `HIGHEST`, dispatches plain clicks only, and reports a failing button to `ErrorReports` under `gui.click`. |
+| `Prompts` | Chat and anvil only: the sign prompt stays in Tradefloor. Built from the menus, the mode, the Bedrock check and the timer; one listener holds the chat and anvil handlers. A second `Prompts` over one `Menus`, or over menus that were shut down, is refused. `askLater` asks from a button. Taffy `Messages` adds no prefix, so prompt and error lines show one only where the lang text writes `<prefix>`. |
+| `IconStacks` | Hides an item's details through `ItemMeta` and `ItemFlag` instead of data components, so it runs off a server. |
 | `Migrator` | Creates its own version table, refuses migrations that are not strictly increasing, reads and splits every pending script before the backup, names the failing migration and statement, runs SQLite migrations with foreign keys off and checks them before commit, and locks the database on the server dialects. |
 
 ## Open API questions
@@ -220,7 +246,7 @@ None blocks the next module. Each is settled before the first publish.
   thread.
 - `Text.render` still throws for a `Placeholder.parsed` value that holds a section-sign code.
 - `CooldownManager` has no atomic check-and-start.
-- Additions later modules may need: `ItemBuilder` from an existing stack, list values in `Messages`,
+- Additions later modules may need: `ItemBuilder` from an existing stack,
   delayed and repeating tasks on the entity and global threads, a handle for one repeating task,
   `PdcKey.remove`.
 - Tests pin the full text of several warnings and exception messages that no Javadoc promises.
@@ -242,6 +268,11 @@ None blocks the next module. Each is settled before the first publish.
 - Plugins join `HookStatus.describe()` and `reason()` themselves for a diagnostics line.
 - Each `CustomItems.detect` registers another ItemsAdder listener that stays until the plugin disables.
 - `new CustomItemRef(" ", id)` keeps a blank hint, while `parse` turns it into `null`.
+- A plugin's own menu tests cannot replace the menu inventories, move the click clock, or deliver click,
+  drag, close and quit events through the public API; that needs a later, additive test seam.
+- Swaps that still compile outside the enable wiring: `ItemLayout`'s action, permission and name;
+  `Icon.Saved`'s custom and item names, and its lore and extra lore; `Pager.Page`'s four numbers.
+- On Folia, a menu or prompt anvil of a player the disabling thread does not own stays open after disable.
 - A placeholder name outside MiniMessage's tag characters works in PlaceholderAPI and never resolves in
   MiniPlaceholders. Names that differ only in case collide in MiniPlaceholders.
 
@@ -278,6 +309,7 @@ plugins on a server.
 - Tradefloor's `Delay`: it fires on the JDK common pool and cannot be cancelled at disable.
   `Scheduler.delayedAsync` is the delay.
 - Tradefloor's `ItemCodec`: it is the shape of one plugin's storage row.
+- A sign text prompt: Tradefloor is its only user. Prompts fall back to chat.
 - Single-plugin helpers (`InFlightGuard`, `ClaimLedger`, `ConfirmationTracker`, `CallGuard`,
   `CommandAliases`, `Materials`, `Placeholders`): they stay in their plugin until a second user appears.
 - A mock server library for tests.

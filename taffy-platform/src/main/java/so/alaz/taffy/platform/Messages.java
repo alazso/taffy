@@ -31,10 +31,13 @@ import java.util.logging.Logger;
 /**
  * Player messages read from {@code lang/<locale>.yml} files in a plugin's data folder.
  *
- * <p>Each file holds MiniMessage templates under dotted keys ({@code command.give.success}). Every value that is
- * not a section is kept as text. The plugin supplies its bundled English file: it is written to
- * {@code lang/en.yml} when that file is absent, and it is the last place a key is looked up, so a translation may
- * leave keys out.
+ * <p>Each file holds MiniMessage templates under dotted keys ({@code command.give.success}). A YAML list is kept as
+ * its lines, one per entry, with an empty entry for a {@code null} one, and an empty list is a message of no lines;
+ * every other value that is not a section is kept as text, as one line even when the text holds newlines, as a block
+ * scalar does. A message of several lines renders with the lines joined by a newline, or as one component
+ * per line through {@link #lines(Locale, String, TagResolver...)}. The plugin supplies its bundled English file: it
+ * is written to {@code lang/en.yml} when that file is absent, and it is the last place a key is looked up, so a
+ * translation may leave keys out.
  *
  * <p>A key resolves through, in order: the file of the exact locale ({@code pt_br}), the file of its language
  * ({@code pt}), the file of the default locale, then the bundled English text. The first two are used only when
@@ -42,8 +45,9 @@ import java.util.logging.Logger;
  * matched in lower case with {@code -} read as {@code _}, so {@code pt-BR} finds {@code pt_br.yml}.
  *
  * <p>A template writes a value as {@code <name>} or as {@code {name}}, which reads as {@code <name>} for every name
- * a call supplies. The prefix is the template under the key {@code prefix}. It is never put in front of a message:
- * it appears where a template writes {@code <prefix>} or {@code {prefix}}, and is empty when no file has the key.
+ * a call supplies. The prefix is the template under the key {@code prefix}, its lines joined by a newline when it
+ * is a list. It is never put in front of a message: it appears where a template writes {@code <prefix>} or
+ * {@code {prefix}}, and is empty when no file has the key.
  *
  * <p>A key that no file has renders as the visible marker {@code <red>missing:key}. A section-sign code in a
  * template or in the prefix is rendered as {@link LegacyText#sectionToMiniMessage} converts it.
@@ -60,6 +64,7 @@ public final class Messages {
     public static final String FALLBACK = "en";
 
     private static final String PREFIX = "prefix";
+    private static final String NEWLINE = "\n";
     private static final MiniMessage MINI = MiniMessage.miniMessage();
 
     private final Path folder;
@@ -67,10 +72,10 @@ public final class Messages {
     private final Logger logger;
     private final String defaultLocale;
     private final boolean perPlayer;
-    private final Map<String, String> fallback;
+    private final Map<String, List<String>> fallback;
 
     /** Locale code in lower case to that file's templates. Replaced as a whole and never changed afterwards. */
-    private volatile Map<String, Map<String, String>> locales = Map.of();
+    private volatile Map<String, Map<String, List<String>>> locales = Map.of();
 
     private Messages(
         Path folder,
@@ -78,7 +83,7 @@ public final class Messages {
         Logger logger,
         String defaultLocale,
         boolean perPlayer,
-        Map<String, String> fallback
+        Map<String, List<String>> fallback
     ) {
         this.folder = folder;
         this.bundled = bundled;
@@ -117,7 +122,7 @@ public final class Messages {
         @Nullable String defaultLocale,
         boolean perPlayer
     ) {
-        Map<String, String> fallback = read(bundled);
+        Map<String, List<String>> fallback = read(bundled);
         if (fallback == null) {
             throw new IllegalStateException("the bundled " + FALLBACK + ".yml is missing or unreadable");
         }
@@ -169,13 +174,13 @@ public final class Messages {
             logger.warning("Could not write " + FOLDER + "/" + FALLBACK + ".yml: " + failure.getMessage()
                 + ". Messages use the bundled English text.");
         }
-        Map<String, Map<String, String>> loaded = new HashMap<>();
+        Map<String, Map<String, List<String>>> loaded = new HashMap<>();
         if (Files.isDirectory(folder)) {
             try (DirectoryStream<Path> files = Files.newDirectoryStream(folder, "*.yml")) {
                 for (Path file : files) {
                     String name = file.getFileName().toString();
                     String locale = code(name.substring(0, name.length() - ".yml".length()));
-                    Map<String, String> values = read(() -> open(file));
+                    Map<String, List<String>> values = read(() -> open(file));
                     if (values == null) {
                         logger.warning(FOLDER + "/" + name + " is not valid YAML saved as UTF-8, so its messages are"
                             + " not used.");
@@ -210,7 +215,8 @@ public final class Messages {
     }
 
     /**
-     * The template for {@code key} as it is written in the file, with nothing filled in.
+     * The template for {@code key} as it is written in the file, with nothing filled in and the lines of a list
+     * joined by a newline.
      *
      * @param locale the viewer's locale, or {@code null} for the console and other output without a viewer
      * @return the MiniMessage template, or {@code <red>missing:key} when no file has the key
@@ -232,10 +238,45 @@ public final class Messages {
      * @param locale the viewer's locale, or {@code null} for the console and other output without a viewer
      */
     public Component render(@Nullable Locale locale, String key, TagResolver... values) {
-        List<Map<String, String>> chain = resolutionChain(locale);
+        List<Map<String, List<String>>> chain = resolutionChain(locale);
+        return parse(template(chain, key), resolvers(chain, values));
+    }
+
+    /**
+     * Renders the message for {@code key} as {@link #render(Locale, String, TagResolver...)} does, one component per
+     * line: a list gives one component per entry and any other value gives one component, which keeps any newline
+     * its text holds. A tag opened on one line does not carry into the next.
+     *
+     * @param locale the viewer's locale, or {@code null} for the console and other output without a viewer
+     * @return the lines in order, or the single line {@code <red>missing:key} when no file has the key; unmodifiable
+     */
+    public List<Component> lines(@Nullable Locale locale, String key, TagResolver... values) {
+        List<Map<String, List<String>>> chain = resolutionChain(locale);
+        TagResolver all = resolvers(chain, values);
+        List<String> lines = lookup(chain, key);
+        if (lines == null) {
+            return List.of(parse(missing(key), all));
+        }
+        return lines.stream().map(line -> parse(line, all)).toList();
+    }
+
+    /**
+     * Whether {@code key} resolves for {@code locale}: whether one of the files a render for that locale looks in,
+     * the bundled English text included, holds it, so that the render gives that text and not the missing-key marker.
+     *
+     * @param locale the viewer's locale, or {@code null} for the console and other output without a viewer
+     */
+    public boolean has(@Nullable Locale locale, String key) {
+        return lookup(resolutionChain(locale), key) != null;
+    }
+
+    private static TagResolver resolvers(List<Map<String, List<String>>> chain, TagResolver... values) {
         TagResolver supplied = TagResolver.resolver(values);
-        TagResolver all = withPrefix(Text.aliasBraces(prefix(chain), supplied), supplied);
-        return MINI.deserialize(LegacyText.sectionToMiniMessage(Text.aliasBraces(template(chain, key), all)), all);
+        return withPrefix(Text.aliasBraces(prefix(chain), supplied), supplied);
+    }
+
+    private static Component parse(String template, TagResolver all) {
+        return MINI.deserialize(LegacyText.sectionToMiniMessage(Text.aliasBraces(template, all)), all);
     }
 
     /**
@@ -249,7 +290,7 @@ public final class Messages {
      * @param viewer the player the message is for, or {@code null} for the console and other output without a viewer
      */
     public Component render(Text text, @Nullable Player viewer, String key, TagResolver... values) {
-        List<Map<String, String>> chain = resolutionChain(locale(viewer));
+        List<Map<String, List<String>>> chain = resolutionChain(locale(viewer));
         return render(text, viewer, chain, template(chain, key), values);
     }
 
@@ -269,7 +310,7 @@ public final class Messages {
     private static Component render(
         Text text,
         @Nullable Player viewer,
-        List<Map<String, String>> chain,
+        List<Map<String, List<String>>> chain,
         String template,
         TagResolver... values
     ) {
@@ -283,14 +324,18 @@ public final class Messages {
         return TagResolver.resolver(Placeholder.parsed(PREFIX, LegacyText.sectionToMiniMessage(prefix)), supplied);
     }
 
-    private static String prefix(List<Map<String, String>> chain) {
-        String prefix = lookup(chain, PREFIX);
-        return prefix == null ? "" : prefix;
+    private static String prefix(List<Map<String, List<String>>> chain) {
+        List<String> prefix = lookup(chain, PREFIX);
+        return prefix == null ? "" : String.join(NEWLINE, prefix);
     }
 
-    private static String template(List<Map<String, String>> chain, String key) {
-        String template = lookup(chain, key);
-        return template == null ? "<red>missing:" + key : template;
+    private static String template(List<Map<String, List<String>>> chain, String key) {
+        List<String> template = lookup(chain, key);
+        return template == null ? missing(key) : String.join(NEWLINE, template);
+    }
+
+    private static String missing(String key) {
+        return "<red>missing:" + key;
     }
 
     private static @Nullable Locale locale(@Nullable Player viewer) {
@@ -298,20 +343,20 @@ public final class Messages {
     }
 
     /** Maps to look in, most specific first, always ending at the bundled English text. */
-    private List<Map<String, String>> resolutionChain(@Nullable Locale locale) {
-        List<Map<String, String>> chain = new ArrayList<>(3);
-        Map<String, Map<String, String>> langs = locales;
+    private List<Map<String, List<String>>> resolutionChain(@Nullable Locale locale) {
+        List<Map<String, List<String>>> chain = new ArrayList<>(3);
+        Map<String, Map<String, List<String>>> langs = locales;
         if (perPlayer && locale != null) {
-            Map<String, String> exact = langs.get(code(locale.toString()));
+            Map<String, List<String>> exact = langs.get(code(locale.toString()));
             if (exact != null) {
                 chain.add(exact);
             }
-            Map<String, String> language = langs.get(code(locale.getLanguage()));
+            Map<String, List<String>> language = langs.get(code(locale.getLanguage()));
             if (language != null && language != exact) {
                 chain.add(language);
             }
         }
-        Map<String, String> def = langs.get(defaultLocale);
+        Map<String, List<String>> def = langs.get(defaultLocale);
         if (def != null && !chain.contains(def)) {
             chain.add(def);
         }
@@ -319,9 +364,9 @@ public final class Messages {
         return chain;
     }
 
-    private static @Nullable String lookup(List<Map<String, String>> chain, String key) {
-        for (Map<String, String> map : chain) {
-            String value = map.get(key);
+    private static @Nullable List<String> lookup(List<Map<String, List<String>>> chain, String key) {
+        for (Map<String, List<String>> map : chain) {
+            List<String> value = map.get(key);
             if (value != null) {
                 return value;
             }
@@ -355,10 +400,10 @@ public final class Messages {
     }
 
     /**
-     * Flat keys with text values, or {@code null} when the source is missing, is not valid UTF-8 or is not valid
+     * Flat keys with their lines, or {@code null} when the source is missing, is not valid UTF-8 or is not valid
      * YAML.
      */
-    private static @Nullable Map<String, String> read(Supplier<@Nullable InputStream> source) {
+    private static @Nullable Map<String, List<String>> read(Supplier<@Nullable InputStream> source) {
         try (InputStream in = source.get()) {
             if (in == null) {
                 return null;
@@ -367,10 +412,16 @@ public final class Messages {
             try (Reader reader = new InputStreamReader(in, StandardCharsets.UTF_8.newDecoder())) {
                 yaml.load(reader);
             }
-            Map<String, String> values = new HashMap<>();
+            Map<String, List<String>> values = new HashMap<>();
             for (String key : yaml.getKeys(true)) {
-                if (!yaml.isConfigurationSection(key) && yaml.get(key) != null) {
-                    values.put(key, String.valueOf(yaml.get(key)));
+                Object value = yaml.get(key);
+                if (yaml.isConfigurationSection(key) || value == null) {
+                    continue;
+                }
+                if (value instanceof List<?> list) {
+                    values.put(key, list.stream().map(entry -> entry == null ? "" : String.valueOf(entry)).toList());
+                } else {
+                    values.put(key, List.of(String.valueOf(value)));
                 }
             }
             return values;

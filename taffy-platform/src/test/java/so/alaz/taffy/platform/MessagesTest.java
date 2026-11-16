@@ -46,6 +46,14 @@ final class MessagesTest {
         parcel.held: "Held: <count>."
         """;
 
+    private static final String LISTED = """
+        prefix: "[L] "
+        lore:
+          - "<prefix><red>First <count>"
+          - "{count} more"
+        single: "§6Only {count}"
+        """;
+
     private static final MiniMessage MINI = MiniMessage.miniMessage();
 
     @TempDir
@@ -567,7 +575,7 @@ final class MessagesTest {
     }
 
     @Test
-    void everyValueThatIsNotASectionIsKeptAsText() {
+    void everyValueThatIsNotASectionIsKeptAndAListAsItsLines() {
         Messages messages = Messages.load(folder, supplier("""
             count: 5
             enabled: true
@@ -581,9 +589,143 @@ final class MessagesTest {
 
         assertThat(messages.template(null, "count")).isEqualTo("5");
         assertThat(messages.template(null, "enabled")).isEqualTo("true");
-        assertThat(messages.template(null, "lines")).isEqualTo("[a, b]");
+        assertThat(messages.template(null, "lines")).isEqualTo("a\nb");
         assertThat(messages.template(null, "command.give.success")).isEqualTo("Given.");
         assertThat(messages.template(null, "command.give")).isEqualTo("<red>missing:command.give");
+    }
+
+    @Test
+    void aListRendersWithItsLinesJoinedByNewlines() {
+        Messages messages = Messages.load(folder, listed(), log.logger);
+
+        assertThat(messages.template(Locale.ENGLISH, "lore")).isEqualTo("<prefix><red>First <count>\n{count} more");
+        assertThat(plain(messages, Locale.ENGLISH, "lore")).isEqualTo("[L] First 7\n7 more");
+        assertThat(plain(messages.render(new Text(null, null), null, "lore", Placeholder.unparsed("count", "7"))))
+            .isEqualTo("[L] First 7\n7 more");
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void linesGivesOneComponentPerEntryWithItsValuesFilled() {
+        Messages messages = Messages.load(folder, listed(), log.logger);
+
+        List<Component> lore = messages.lines(Locale.ENGLISH, "lore", Placeholder.unparsed("count", "<b>7"));
+
+        assertThat(lore).extracting(MessagesTest::plain).containsExactly("[L] First <b>7", "<b>7 more");
+        assertThat(lore.getFirst()).isEqualTo(MINI.deserialize("[L] <red>First <count>",
+            Placeholder.unparsed("count", "<b>7")));
+        assertThat(lore.get(1).color()).isNull();
+        assertThat(lore).isUnmodifiable();
+        assertThat(messages.lines(Locale.ENGLISH, "single", Placeholder.unparsed("count", "7")))
+            .containsExactly(MINI.deserialize("<gold>Only 7"));
+        assertThat(messages.lines(null, "lore", Placeholder.unparsed("count", "7"),
+            Placeholder.unparsed("prefix", "> "))).extracting(MessagesTest::plain)
+            .containsExactly("> First 7", "7 more");
+    }
+
+    @Test
+    void aLanguageFileCanTurnALineIntoAList() throws IOException {
+        write("de.yml", "single: [\"Eins {count}\", \"Zwei\"]\n");
+        Messages messages = Messages.load(folder, listed(), log.logger);
+
+        assertThat(messages.lines(Locale.GERMANY, "single", Placeholder.unparsed("count", "7")))
+            .extracting(MessagesTest::plain).containsExactly("Eins 7", "Zwei");
+        assertThat(plain(messages, Locale.GERMANY, "single")).isEqualTo("Eins 7\nZwei");
+        assertThat(messages.lines(Locale.ENGLISH, "single", Placeholder.unparsed("count", "7"))).hasSize(1);
+    }
+
+    @Test
+    void aListPrefixIsJoinedByANewlineWhereverItAppears() {
+        Messages messages = Messages.load(folder, supplier("""
+            prefix: ["a", "b"]
+            tag: "<prefix>Hi"
+            lore:
+              - "<prefix>x"
+              - "y"
+            """), log.logger);
+
+        assertThat(messages.template(null, "prefix")).isEqualTo("a\nb");
+        assertThat(plain(messages.render(Locale.ENGLISH, "tag"))).isEqualTo("a\nbHi");
+        assertThat(plain(messages.render(new Text(null, null), null, "tag"))).isEqualTo("a\nbHi");
+        assertThat(messages.lines(Locale.ENGLISH, "lore")).extracting(MessagesTest::plain)
+            .containsExactly("a\nbx", "y");
+    }
+
+    @Test
+    void anEmptyListEntryIsAnEmptyLine() {
+        Messages messages = Messages.load(folder, supplier("""
+            lore:
+              - first
+              -
+              - third
+            """), log.logger);
+
+        assertThat(messages.lines(Locale.ENGLISH, "lore")).extracting(MessagesTest::plain)
+            .containsExactly("first", "", "third");
+        assertThat(messages.template(Locale.ENGLISH, "lore")).isEqualTo("first\n\nthird");
+    }
+
+    @Test
+    void aBlockScalarIsOneLineThatKeepsItsNewlines() {
+        Messages messages = Messages.load(folder, supplier("""
+            lore: |
+              first
+              second
+            """), log.logger);
+
+        assertThat(messages.lines(Locale.ENGLISH, "lore")).extracting(MessagesTest::plain)
+            .containsExactly("first\nsecond\n");
+    }
+
+    @Test
+    void anEmptyListIsAMessageOfNoLines() {
+        Messages messages = Messages.load(folder, supplier("""
+            lore: []
+            other: "z"
+            """), log.logger);
+
+        assertThat(messages.has(Locale.ENGLISH, "lore")).isTrue();
+        assertThat(messages.lines(Locale.ENGLISH, "lore")).isEmpty();
+        assertThat(messages.template(Locale.ENGLISH, "lore")).isEmpty();
+        assertThat(messages.render(Locale.ENGLISH, "lore")).isEqualTo(Component.empty());
+        assertThat(plain(messages.render(new Text(null, null), null, "lore"))).isEmpty();
+    }
+
+    @Test
+    void linesOfAKeyNoFileHasIsTheMarkerLine() {
+        Messages messages = Messages.load(folder, listed(), log.logger);
+
+        assertThat(messages.lines(Locale.ENGLISH, "nowhere", Placeholder.unparsed("count", "7")))
+            .containsExactly(Component.text("missing:nowhere", NamedTextColor.RED));
+        assertThat(messages.lines(null, "nowhere"))
+            .containsExactly(Component.text("missing:nowhere", NamedTextColor.RED));
+    }
+
+    @Test
+    void hasLooksOnlyWhereALocaleResolves() throws IOException {
+        write("de.yml", "only-german: x\n");
+        write("de_at.yml", "only-austrian: x\n");
+        write("fr.yml", "only-french: x\n");
+
+        Messages messages = Messages.load(folder, listed(), log.logger);
+
+        assertThat(messages.has(Locale.GERMAN, "only-german")).isTrue();
+        assertThat(messages.has(Locale.of("de", "AT"), "only-german")).isTrue();
+        assertThat(messages.has(Locale.of("de", "AT"), "only-austrian")).isTrue();
+        assertThat(messages.has(Locale.GERMAN, "only-austrian")).isFalse();
+        assertThat(messages.has(Locale.ENGLISH, "only-german")).isFalse();
+        assertThat(messages.has(null, "only-german")).isFalse();
+        assertThat(messages.has(Locale.FRANCE, "lore")).isTrue();
+        assertThat(messages.has(null, "lore")).isTrue();
+        assertThat(messages.has(Locale.ENGLISH, "nowhere")).isFalse();
+
+        Messages german = Messages.load(folder, listed(), log.logger, "de", false);
+
+        assertThat(german.has(Locale.FRANCE, "only-german")).isTrue();
+        assertThat(german.has(null, "only-german")).isTrue();
+        assertThat(german.has(Locale.FRANCE, "only-french")).isFalse();
+        assertThat(german.has(Locale.of("de", "AT"), "only-austrian")).isFalse();
+        assertThat(german.has(Locale.FRANCE, "single")).isTrue();
     }
 
     private String plain(Messages messages, Locale locale, String key) {
@@ -603,6 +745,10 @@ final class MessagesTest {
     private void write(String name, String content) throws IOException {
         Files.createDirectories(folder.resolve("lang"));
         Files.writeString(folder.resolve("lang").resolve(name), content);
+    }
+
+    private static Supplier<InputStream> listed() {
+        return supplier(LISTED);
     }
 
     private static Supplier<InputStream> bundled() {
