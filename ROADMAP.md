@@ -143,7 +143,7 @@ building, opening, prompting, reloading and disabling.
 | Start | `MetricsBuilder`: the owner `Plugin`, its `ErrorReports` and its switch, then the bStats service id, the FastStats token and the charts, then `start()` once at the end of enable. An unset id or token leaves that provider off; a provider that fails to start logs one warning. |
 | Running metrics | `Metrics`: readers for a diagnostics command (`bStatsStarted`, `fastStatsSdk`, `fastStatsEnabled`, `fastStatsSubmitting`, `fastStatsCharts`, `fastStatsErrorTracking`), `report` for a plugin that sends its handled errors to two places, and `shutdown` as the last disable step. |
 | Handled errors | `start()` installs the FastStats route into `ErrorReports`, which delivers the reports held from enable. Each source gets its own FastStats tracker, so repeats merge with a count; the number of sources and kinds is bounded. Messages pass eight anonymize rules on top of the SDK's own. |
-| Taffy usage | A `taffy_version` chart on Taffy's own bStats and FastStats entries, started from every plugin with its switch on. It ships inert, below. |
+| Taffy usage | A `taffy_version` chart on Taffy's own bStats and FastStats entries, started from every plugin with its switch on, beside each provider the plugin itself started. Described below. |
 
 No public signature names a bStats or FastStats type. The package Javadoc walks through enable, an enable that
 gives up early, handled errors, diagnostics and disable.
@@ -228,8 +228,8 @@ messages, the crafting or creative screen check that decides whether a finished 
 and `registerEvents` on the two package-private listeners (a unit test covers Paper's `EventExecutor.create`).
 
 `taffy-metrics` is tested against the real SDK classes with a loopback HTTP sink in place of the metrics
-servers. Only a server run and a real dashboard cover: real bStats and FastStats submissions, bStats taking one
-Taffy service id from many plugin jars, Paper's `ServerExceptionEvent` path into FastStats, the uncaught
+servers. Only a server run and a real dashboard cover: real bStats and FastStats submissions, bStats and
+FastStats each taking one Taffy credential from many plugin jars on one server, and how they count that server, Paper's `ServerExceptionEvent` path into FastStats, the uncaught
 exception handler chain across several shaded copies, and how long the final send blocks the disabling thread
 on a stalled network.
 
@@ -355,12 +355,12 @@ A shaded library has no download counter. It can still have a live graph: `taffy
 metrics page that belongs to Taffy, from inside every plugin that shades it, with a chart of the Taffy
 version. Every server running any so.alaz plugin then counts toward one Taffy graph.
 
-`taffy-metrics` builds it and ships it inert: Taffy's bStats service id and FastStats token are unset in
-`TaffyUsage`, so nothing starts. Turning it on is the owner's action: register Taffy on bStats (Bukkit) and
-on FastStats, then set the two constants. Each plugin with its metrics switch on then runs a second bStats
-instance, with its own thread, and a second FastStats context that sends metrics only and makes no final
-send. bStats' default plugin version chart on Taffy's page shows the host plugins' versions, so only the
-`taffy_version` chart identifies Taffy.
+`TaffyUsage` holds Taffy's bStats service id, 35379, and its FastStats project token. Each plugin with its
+metrics switch on runs a second bStats instance, with its own thread, when its own bStats instance started,
+and a second FastStats context that sends metrics only and makes no final send, when its own FastStats
+context started. A plugin on one provider reports Taffy to that provider only, so Taffy adds no provider,
+configuration file or first-run notice that the plugin's own metrics do not. bStats' default plugin version
+chart on Taffy's page shows the host plugins' versions, so only the `taffy_version` chart identifies Taffy.
 
 Taffy stays shaded. Libraries shipped as a separately installed plugin show a download count that
 mostly mirrors their own dependents, and pay for it with version drift between the library and the

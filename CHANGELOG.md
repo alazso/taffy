@@ -44,8 +44,8 @@ All notable changes to Taffy are documented here. This project follows
 - `taffy-metrics` module: `MetricChart` (string, number, bool, string list and counter charts for bStats and
   FastStats from one definition), `MetricsBuilder` and `Metrics` (diagnostics readers, `report`, `shutdown`).
   Handled errors reported to `ErrorReports` reach FastStats error tracking under their source. A
-  `taffy_version` usage chart for Taffy's own metrics ships inert until Taffy's entries exist. bStats and
-  FastStats are runtime dependencies, relocated by the plugin.
+  `taffy_version` usage chart reports to Taffy's own bStats and FastStats entries, beside each provider the
+  plugin itself starts. bStats and FastStats are runtime dependencies, relocated by the plugin.
 - `ErrorReports` holds the reports made before its first install, the first per source and at most 16, and
   delivers them on that install.
 - `taffy-comficonf` module: `ComfiConfConnection` (the bridge guard, status, `notifyChanged`, `lockFor`,

@@ -137,8 +137,8 @@ public final class MetricsBuilder {
      * <p>When the server owner turned bStats off in {@code plugins/bStats/config.yml}, the bStats instance is shut
      * down again at once and {@link Metrics#bStatsStarted()} reads {@code false}.
      *
-     * <p>With the switch on, this also starts the Taffy usage chart that the package documentation describes, and
-     * the handle stops it at {@link Metrics#shutdown()}.
+     * <p>With the switch on, this also starts the Taffy usage chart that the package documentation describes, beside
+     * each provider that started here, and the handle stops it at {@link Metrics#shutdown()}.
      *
      * @return the handle, inert when nothing started; never {@code null}
      * @throws IllegalStateException if this builder was already started
@@ -161,7 +161,7 @@ public final class MetricsBuilder {
             ? startFastStats(owner, fastStatsToken, charts, true, logger, FASTSTATS_FAILED) : null;
         ErrorTracker globalTracker = fastStats == null ? null
             : fastStats.errorTrackerService().map(ErrorTrackerService::globalErrorTracker).orElse(null);
-        TaffyUsage usage = TaffyUsage.start(owner);
+        TaffyUsage usage = TaffyUsage.start(owner, bStats != null, fastStats != null);
         Metrics handle = new Metrics(bStats, fastStats, globalTracker, usage, errors);
         if (handle.sources != null) {
             errors.install(handle::report);

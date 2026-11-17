@@ -104,12 +104,13 @@
  * <h2>The Taffy usage chart</h2>
  *
  * <p>When the switch is on, {@link so.alaz.taffy.metrics.MetricsBuilder#start()} also starts Taffy's own usage
- * metrics on the same plugin: a second bStats instance under Taffy's bStats service id and a second FastStats
- * context, with metrics only, under Taffy's FastStats token. Each reports one chart, {@code taffy_version}, the
+ * metrics on the same plugin: a second bStats instance under Taffy's bStats service id when the plugin's own bStats
+ * instance started, and a second FastStats context, with metrics only, under Taffy's FastStats token when the
+ * plugin's own context started. Taffy so adds no provider, configuration file or first-run notice that the plugin's
+ * own metrics do not. Each reports one chart, {@code taffy_version}, the
  * Taffy version the plugin was built with, beside what the SDK sends for any plugin. The server owner's opt-outs in
  * {@code plugins/bStats/config.yml} and {@code plugins/faststats/config.properties} apply to it as to the plugin's
  * own metrics. At disable it stops first, without a final send. A started bStats instance runs on its own
- * {@code bStats-Metrics} daemon thread while bStats is enabled. In this version Taffy's credentials are unset, so
- * the usage chart starts nothing and sends nothing.
+ * {@code bStats-Metrics} daemon thread while bStats is enabled.
  */
 package so.alaz.taffy.metrics;

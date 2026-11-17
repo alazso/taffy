@@ -228,12 +228,13 @@ class MetricsTest {
             .start();
         started.add(metrics);
         ArgumentCaptor<Consumer<ScheduledTask>> scheduled = ArgumentCaptor.captor();
-        verify(fixture.asyncScheduler, times(2))
+        verify(fixture.asyncScheduler, times(3))
             .runAtFixedRate(any(Plugin.class), scheduled.capture(), anyLong(), anyLong(), any(TimeUnit.class));
+        List<Consumer<ScheduledTask>> owners = scheduled.getAllValues().subList(0, 2);
 
-        scheduled.getAllValues().forEach(submission -> submission.accept(fixture.task));
+        owners.forEach(submission -> submission.accept(fixture.task));
         total.set(8);
-        scheduled.getAllValues().forEach(submission -> submission.accept(fixture.task));
+        owners.forEach(submission -> submission.accept(fixture.task));
         metrics.shutdown();
 
         assertThat(sink.requests).filteredOn(request -> request.path().equals("/v1/collect"))
@@ -444,9 +445,10 @@ class MetricsTest {
             .start();
         started.add(metrics);
         ArgumentCaptor<Consumer<ScheduledTask>> scheduled = ArgumentCaptor.captor();
-        verify(fixture.asyncScheduler, times(2))
+        verify(fixture.asyncScheduler, times(3))
             .runAtFixedRate(any(Plugin.class), scheduled.capture(), anyLong(), anyLong(), any(TimeUnit.class));
-        scheduled.getAllValues().forEach(submission -> submission.accept(fixture.task));
+        List<Consumer<ScheduledTask>> owners = scheduled.getAllValues().subList(0, 2);
+        owners.forEach(submission -> submission.accept(fixture.task));
 
         metrics.shutdown();
 

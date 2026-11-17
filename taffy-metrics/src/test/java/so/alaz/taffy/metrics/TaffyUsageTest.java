@@ -69,17 +69,43 @@ class TaffyUsageTest {
     }
 
     @Test
-    void taffyShipsWithItsCredentialsUnset() {
-        assertThat(TaffyUsage.BSTATS_SERVICE_ID).isZero();
-        assertThat(TaffyUsage.FASTSTATS_TOKEN).isEmpty();
+    void taffyShipsWithItsOwnCredentials() {
+        assertThat(TaffyUsage.BSTATS_SERVICE_ID).isEqualTo(35379);
+        assertThat(TaffyUsage.FASTSTATS_TOKEN).isEqualTo("4f4f68898b814744b648ad6def9208db").matches("[a-z0-9]{32}");
     }
 
     @Test
-    void theUnsetCredentialsStartNothing() throws IOException {
+    void taffysOwnCredentialsStartBothProvidersWithoutAWarning() throws IOException {
+        fixture.writeFastStatsConfig(true, true, true);
+
+        TaffyUsage usage = TaffyUsage.start(fixture.plugin, true, true);
+        started.add(usage);
+
+        assertThat(usage.bStats).isNotNull();
+        assertThat(usage.fastStats).isNotNull();
+        assertThat(usage.fastStats.errorTrackerService()).isEmpty();
+        assertThat(fixture.log.lines()).isEmpty();
+        usage.shutdown();
+        assertThat(sink.requests).isEmpty();
+    }
+
+    @Test
+    void aProviderThePluginDidNotStartIsNotStarted() {
+        TaffyUsage usage = TaffyUsage.start(fixture.plugin, false, false);
+
+        assertThat(usage.bStats).isNull();
+        assertThat(usage.fastStats).isNull();
+        assertThat(plugins.resolve("faststats")).doesNotExist();
+        assertThat(plugins.resolve("Owner")).doesNotExist();
+        assertThat(fixture.log.lines()).isEmpty();
+    }
+
+    @Test
+    void unsetCredentialsStartNothing() throws IOException {
         fixture.writeFastStatsConfig(true, true, true);
         String fastStatsConfig = Files.readString(fixture.fastStatsConfig);
 
-        TaffyUsage usage = TaffyUsage.start(fixture.plugin);
+        TaffyUsage usage = TaffyUsage.start(fixture.plugin, 0, "");
 
         assertThat(usage.bStats).isNull();
         assertThat(usage.fastStats).isNull();

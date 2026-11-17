@@ -11,15 +11,17 @@ import java.util.logging.Logger;
 /**
  * Taffy's own usage metrics, started from every plugin that shades Taffy: a second bStats instance under Taffy's
  * service id and a second, metrics-only FastStats context under Taffy's token, each reporting one chart,
- * {@code taffy_version}. A provider whose credential is unset starts nothing and logs nothing.
+ * {@code taffy_version}. Each runs only beside the plugin's own instance of the same provider, so Taffy adds no
+ * provider, file or notice that the plugin's own metrics do not. A provider whose credential is unset starts nothing
+ * and logs nothing.
  */
 final class TaffyUsage {
 
-    /** Taffy's bStats service id; 0 while Taffy has no bStats entry. */
-    static final int BSTATS_SERVICE_ID = 0;
+    /** Taffy's bStats service id. */
+    static final int BSTATS_SERVICE_ID = 35379;
 
-    /** Taffy's FastStats project token; empty while Taffy has no FastStats project. */
-    static final String FASTSTATS_TOKEN = "";
+    /** Taffy's FastStats project token. */
+    static final String FASTSTATS_TOKEN = "4f4f68898b814744b648ad6def9208db";
 
     static final String VERSION_CHART = "taffy_version";
 
@@ -32,9 +34,13 @@ final class TaffyUsage {
         this.fastStats = fastStats;
     }
 
-    /** Starts Taffy's usage metrics on {@code owner} under Taffy's own credentials. */
-    static TaffyUsage start(Plugin owner) {
-        return start(owner, BSTATS_SERVICE_ID, FASTSTATS_TOKEN);
+    /**
+     * Starts Taffy's usage metrics on {@code owner} under Taffy's own credentials: bStats when {@code bStats} is
+     * true and FastStats when {@code fastStats} is true, each true when the plugin's own instance of that provider
+     * started.
+     */
+    static TaffyUsage start(Plugin owner, boolean bStats, boolean fastStats) {
+        return start(owner, bStats ? BSTATS_SERVICE_ID : 0, fastStats ? FASTSTATS_TOKEN : "");
     }
 
     /**

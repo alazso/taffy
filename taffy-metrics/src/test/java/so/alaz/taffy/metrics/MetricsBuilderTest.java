@@ -105,7 +105,8 @@ class MetricsBuilderTest {
     }
 
     @Test
-    void theSwitchOnStartsTheUsageChartWhichStaysInertWhileTaffyHasNoCredentials() throws IOException {
+    void theSwitchOnStartsTheUsageChartBesideEachProviderThatStarted() throws IOException {
+        fixture.enableBStats();
         fixture.writeFastStatsConfig(true, true, true);
 
         Metrics metrics = start(new MetricsBuilder(fixture.plugin, errors, true)
@@ -113,10 +114,47 @@ class MetricsBuilderTest {
             .fastStats(MetricsFixture.FASTSTATS_TOKEN));
 
         assertThat(metrics.usage).isNotNull();
-        assertThat(metrics.usage.bStats).isNull();
-        assertThat(metrics.usage.fastStats).isNull();
-        verify(fixture.pluginManager, times(1)).registerEvents(any(Listener.class), any(Plugin.class));
+        assertThat(metrics.bStatsStarted()).isTrue();
+        assertThat(metrics.usage.bStats).isNotNull();
+        assertThat(metrics.usage.fastStats).isNotNull().isNotSameAs(metrics.fastStats);
+        assertThat(metrics.usage.fastStats.errorTrackerService()).isEmpty();
         assertThat(fixture.log.lines()).isEmpty();
+    }
+
+    @Test
+    void aPluginOnBStatsAloneGetsNoTaffyFastStatsContext() throws IOException {
+        fixture.enableBStats();
+        Metrics metrics = start(new MetricsBuilder(fixture.plugin, errors, true)
+            .bStats(MetricsFixture.BSTATS_SERVICE_ID));
+
+        assertThat(metrics.usage).isNotNull();
+        assertThat(metrics.usage.bStats).isNotNull();
+        assertThat(metrics.usage.fastStats).isNull();
+        assertThat(plugins.resolve("faststats")).doesNotExist();
+        assertThat(fixture.log.lines()).isEmpty();
+    }
+
+    @Test
+    void aPluginOnFastStatsAloneGetsNoTaffyBStatsInstance() throws IOException {
+        fixture.writeFastStatsConfig(true, true, true);
+
+        Metrics metrics = start(new MetricsBuilder(fixture.plugin, errors, true)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN));
+
+        assertThat(metrics.usage).isNotNull();
+        assertThat(metrics.usage.bStats).isNull();
+        assertThat(metrics.usage.fastStats).isNotNull();
+        verify(fixture.plugin, never()).getDataFolder();
+    }
+
+    @Test
+    void aBStatsTheServerOwnerTurnedOffStartsNoTaffyBStatsInstance() {
+        Metrics metrics = start(new MetricsBuilder(fixture.plugin, errors, true)
+            .bStats(MetricsFixture.BSTATS_SERVICE_ID));
+
+        assertThat(metrics.bStatsStarted()).isFalse();
+        assertThat(metrics.usage).isNotNull();
+        assertThat(metrics.usage.bStats).isNull();
     }
 
     @Test
@@ -450,9 +488,9 @@ class MetricsBuilderTest {
         assertThat(metrics.fastStats.errorTrackerService().orElseThrow().globalErrorTracker())
             .isSameAs(metrics.globalTracker);
         assertThat(Thread.getDefaultUncaughtExceptionHandler().getClass().getName()).startsWith("dev.faststats.");
-        verify(fixture.asyncScheduler, times(2))
+        verify(fixture.asyncScheduler, times(3))
             .runAtFixedRate(any(Plugin.class), any(), anyLong(), anyLong(), any(TimeUnit.class));
-        verify(fixture.pluginManager).registerEvents(any(Listener.class), any(Plugin.class));
+        verify(fixture.pluginManager, times(2)).registerEvents(any(Listener.class), any(Plugin.class));
         assertThat(sink.requests).isEmpty();
         assertThat(fixture.log.lines()).isEmpty();
     }
