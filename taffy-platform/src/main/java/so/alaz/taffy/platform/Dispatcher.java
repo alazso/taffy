@@ -17,7 +17,9 @@ public interface Dispatcher {
      * <p>An implementation may leave the future incomplete for good when the task was accepted and the
      * owning plugin disables before it runs. Work that must settle is therefore tracked in
      * {@link PendingSettlements} before it is dispatched, or the future is bounded with
-     * {@link CompletableFuture#orTimeout}.
+     * {@link CompletableFuture#orTimeout}. When the timeout fires, a future bounded with {@code orTimeout}
+     * completes on the JDK's timeout thread, and so does every dependent stage already added to it without an
+     * executor.
      *
      * <p>The task may be queued even when the caller is already on the thread {@code tag} names, so waiting
      * for the future on a server thread can block that thread for good.

@@ -45,8 +45,8 @@ final class RollbackRetryTest {
     void start() {
         StorageSettings settings = new StorageSettings(Dialect.SQLITE, "data.db", null,
             new StorageSettings.Pool(2, 1, Duration.ofSeconds(5)), 2, 0);
-        storage = Storage.start(settings, folder, NAME, "9.9.9", List.of(), path -> null, log.logger,
-            new ErrorReports(), StorageContract.CLOCK).join();
+        storage = Storage.start(TestPlugins.plugin(NAME, folder, log.logger), new ErrorReports(), settings, List.of(),
+            StorageContract.CLOCK).join();
         storage.async(tx -> {
             tx.execute("CREATE TABLE entries (id INTEGER PRIMARY KEY)");
             tx.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)");
@@ -226,8 +226,8 @@ final class RollbackRetryTest {
         Connection connection = mock(Connection.class);
         when(source.getConnection()).thenReturn(connection);
         doThrow(new SQLException("could not serialize access", "40001")).when(connection).commit();
-        Storage over = Storage.over(Dialect.POSTGRES, source, "p_", "retry-over", log.logger, new ErrorReports(),
-            StorageContract.CLOCK);
+        Storage over = Storage.over(TestPlugins.plugin("retry-over", log.logger), new ErrorReports(), Dialect.POSTGRES,
+            source, "p_", StorageContract.CLOCK);
         AtomicInteger attempts = new AtomicInteger();
         AtomicBoolean ran = new AtomicBoolean();
 
@@ -251,8 +251,8 @@ final class RollbackRetryTest {
         DataSource source = mock(DataSource.class);
         Connection connection = mock(Connection.class);
         when(source.getConnection()).thenReturn(connection);
-        Storage over = Storage.over(Dialect.POSTGRES, source, "p_", "retry-interrupt", log.logger,
-            new ErrorReports(), StorageContract.CLOCK);
+        Storage over = Storage.over(TestPlugins.plugin("retry-interrupt", log.logger), new ErrorReports(),
+            Dialect.POSTGRES, source, "p_", StorageContract.CLOCK);
         CountDownLatch attached = new CountDownLatch(1);
         AtomicInteger attempts = new AtomicInteger();
         AtomicReference<Boolean> interruptedOnCompletion = new AtomicReference<>();

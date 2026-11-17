@@ -1,5 +1,6 @@
 package so.alaz.taffy.comficonf;
 
+import com.comficonf.api.ComfiConfApi;
 import io.papermc.paper.plugin.configuration.PluginMeta;
 import org.bukkit.Server;
 import org.bukkit.plugin.Plugin;
@@ -9,7 +10,11 @@ import org.junit.jupiter.api.Test;
 import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.test.CapturedLog;
 
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -31,6 +36,10 @@ class ComfiConfConnectionTest {
 
     private static final String FAILED_REASON = "Registering with ComfiConf failed, so these settings are edited in"
         + " their files only. The server log holds the error.";
+
+    private static final String NOT_REGISTERED_REASON = "ComfiConf no longer holds these settings, so they are"
+        + " edited in their files only until this plugin connects to ComfiConf again, at the latest when the server"
+        + " restarts.";
 
     private final Plugin owner = mock(Plugin.class);
     private final Server server = mock(Server.class);
@@ -132,11 +141,117 @@ class ComfiConfConnectionTest {
         when(bridge.isEnabled()).thenReturn(true);
         link.registered = false;
         assertThat(connection.status())
-            .isEqualTo(new ComfiConfStatus(ComfiConfState.NOT_REGISTERED, "0.1.0", null));
+            .isEqualTo(new ComfiConfStatus(ComfiConfState.NOT_REGISTERED, "0.1.0", NOT_REGISTERED_REASON));
         assertThat(connection.status().describe()).isEqualTo("ComfiConf 0.1.0 installed, not registered");
         link.registered = true;
         assertThat(connection.status()).isEqualTo(new ComfiConfStatus(ComfiConfState.ON, "0.1.0", null));
         assertThat(connection.resourceId()).isEqualTo("taffy:test");
+    }
+
+    @Test
+    void aRegistrationTheBridgeDroppedIsNotRegisteredWithTheReason() {
+        ComfiConfConnection connection = connect(() -> link);
+        log.records.clear();
+
+        link.registered = false;
+
+        ComfiConfStatus status = connection.status();
+        assertThat(status.state()).isEqualTo(ComfiConfState.NOT_REGISTERED);
+        assertThat(status.version()).isEqualTo("0.1.0");
+        assertThat(status.reason()).isEqualTo(NOT_REGISTERED_REASON);
+        assertThat(log.records).isEmpty();
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
+    void theSameLoaderGivesTheSameApi() {
+        ClassLoader loader = ComfiConfConnectionTest.class.getClassLoader();
+
+        assertThat(ComfiConfConnection.sameApi(loader, loader)).isTrue();
+    }
+
+    @Test
+    void aLoaderWithItsOwnCopyOfTheApiGivesAnotherApi() throws Exception {
+        try (URLClassLoader isolated = isolatedApi()) {
+            assertThat(Class.forName(ComfiConfApi.class.getName(), false, isolated)).isNotSameAs(ComfiConfApi.class);
+            assertThat(ComfiConfConnection.sameApi(ComfiConfConnectionTest.class.getClassLoader(), isolated))
+                .isFalse();
+        }
+    }
+
+    @Test
+    void aLoaderWithoutTheApiCountsAsTheSame() throws Exception {
+        try (URLClassLoader empty = new URLClassLoader(new URL[0], ClassLoader.getPlatformClassLoader())) {
+            assertThat(ComfiConfConnection.sameApi(ComfiConfConnectionTest.class.getClassLoader(), empty)).isTrue();
+            assertThat(ComfiConfConnection.sameApi(empty, ComfiConfConnectionTest.class.getClassLoader())).isTrue();
+        }
+    }
+
+    @Test
+    void aBundledCopyOfTheApiIsNotVisibleWithOneWarningAndNoRegistration() throws Exception {
+        String reason = "This plugin's jar holds its own copy of the ComfiConf API, so it cannot reach the installed"
+            + " ComfiConf and its settings are edited in their files only. Only a build of this plugin without that"
+            + " copy fixes this.";
+        try (URLClassLoader isolated = isolatedApi()) {
+            ComfiConfConnection connection =
+                ComfiConfConnection.connect(owner, errors, true, registering(() -> link), plugin -> isolated);
+
+            assertThat(connection.status())
+                .isEqualTo(new ComfiConfStatus(ComfiConfState.NOT_VISIBLE, "0.1.0", reason));
+            assertThat(connection.status().describe()).isEqualTo("ComfiConf 0.1.0 not visible to this plugin");
+            assertThat(connection.resourceId()).isNull();
+            assertThat(log.records).singleElement().satisfies(record -> {
+                assertThat(record.getLevel()).isEqualTo(Level.WARNING);
+                assertThat(record.getMessage()).isEqualTo(reason);
+                assertThat(record.getThrown()).isNull();
+            });
+            assertThat(registrations).hasValue(0);
+            assertThat(reports).isEmpty();
+        }
+    }
+
+    @Test
+    void connectingAgainAfterCloseRegistersAFreshLink() {
+        FakeLink fresh = new FakeLink();
+        Supplier<ComfiConfLink> registration = bridgeRegistering(link, fresh);
+        ComfiConfConnection first = connect(registration);
+        assertThat(first.status().state()).isEqualTo(ComfiConfState.ON);
+
+        first.close();
+        assertThat(first.status())
+            .isEqualTo(new ComfiConfStatus(ComfiConfState.NOT_REGISTERED, "0.1.0", NOT_REGISTERED_REASON));
+        ComfiConfConnection second = connect(registration);
+
+        assertThat(second.status()).isEqualTo(new ComfiConfStatus(ComfiConfState.ON, "0.1.0", null));
+        second.notifyChanged();
+        assertThat(fresh.notified).hasValue(1);
+        assertThat(link.notified).hasValue(0);
+        assertThat(first.status().state()).isEqualTo(ComfiConfState.NOT_REGISTERED);
+        assertThat(registrations).hasValue(2);
+        assertThat(log.lines()).containsExactly("INFO Registered taffy:test with ComfiConf",
+            "INFO Registered taffy:test with ComfiConf");
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
+    void connectingAgainWhileTheFirstLinkIsStillRegisteredFails() {
+        Supplier<ComfiConfLink> registration = bridgeRegistering(link, new FakeLink());
+        ComfiConfConnection first = connect(registration);
+        log.records.clear();
+
+        ComfiConfConnection second = connect(registration);
+
+        assertThat(second.status())
+            .isEqualTo(new ComfiConfStatus(ComfiConfState.FAILED, "0.1.0", FAILED_REASON));
+        assertThat(second.resourceId()).isNull();
+        assertThat(reports).singleElement().satisfies(report -> {
+            assertThat(report.getKey()).isEqualTo("hook.comficonf");
+            assertThat(report.getValue()).isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("taffy:test is already registered");
+        });
+        assertThat(log.records).singleElement()
+            .satisfies(record -> assertThat(record.getLevel()).isEqualTo(Level.WARNING));
+        assertThat(first.status().state()).isEqualTo(ComfiConfState.ON);
     }
 
     @Test
@@ -456,7 +571,33 @@ class ComfiConfConnectionTest {
         assertThat(message).contains("(NoClassDefFoundError)");
     }
 
-    /** A link that counts the calls it receives, and throws {@link #failure} from each when it is set. */
+    /** A class loader that defines its own copy of the ComfiConf API, above the platform class loader. */
+    private static URLClassLoader isolatedApi() {
+        URL api = ComfiConfApi.class.getProtectionDomain().getCodeSource().getLocation();
+        return new URLClassLoader(new URL[] {api}, ClassLoader.getPlatformClassLoader());
+    }
+
+    /**
+     * Registers {@code links} in turn, as the bridge does, and refuses with an {@link IllegalArgumentException} while
+     * a link it gave is still registered.
+     */
+    private static Supplier<ComfiConfLink> bridgeRegistering(FakeLink... links) {
+        Iterator<FakeLink> next = List.of(links).iterator();
+        List<FakeLink> given = new ArrayList<>();
+        return () -> {
+            if (given.stream().anyMatch(held -> held.registered)) {
+                throw new IllegalArgumentException("taffy:test is already registered");
+            }
+            FakeLink link = next.next();
+            given.add(link);
+            return link;
+        };
+    }
+
+    /**
+     * A link that counts the calls it receives, drops its registration on a {@link #close()} that does not throw,
+     * and throws {@link #failure} from each when it is set.
+     */
     private static final class FakeLink implements ComfiConfLink {
 
         volatile boolean registered = true;
@@ -497,6 +638,7 @@ class ComfiConfConnectionTest {
         public void close() {
             closed.incrementAndGet();
             failIfSet();
+            registered = false;
         }
 
         @Override

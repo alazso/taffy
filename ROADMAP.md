@@ -25,22 +25,24 @@ Taffy is built out and made stable first. Plugins move onto it after that.
   exclusions, and each class at least 50 percent.
 - Code under a copyleft license is read for ideas only and never copied in.
 
-Every module has a `PublicApiRulesTest` that runs `ApiRules` from `taffy-test` over its own classes. The
-root `check` fails when a module listed in `taffy.modules` has none.
+Every module has a `PublicApiRulesTest` that runs `ApiRules` from `taffy-test` over its own classes. Its
+`scanFindsTheModuleClasses` test requires classes of the module and fails when a scanned class lies outside the
+test's own package, so an anchor taken from another module fails there. The root `check` fails when a module
+listed in `taffy.modules` has no `PublicApiRulesTest`; it does not read the test.
 
 ## Where it stands
 
 | Part | State |
 |---|---|
 | Build tooling (`tooling/taffy-gradle`, `tooling/taffy-catalog`) | Built and tested. Not published. |
-| `taffy-platform` | Complete for the planned list: 26 classes, 366 tests. Not published. |
-| `taffy-test` | 8 helpers, 96 tests. Not published. |
-| `taffy-config` | 7 classes, 161 tests. Not published. |
-| `taffy-storage` | 15 classes, 324 tests, 55 of them against MySQL, MariaDB and PostgreSQL in Docker. Not published. |
-| `taffy-hooks` | 30 classes, 13 of them public, 313 tests. Not published. |
-| `taffy-gui` | 41 classes, 23 of them public, 650 tests. Not published. |
-| `taffy-metrics` | 10 classes, 3 of them public, 172 tests. Not published. |
-| `taffy-comficonf` | 8 classes, 6 of them public, 119 tests. Not published. |
+| `taffy-platform` | Complete for the planned list: 26 classes, 374 tests. Not published. |
+| `taffy-test` | 8 helpers, 98 tests. Not published. |
+| `taffy-config` | 7 classes, 188 tests. Not published. |
+| `taffy-storage` | 16 classes, 398 tests, 68 of them against MySQL, MariaDB and PostgreSQL in Docker. Not published. |
+| `taffy-hooks` | 30 classes, 13 of them public, 316 tests. Not published. |
+| `taffy-gui` | 41 classes, 23 of them public, 657 tests. Not published. |
+| `taffy-metrics` | 10 classes, 3 of them public, 178 tests. Not published. |
+| `taffy-comficonf` | 8 classes, 6 of them public, 132 tests. Not published. |
 
 ## What `taffy-platform` holds
 
@@ -87,10 +89,11 @@ The package Javadoc of `taffy-config` walks through loading and reloading a plug
 
 | Class | What it does |
 |---|---|
-| `Storage` | Starts a database from `StorageSettings`, runs the plugin's migrations, and runs work in transactions on its own database threads. `async` writes, `read` reads, `asyncRetrying` and `readRetrying` rerun work that a deadlock or serialization failure rolled back. `close` drains queued work. |
+| `Storage` | Starts a database from `StorageSettings`, runs the plugin's migrations, and runs work in transactions on its own database threads. On SQLite storage from `Storage.start`, writes run on one writer thread of their own, in the order they were submitted. `async` writes, `read` reads, `asyncRetrying` and `readRetrying` rerun work that a deadlock or serialization failure rolled back. `close` drains queued work. |
 | `StorageSettings` | The dialect, the SQLite file or server address, credentials, SSL mode, pool sizes, thread count and backup count, validated when built. |
 | `Dialect` | SQLite, MySQL, MariaDB and PostgreSQL: the SQL that differs between them and each driver's class name. |
 | `Migration` | One numbered migration whose script the plugin ships at `db/migration/<dialect>/V<n>__<name>.sql`. |
+| `Baseline` | Names the version table of a plugin's own migration runner. On a database with no version table of storage's, `Storage.start` takes it over once: it records the migrations up to that table's highest version as applied without running them, and renames the old table to `<table>_baseline` (or the first free `<table>_baselineN` when that name is taken), never dropping it. |
 | `Tx`, `TxWork`, `Params`, `Row` | A transaction, the work run in it, statement parameters and result rows, including UUID, JSON and money columns. |
 | `MoneyColumn` | Stores an amount as a scaled whole number, with the range it accepts. |
 | `StorageException`, `CommitUnknownException` | A start or migration that cannot go on, and a commit whose outcome is unknown. |
@@ -98,6 +101,11 @@ The package Javadoc of `taffy-config` walks through loading and reloading a plug
 The migrator is internal: it creates its own version table, checks each applied script's checksum,
 refuses a database newer than the plugin, takes a SQLite backup before changing an existing file, and
 takes a database lock on the server dialects so two servers sharing one database do not migrate at once.
+The lock is keyed by the database (on PostgreSQL the schema) and the version table, so starts on other
+databases of one server do not wait for it. A version table in another layout stops the start before
+anything changes. With a `Baseline` and no version table of its own yet, it first takes over the old
+runner's version table, in one transaction on SQLite and PostgreSQL and through one `RENAME TABLE` on
+MySQL and MariaDB.
 
 A plugin lists HikariCP and each driver it offers in `paperPlugin.runtimeLibraries`, and the same on its
 test runtime classpath. `taffy-storage` publishes no dependency on them.
@@ -152,8 +160,8 @@ gives up early, handled errors, diagnostics and disable.
 
 | Area | Classes |
 |---|---|
-| Connect guard | `ComfiConfConnection.connect(Plugin, ErrorReports, boolean, Supplier<ComfiConfLink>)`: switched on, bridge installed, enabled and its API visible to this plugin, then the plugin's own registration runs. It never returns null. `status()`, `resourceId()`, `notifyChanged()`, `lockFor(Path)` and `close()` follow; none of them passes a bridge failure on. |
-| Status | `ComfiConfState` and `ComfiConfStatus` with `describe()` and a reason for the owner, read when asked. |
+| Connect guard | `ComfiConfConnection.connect(Plugin, ErrorReports, boolean, Supplier<ComfiConfLink>)`: switched on, bridge installed, enabled and its API visible to this plugin, then the plugin's own registration runs. It never returns null. `status()`, `resourceId()`, `notifyChanged()`, `lockFor(Path)` and `close()` follow; none of them passes a bridge failure on. Connecting again is `close()` of the held connection, then `connect` on the main thread with the same supplier, which registers the provider built once in the integration class. |
+| Status | `ComfiConfState` and `ComfiConfStatus` with `describe()` and a reason for the owner, read when asked. A plugin jar that bundles its own copy of the API reads `NOT_VISIBLE` with a reason naming the copy; `NOT_REGISTERED` carries a reason. |
 | Registration | `ComfiConfRegistration.register(Plugin, id, displayName, description, ConfigProvider)` returns a `ComfiConfLink`. It is reached only from the plugin's own integration class. |
 | YAML file provider | `YamlFileProvider` over one YAML file: read from one byte array with its revision, the plugin's own `rules`, apply with the revision check, a merge into the current document, `SafeFileWriter`, the plugin's reload through `callSync`, restart-only fields against the startup values, and a truthful result. UTF-8 and line endings survive a round trip. |
 
@@ -174,18 +182,21 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 | Placeholder order | `{name}` rewrite, then PlaceholderAPI on the template, then MiniMessage with the values. PlaceholderAPI never runs on a supplied value. |
 | Message prefix | Shown only where a template writes `<prefix>`. Never prepended. |
 | Missing message key | Renders as red `missing:key`. Never throws. A menu button whose name key is missing shows the marker of its last key. |
-| Scheduler at disable | It never waits and never runs leftover work. Every method reports refusal: `false`, a failed future, the `retired` callback, or `RejectedExecutionException` from `asyncExecutor()`. Work that must settle is tracked in `PendingSettlements`. |
+| Scheduler at disable | It never waits and never runs leftover work. Every method reports refusal: `false`, a failed future, the `retired` callback, or `RejectedExecutionException` from `asyncExecutor()`. Work that must settle is tracked in `PendingSettlements`. `close()` completes no `dispatch` future: one whose task Paper accepted and then dropped stays incomplete, and the caller bounds it or tracks the work in `PendingSettlements`. |
 | Error sink | One `ErrorReports` instance the plugin creates and passes around, with one target. Reports made before the first install or clear are held, the first per source and at most 16, and the first install receives them. `taffy-metrics` installs the FastStats route at `start()`, so a plugin installs no target of its own before it. |
+| Handled failures | Two shapes, by who acts on them. A failure the server owner fixes (a bad webhook URL, Discord or the network down) is a one-line `String` reason for the plugin's log: `DiscordWebhook` passes it to its callback and reports nothing. A failure in code (Taffy, the plugin or an integration) is a source and a `Throwable` for `ErrorReports`, and a class that also logs it uses `ThrowLog`. A third-party pass that can fail on every call, such as a PlaceholderAPI expansion inside `Text` or a placeholder request in `taffy-hooks`, is logged through `ThrowLog` and not reported. |
 | Testing Paper code | Mockito mocks of Paper interfaces, static and construction mocks where code touches a static or `new ItemStack`. No mock server library. |
 | Package layout | One flat package per module. `so.alaz.taffy.platform` is not split: growth goes into modules. |
 | Disable order | `ComfiConfConnection.close`, `PlaceholderRegistration.unregister`, `Menus.shutdown`, `Scheduler.close`, `TaskGate.close`, `PendingSettlements.settleAll`, storage close, `DiscordWebhook.close`, `Metrics.shutdown`. The package Javadoc states it. |
-| Storage base | Tradefloor's storage package. The plugin passes its migrations and a function that opens their scripts, such as `plugin::getResource`. Config reading stays in the plugin, which builds `StorageSettings`. |
+| Storage base | Tradefloor's storage package. `Storage.start` takes the owner `Plugin`, its `ErrorReports`, the `StorageSettings` the plugin built, its migrations and a clock; the name, version, data folder, logger and migration scripts come from the `Plugin`. Config reading stays in the plugin. |
 | Rollback retry | Opt in, through `asyncRetrying` and `readRetrying`. Plain `async` and `read` never rerun work, because work may have effects outside the database. |
+| Storage close | `close(drain)` waits up to the drain on the calling thread, then refuses the queued work and interrupts the database threads. It does not wait for running work after that: that work ends on its own daemon database thread, where its future completes. |
 | Config base | `ConfigLoader` and `ConfigReader` take a data folder `Path`, a supplier of the shipped file and a `Logger` or a line consumer. Nothing calls `JavaPlugin.getConfig` or `reloadConfig`. |
 | Config problems | Collected, never thrown one at a time. A warning uses the fallback and loading goes on; an error is collected and the caller decides. Lines name no plugin: the logger already does. |
 | Parser convention | `Durations`, `Colors` and `Expiry` expose a public `EXPECTED` text and fail with `invalid <thing> '<value>': expected <EXPECTED>`. Null is treated like any other bad value. `ItemBuilder`, `SkullBuilder` and `DiscordWebhook` are outside it. |
+| Message text | Log lines and exception messages are written for the server owner or for the developer reading the log, and their wording can change in any release. Only text a Javadoc spells out is a contract, such as the parser messages and their `EXPECTED` texts, the `describe()` texts of `HookStatus` and `ComfiConfStatus`, `ConfigReader`'s warning and error shapes and `describe`, the `StrictYaml` and `YamlBytes` message shapes (such as `<source> is larger than 16 MiB` and `<source> is not valid YAML: <problem> at line <n>, column <m>`), the clause form of `ConfigLoadException` and the `missing:key` marker. A `ConfigReader` warning names the value it refuses, cut as `describe` cuts it; a YAML parse error names a line and column, not the line's text. Code branches on exception types, statuses and return values, never on a message. Taffy's own tests pin the full text so that a change is deliberate; a deliberate change updates its test and the changelog. |
 | Values that must be quoted | A date with a time, a hex colour and a code such as `0451`. `ConfigReader` warns and asks for quotes when it meets one unquoted. |
-| Integration loading | Detected once at enable: switched on, installed, enabled, API classes visible, then the adapter is built. An adapter class loads only after every check passes and re-checks that its plugin is enabled on each call. No listener for an integration enabled later; the Vault economy is looked up again when `EconomyWatcher` fires. |
+| Integration loading | Detected once at enable: switched on, installed, enabled, API classes visible, then the adapter is built. An adapter class loads only after every check passes and re-checks that its plugin is enabled on each call. No listener for an integration enabled later; the Vault economy is looked up again when `EconomyWatcher` fires. With ItemsAdder on, each `CustomItems.detect` leaves at most one more listener, registered until the owner disables. |
 | Integration entry points | The owner `Plugin`, then `ErrorReports`, then the owner's switch (a `boolean`, or a `Set<CustomItemPlugin>` for custom items), then the integration's own options. One integration gives a `Detected`, a group gives `statuses()`. Every status is read when asked and reads not enabled while its plugin is disabled, except the economy's, which a new lookup replaces. |
 | Hook failures | At detection, not visible and missing the API log one warning; could not be hooked logs one warning and is reported to `ErrorReports` under `hook.<name>`. Each economy lookup is a detection of its own, so it warns again. Later, a failure inside an integration is logged at most once a minute per kind of call; item builds and every LuckPerms and WorldGuard call are also reported, item id reads and placeholder requests are not. |
 | Menu layouts | Values the plugin builds in code or reads from its own files. Taffy reads no menu file and ships no lang file. |
@@ -198,7 +209,7 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 
 ## Next modules
 
-Every planned module is built. What remains is the list below, the open questions and the server runs.
+Every planned module is built. What remains is the list below and the server runs.
 
 ## Before the first publish
 
@@ -225,7 +236,9 @@ temporary group with an existing one.
 `MenuType.ANVIL` and the text it returns, whether the `ItemFlag`s hide the same tooltip lines Tradefloor's
 data components hid, the lifetime of a cancel link's click callback, chat event order with signed
 messages, the crafting or creative screen check that decides whether a finished prompt reopens its menu,
-and `registerEvents` on the two package-private listeners (a unit test covers Paper's `EventExecutor.create`).
+`registerEvents` on the two package-private listeners (a unit test covers Paper's `EventExecutor.create`),
+and whether Folia's shutdown thread owns every player when plugins disable at a server stop, which leaves
+only a disable while the server runs with menus open.
 
 `taffy-metrics` is tested against the real SDK classes with a loopback HTTP sink in place of the metrics
 servers. Only a server run and a real dashboard cover: real bStats and FastStats submissions, bStats and
@@ -238,6 +251,34 @@ bridge covers: `join-classpath` loading and the real `NOT_VISIBLE` path, registr
 real `callSync` and its 10 second timeout, `notifyChanged` reaching an open editor, what the bridge does with a
 registration across its own disable and reload, the `FieldChange` paths it sends for list item moves, and
 that `lockFor` gives the same lock the bridge's own write takes.
+
+## Additions after the first publish
+
+Each of these is purely additive, so none waits for the first publish. Each lands with its tests when a
+plugin needs it.
+
+- `CooldownManager.tryStart(Object key, Duration length)`: an atomic check-and-start. A length of zero or
+  less starts nothing and returns whether the key was free. The class Javadoc's race sentence then points
+  at it.
+- `ItemBuilder(ItemStack base)`: a second constructor whose `build()` starts from a copy of the stack and
+  keeps its amount, name, lore and glow unless they are set. `ItemBuilder(Material)` stays as it is.
+- Delayed and repeating tasks on the global and entity threads: `delayedGlobal`, `repeatingGlobal`,
+  `delayedEntity` and `repeatingEntity` on `Scheduler` only, never on `Dispatcher` or `EntityThread`, each
+  returning `boolean` like the async ones. Their Javadoc defines the tick conversion (a `Duration` rounded
+  up to whole 50 ms ticks, at least one), a removed entity (`retired` runs on the calling thread) and
+  refusal at disable. The repeating ones join the tasks `close()` cancels.
+- A handle for one repeating task: `repeatingAsyncTask(Runnable, Duration, Duration)` returning Paper's own
+  `ScheduledTask`, or `null` when refused, with cancelled tasks pruned from the tracked list on each add.
+  `repeatingAsync` keeps its `boolean` return.
+- `PdcKey.remove(PersistentDataHolder holder)`. Its Javadoc notes that a removal from an `ItemMeta` reaches
+  its item only through `ItemStack#setItemMeta`.
+- An `EconomyProvider.vault` overload that takes the previous `Detected` and warns and reports only when
+  the status changed. The five-argument form keeps warning on every lookup, as its Javadoc states.
+- `HookStatus.line()` and `ComfiConfStatus.line()`, the describe text and the reason joined as the package
+  Javadocs join them, added to both at once when a plugin's diagnostics command shows the line it wants.
+- A test seam for plugin menu tests (fake menu inventories, a movable click clock, delivery of click, drag,
+  close and quit events) in `taffy-gui`: a new public type or a `Menus` constructor overload, never a new
+  `Menus.Parts` component.
 
 ## Differences from the plugin copies
 
@@ -260,12 +301,12 @@ plugin copy did.
 | `Shutdown` | `closeQuietly` is static and takes the logger and the `ErrorReports`. It logs plain text. |
 | `Scheduler` | `new Scheduler(plugin)`. `global`, `async`, `delayedAsync` and `repeatingAsync` return `boolean` and never throw at disable. Delays are `Duration`. `repeatingAsync` returns no task handle: `close()` cancels the repeating tasks. No database tag or executor. A failed Folia lookup logs the `Classes.present` warning. |
 | `SkullBuilder` | `fromName` and `fromUuid` are instance methods on `new SkullBuilder(executor)`. No thread pool of its own; the cache belongs to the instance. A rejected lookup gives a blank head. `fromUrl` rejects a quote or backslash. |
-| `Text` | `new Text(logger)`. Values go in as `TagResolver` after parsing. The viewer is the parse target, so audience placeholders resolve. A supplied `{name}` inside a click or insertion value is not filled in. A section-sign code in the template or in PlaceholderAPI output is converted instead of throwing. |
+| `Text` | `new Text(logger)`. Values go in as `TagResolver` after parsing. The viewer is the parse target, so audience placeholders resolve. A supplied `{name}` inside a click or insertion value is not filled in. A section-sign code in the template, in PlaceholderAPI output or in a `Placeholder.parsed` value is converted instead of throwing, and a PlaceholderAPI or MiniPlaceholders pass that throws is logged through `ThrowLog`, not reported. |
 | `Messages` | Takes the data folder, the bundled English file as a supplier and a logger. Prefix is opt-in. A missing key renders a marker. Every non-section YAML value is kept as text, and a list as its lines (a bare `-` is an empty line). New `has` and `lines`. `renderTemplate` replaces `format`; `fill` has no equivalent. Locale codes match in lower case with `-` read as `_`. A default locale with no file is warned about. A language file that is not valid UTF-8 is skipped with a warning. |
-| `ConfigLoader` | Messages name no plugin. Owner-keyed sections are a constructor argument. The upgrade write is atomic, forced to disk, and gives a new file the usual permissions. A shipped file that is not UTF-8 stops the load. |
-| `ConfigReader` | `parsed` with a fallback text replaces `charge`. Messages name no plugin. Blank counts as absent. New range, choice, decimal and long readers. An unquoted date with a time asks for quotes. |
-| `DiscordWebhook` | New `isWebhookUrl`. Otherwise unchanged; it still owns its HTTP client threads. |
-| `Storage` | From Tradefloor's copy. Starts PostgreSQL and MySQL as well. Takes the name, logger, error sink, migrations and script function. Names no plugin in threads, pools or messages. A cancelled start releases what it built. `close` logs how much work it dropped. |
+| `ConfigLoader` | Messages name no plugin. Owner-keyed sections are a constructor argument. The upgrade write is atomic, forced to disk, and gives a new file the usual permissions. The temporary file has a fixed name (`config.yml.tmp`) and a leftover is removed at load. A shipped file that is not UTF-8 stops the load. |
+| `ConfigReader` | `parsed` with a fallback text replaces `charge`. Messages name no plugin. Blank counts as absent. New range, choice, decimal and long readers. `text`, `strings`, `requiredText` and `strictText` read an unquoted date as yyyy-MM-dd text, `quoted` refuses any unquoted date, and an unquoted date with a time asks for quotes. A warning or error writes a value longer than 100 characters in short form. |
+| `DiscordWebhook` | New `isWebhookUrl`. The failure callback runs at most once per post. Otherwise unchanged; it still owns its HTTP client threads. |
+| `Storage` | From Tradefloor's copy. Starts PostgreSQL and MySQL as well. Takes the owner `Plugin`, the error sink, the settings, the migrations and a clock. Names no plugin in threads, pools or messages. A cancelled start releases what it built. `close` logs how much work it dropped. On SQLite storage from `Storage.start`, writes run one at a time on their own `<name>-db-writer` thread, and their futures complete on the read threads. |
 | `CustomItems` | Merges the id reading of Tradefloor's copy with the item building of ProVouchers' copy. Plugins are tried ItemsAdder, Nexo, Oraxen, HeadDatabase. An unqualified reference is tried with its bare id. ItemsAdder items are built only once ItemsAdder has loaded them. An id read from a plugin still loading its items counts as a failure. An `Error` other than `LinkageError` propagates. |
 | `HookStatus` | Tradefloor's detection states as an enum, plus a reason for the owner. The wording names no plugin or config key. A factory that returns `null` is `FAILED`. `NOT_VISIBLE` and `NOT_REGISTERED` are new, and every integration can be switched off. |
 | `EconomyProvider` | From Tradefloor's provider, synchronous, with no transaction id, display name or offline policy. ProVouchers' `double` and `boolean` become `BigDecimal` and `EconomyResult`. A withdraw is covered only by the unrounded balance, and an unrounded overdraft is `OVERDRAWN`. |
@@ -276,69 +317,58 @@ plugin copy did.
 | `Prompts` | Chat and anvil only: the sign prompt stays in Tradefloor. Built from the menus, the mode, the Bedrock check and the timer; one listener holds the chat and anvil handlers. A second `Prompts` over one `Menus`, or over menus that were shut down, is refused. `askLater` asks from a button. Taffy `Messages` adds no prefix, so prompt and error lines show one only where the lang text writes `<prefix>`. |
 | `IconStacks` | Hides an item's details through `ItemMeta` and `ItemFlag` instead of data components, so it runs off a server. |
 | `MetricChart` | Ids are checked against `^[a-z0-9_]+$` and the FastStats built-in field names when the chart is declared, and nulls are refused. The string, number and bool suppliers may return null, which leaves the value out. On FastStats a supplier that throws is also reported to error tracking on every read. |
-| `MetricsBuilder` | Takes a `Plugin`, the `ErrorReports` and the switch. `bStats(int)` and `fastStats(String)` replace `enable(MetricProvider, String)`; error tracking is always on with FastStats. A second `start()`, or a chart added after it, throws. A token that is not 32 lowercase letters and digits is refused before FastStats writes its shared config. A failed FastStats start is shut down without a send, and the JVM uncaught exception handler is detached when no error service exists. |
+| `MetricsBuilder` | Takes a `Plugin`, the `ErrorReports` and the switch. `bStats(int)` and `fastStats(String)` replace `enable(MetricProvider, String)`; error tracking is always on with FastStats. A second `start()`, or a chart added after it, throws. A token that is not 32 lowercase letters and digits is refused before FastStats writes its shared config. A failed FastStats start is shut down without a send, and the JVM uncaught exception handler is detached when no error service exists. A jar without `META-INF/faststats.properties` is refused the same way, before the shared config is written. |
 | `Metrics` | Readers read false or null once shut down, and `bStatsStarted` reads false when the server owner turned bStats off. New `fastStatsCharts`. `report` is public. `shutdown` clears the error sink, stops the Taffy usage metrics, then bStats, then makes the FastStats final send, and detaches the handler only while it is this copy's. Handled errors go to one tracker per source instead of one attribute per report, so identical reports merge. |
 | `CounterMark` | After a total goes down, the FastStats mark follows it as the bStats mark does. |
-| `Migrator` | Creates its own version table, refuses migrations that are not strictly increasing, reads and splits every pending script before the backup, names the failing migration and statement, runs SQLite migrations with foreign keys off and checks them before commit, and locks the database on the server dialects. |
+| `Migrator` | Creates its own version table, refuses migrations that are not strictly increasing, reads and splits every pending script before the backup, names the failing migration and statement, runs SQLite migrations with foreign keys off and checks them before commit, and locks the database on the server dialects. Can take over the version table of the plugin's own runner through `Baseline`. |
 
 ## Open API questions
 
-None blocks the next module. Each is settled before the first publish.
+Every question is settled.
 
-- Shape of a handled failure: `DiscordWebhook` reports a `String`, `ErrorReports` a source and a
-  `Throwable`, `Text` swallows a failing placeholder pass without a log.
-- `Scheduler.dispatch`: a task Paper accepted may never run when the plugin disables, so its future can
-  stay incomplete. Failing such futures in `close()` would run callers' continuations on the disabling
-  thread.
-- `Text.render` still throws for a `Placeholder.parsed` value that holds a section-sign code.
-- `CooldownManager` has no atomic check-and-start.
-- Additions later modules may need: `ItemBuilder` from an existing stack,
-  delayed and repeating tasks on the entity and global threads, a handle for one repeating task,
-  `PdcKey.remove`.
-- Tests pin the full text of several warnings and exception messages that no Javadoc promises.
-- `ConfigReader.text`, `strings` and `requiredText` treat an unquoted date differently from `parsed`.
-- `StrictYaml.read` has no file size cap, and a warning about a long list prints the whole list.
-- `ConfigLoader` leaves a stray temporary file if the JVM is killed mid-write.
-- `verifyPublicApiRulesTests` checks that each module has a rules test, not that it points at its own
-  module.
-- The convention changes in `so.alaz.java` reach every plugin build that applies them. Only Taffy's own
-  modules have run under them.
-- `Storage.start` takes nine positional arguments; `name` and `pluginVersion` can be swapped unnoticed.
-- SQLite writes share the database threads with reads, so a write waits on the writer connection rather
-  than queueing behind one writer thread.
-- The migration lock on MySQL and MariaDB is server-wide, so two databases on one server with the same
-  table prefix take turns migrating.
-- `Storage.close` interrupts work still running when the drain runs out.
-- A Vault that is not visible, lacks the API or fails warns again on every economy lookup, at least
-  twice at startup. Holding back a repeat would need state in the caller.
-- Plugins join `HookStatus.describe()` and `reason()` themselves for a diagnostics line.
-- Each `CustomItems.detect` registers another ItemsAdder listener that stays until the plugin disables.
-- `new CustomItemRef(" ", id)` keeps a blank hint, while `parse` turns it into `null`.
-- A plugin's own menu tests cannot replace the menu inventories, move the click clock, or deliver click,
-  drag, close and quit events through the public API; that needs a later, additive test seam.
-- Swaps that still compile outside the enable wiring: `ItemLayout`'s action, permission and name;
-  `Icon.Saved`'s custom and item names, and its lore and extra lore; `Pager.Page`'s four numbers.
-- On Folia, a menu or prompt anvil of a player the disabling thread does not own stays open after disable.
-- A placeholder name outside MiniMessage's tag characters works in PlaceholderAPI and never resolves in
-  MiniPlaceholders. Names that differ only in case collide in MiniPlaceholders.
-- `Metrics.fastStatsErrorTracking()` cannot see a target the plugin installs after `start()`, which takes the
-  FastStats route away. A composed target that also calls `Metrics.report` keeps it.
-- `Metrics.shutdown`'s final send runs on the disabling thread with no upper bound on a stalled name lookup
-  or response. Bounding it needs a short-lived thread, which the thread rule above does not allow.
-- FastStats 0.31.0 drops a handled report made while an accepted error send is in flight, because the send
-  clears every tracker afterwards. Only the SDK can fix it.
-- A shadow jar without `META-INF/faststats.properties` still writes the shared FastStats config before it
-  fails. `so.alaz.paper-plugin` keeps the file; a hand-built shadow jar may not.
-- After 32 kinds of error in one source, new kinds from that source are dropped for the life of the handle.
-- Skipping a send writes `SimpleContext.submissionActive`, a public FastStats field the SDK does not document.
-  Re-check it, with the first-run and opt-out behaviour, at every FastStats version bump.
-- A restart-only field inside an object list is reported as waiting whenever it changes, even back to its
-  startup value. Comparing by item key needs each list's key field from the schema.
-- A plugin that bundles its own copy of `com.comficonf.api` registers nothing and reads `FAILED`; telling the
-  owner that the copy is the cause needs a check of which loader defined the API.
-- `NOT_REGISTERED` carries no reason, and the order for closing a connection and connecting again is not
-  documented.
-- `StrictYaml`'s parse error quotes the offending line, which can hold a secret, in the server log.
+## Known limitations
+
+- `Metrics.shutdown` makes the FastStats final send on the disabling thread. On a stalled name lookup or
+  response it blocks for as long as the network stalls: the SDK's 3 second timeouts cover neither. Bounding
+  it needs a thread that outlives the call, which the thread rule forbids. An opt-in bounded shutdown would
+  be a new method.
+- FastStats 0.31.0 clears every error tracker after an accepted error send, so a handled or uncaught report
+  made while that send is in flight is lost. Only the SDK can fix it; it is on the FastStats version-bump
+  checklist under Tooling notes.
+- Each source sends at most 32 kinds of handled error for the life of a `Metrics` handle; further kinds from
+  that source are dropped until the next `start()`. Taffy cannot see when FastStats accepts a send, which is
+  the only point where a reset would keep the bound.
+- `Metrics.fastStatsErrorTracking()` answers for `Metrics.report`, not for the error sink. A target the
+  plugin installs after `start()` replaces the FastStats route, and the reader still reads `true`. A plugin
+  that wants its reports in two places installs one target that calls `Metrics.report` and its own handler.
+  A reader that also sees the sink would be a new method.
+- On SQLite the future of a write completes on a read thread, so work or stages that wait for writes on every
+  read thread at once (always the case with `asyncThreads` 1) keep that write's future from completing. On
+  every dialect, work or a stage on a database thread that waits for other database work needs another
+  database thread free.
+- `Baseline` records the migrations up to the old table's version as applied on the plugin's word: storage
+  checks that a migration with that version exists, not that the database matches the scripts before it.
+- A takeover on MySQL or MariaDB that stops before its rename leaves `<prefix>schema_version_takeover` in the
+  database until the next start completes the takeover.
+- When `config.yml` is a symbolic link, each load removes a leftover `<name of the linked file>.tmp` beside
+  the linked file, in a folder Taffy does not own. Saves write and replace that same file.
+- The 16 MiB cap bounds file size, not parse time: one very long line or scalar can take SnakeYAML minutes to
+  parse.
+- A `ConfigReader` warning names the refused value cut to 100 characters, so part of a mistyped secret can
+  reach the log. A YAML parse error without a position falls back to the parser's own message, which can
+  quote a scalar.
+- A shadow jar that relocates `com.comficonf.api` reads `FAILED`, not `NOT_VISIBLE` with the bundled-copy
+  reason. `so.alaz.paper-plugin` never relocates the API.
+- `PlaceholderExpansionBuilder.identifier` accepts upper case and lower-cases it, while placeholder names
+  must already be lower case.
+- An unquoted date and time whose offset brings it to midnight UTC, such as `2026-12-31T19:00:00-05:00`,
+  reads in `ConfigReader` as the UTC date (`2027-01-01`) with no warning: YAML gives the same value for it
+  as for an unquoted date, and the written text is not kept.
+- On Folia, `Menus.shutdown` leaves the menu or prompt anvil of a viewer the disabling thread does not own
+  open, with no listener guarding it. The viewer can take the copies it shows, each carrying the preview key,
+  until the listener of a later enable deletes one on a click outside a menu.
+- `YamlFileProvider` can report a restart-only change inside an object list as waiting even when its value
+  is back at its startup value, because its path goes through the item index.
 
 ## Tooling notes
 
@@ -348,6 +378,15 @@ None blocks the next module. Each is settled before the first publish.
 - The tooling TestKit suite builds plugins against copies of `taffy-platform`, `taffy-config`, `taffy-metrics`
   and `taffy-comficonf`. Its first run in a fresh TestKit Gradle home needs network access to the Paper
   repository, Maven Central and repo.faststats.dev, and takes about a minute.
+- `so.alaz.java` and the plugins built on it are published behaviour. Each convention they add (the test
+  locale and zone and their override, the Mockito agent, the javadoc flags, `LICENSE` in `META-INF`) has a
+  TestKit case in `ConventionPluginsTest`, and a change to one is listed in the changelog as a change to
+  plugin builds. A plugin build meets it only when it moves to that Taffy version.
+- At every FastStats version bump, re-check: whether an accepted error send still clears reports made during
+  the send; that `SimpleContext.submissionActive` still gates every send (`TaffyUsageTest`, `MetricsTest` and
+  `MetricsBuilderTest` assert that a suppressed shutdown sends nothing); the first-run notice, the
+  `faststats.first-run` property and the opt-out keys; and that `META-INF/faststats.properties` is still read
+  when a context is created.
 
 ## A usage graph for a shaded library
 
@@ -373,6 +412,8 @@ plugins on a server.
 - Derive every global identifier (PDC namespace, metrics chart id) from the host plugin, so two shaded
   copies on one server do not collide.
 - Docs split by audience: server owner pages written once for the library and linked from each plugin.
+- Report a restart-only change inside an object list by item key instead of index, using each list's key
+  field from the schema.
 
 ## Not planned
 

@@ -40,7 +40,7 @@ public final class Pager {
         int index = Math.clamp(requested, 0, pages - 1);
         int from = Math.min(count, index * capacity);
         int to = from + Math.min(capacity, count - from);
-        return new Page(index, pages, from, to, index > 0, index < pages - 1);
+        return new Page(index, pages, from, to);
     }
 
     /**
@@ -50,9 +50,46 @@ public final class Pager {
      * @param pages the number of pages, at least 1
      * @param from the index of the first entry on this page, inclusive
      * @param to the index after the last entry on this page, exclusive; equal to {@code from} on an empty page
-     * @param previous whether a page comes before this one
-     * @param next whether a page comes after this one
      */
-    public record Page(int index, int pages, int from, int to, boolean previous, boolean next) {
+    public record Page(int index, int pages, int from, int to) {
+
+        /**
+         * Checks the numbers.
+         *
+         * @throws IllegalArgumentException if {@code pages} is below 1, {@code index} is outside 0 to
+         *     {@code pages - 1}, {@code from} is negative or {@code to} is below {@code from}
+         */
+        public Page {
+            if (pages < 1) {
+                throw new IllegalArgumentException("a list has at least one page, not " + pages);
+            }
+            if (index < 0 || index >= pages) {
+                throw new IllegalArgumentException("page " + index + " is outside 0 to " + (pages - 1));
+            }
+            if (from < 0) {
+                throw new IllegalArgumentException("a page starts at entry 0 or later, not " + from);
+            }
+            if (to < from) {
+                throw new IllegalArgumentException("a page ends at or after its start " + from + ", not at " + to);
+            }
+        }
+
+        /**
+         * Tells whether a page comes before this one.
+         *
+         * @return whether {@code index} is above 0
+         */
+        public boolean previous() {
+            return index > 0;
+        }
+
+        /**
+         * Tells whether a page comes after this one.
+         *
+         * @return whether {@code index} is below {@code pages - 1}
+         */
+        public boolean next() {
+            return index < pages - 1;
+        }
     }
 }

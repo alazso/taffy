@@ -160,7 +160,7 @@ final class MessagesTest {
         assertThat(messages.template(Locale.ENGLISH, "parcel.nothing")).isEqualTo("<red>missing:parcel.nothing");
         assertThat(messages.render(Locale.ENGLISH, "parcel.nothing", Placeholder.unparsed("count", "7")))
             .isEqualTo(marker);
-        assertThat(messages.render(new Text(null, null), null, "parcel.nothing")).isEqualTo(marker);
+        assertThat(messages.render(new Text(log.logger, null, null), null, "parcel.nothing")).isEqualTo(marker);
     }
 
     @Test
@@ -477,7 +477,7 @@ final class MessagesTest {
             prefix: "§6[%tag%] "
             hi: "<prefix>§aHi <name>"
             """), log.logger);
-        Text text = new Text((player, input) -> input.replace("%tag%", "§bT"), null);
+        Text text = new Text(log.logger, (player, input) -> input.replace("%tag%", "§bT"), null);
 
         Component withoutViewer = messages.render(Locale.ENGLISH, "hi", Placeholder.unparsed("name", "Ann"));
         Component withViewer = messages.render(text, viewer(Locale.ENGLISH), "hi", Placeholder.unparsed("name", "Ann"));
@@ -488,11 +488,25 @@ final class MessagesTest {
     }
 
     @Test
+    void sectionSignCodesInAParsedValueAreRenderedAsTheirTags() {
+        Messages messages = Messages.load(folder, supplier("got: \"You got <item>\"\n"), log.logger);
+        Text text = new Text(log.logger, null, null);
+        Component expected = MINI.deserialize("You got <green>Keys");
+
+        assertThat(messages.render(Locale.ENGLISH, "got", Placeholder.parsed("item", "§aKeys"))).isEqualTo(expected);
+        assertThat(messages.render(text, viewer(Locale.ENGLISH), "got", Placeholder.parsed("item", "§aKeys")))
+            .isEqualTo(expected);
+        assertThat(messages.lines(Locale.ENGLISH, "got", Placeholder.parsed("item", "§aKeys")))
+            .containsExactly(expected);
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
     void aMissingPrefixIsEmpty() {
         Messages messages = Messages.load(folder, supplier("tag: \"<prefix>Hi {prefix}!\"\n"), log.logger);
 
         assertThat(messages.render(Locale.ENGLISH, "tag")).isEqualTo(Component.text("Hi !"));
-        assertThat(messages.render(new Text(null, null), null, "tag")).isEqualTo(Component.text("Hi !"));
+        assertThat(messages.render(new Text(log.logger, null, null), null, "tag")).isEqualTo(Component.text("Hi !"));
     }
 
     @Test
@@ -509,7 +523,8 @@ final class MessagesTest {
 
         assertThat(plain(rendered)).isEqualTo("[nether] <red>Ann got 3 of {max}");
         assertThat(plain(messages.render(Locale.ENGLISH, "give"))).isEqualTo("[{world}] {player} got {count} of {max}");
-        assertThat(plain(messages.render(new Text(null, null), null, "give", Placeholder.unparsed("world", "end"))))
+        Text plainText = new Text(log.logger, null, null);
+        assertThat(plain(messages.render(plainText, null, "give", Placeholder.unparsed("world", "end"))))
             .isEqualTo("[end] {player} got {count} of {max}");
     }
 
@@ -523,7 +538,7 @@ final class MessagesTest {
             prefix: "[EN] "
             greet: "<prefix>Hello <name>, rank %rank%"
             """), log.logger);
-        Text text = new Text(pass, null);
+        Text text = new Text(log.logger, pass, null);
         Player german = viewer(Locale.GERMANY);
 
         Component rendered = messages.render(text, german, "greet", Placeholder.unparsed("name", "%rank%"));
@@ -550,7 +565,7 @@ final class MessagesTest {
         Messages messages = Messages.load(folder, supplier("greet: \"Hello <name>\"\n"), log.logger, "en", false);
 
         Component rendered = messages.render(
-            new Text(null, null), viewer(Locale.GERMANY), "greet", Placeholder.unparsed("name", "Ann"));
+            new Text(log.logger, null, null), viewer(Locale.GERMANY), "greet", Placeholder.unparsed("name", "Ann"));
 
         assertThat(plain(rendered)).isEqualTo("Hello Ann");
     }
@@ -559,7 +574,7 @@ final class MessagesTest {
     void aTemplateThatIsNotAKeyIsRenderedWithThePrefixOfTheViewersLanguage() throws IOException {
         write("de.yml", "prefix: \"[%tag%] \"\n");
         Messages messages = Messages.load(folder, bundled(), log.logger);
-        Text text = new Text(pass, null);
+        Text text = new Text(log.logger, pass, null);
         Player german = viewer(Locale.GERMANY);
 
         Component rendered = messages.renderTemplate(
@@ -600,7 +615,8 @@ final class MessagesTest {
 
         assertThat(messages.template(Locale.ENGLISH, "lore")).isEqualTo("<prefix><red>First <count>\n{count} more");
         assertThat(plain(messages, Locale.ENGLISH, "lore")).isEqualTo("[L] First 7\n7 more");
-        assertThat(plain(messages.render(new Text(null, null), null, "lore", Placeholder.unparsed("count", "7"))))
+        Text plainText = new Text(log.logger, null, null);
+        assertThat(plain(messages.render(plainText, null, "lore", Placeholder.unparsed("count", "7"))))
             .isEqualTo("[L] First 7\n7 more");
         assertThat(log.lines()).isEmpty();
     }
@@ -646,7 +662,7 @@ final class MessagesTest {
 
         assertThat(messages.template(null, "prefix")).isEqualTo("a\nb");
         assertThat(plain(messages.render(Locale.ENGLISH, "tag"))).isEqualTo("a\nbHi");
-        assertThat(plain(messages.render(new Text(null, null), null, "tag"))).isEqualTo("a\nbHi");
+        assertThat(plain(messages.render(new Text(log.logger, null, null), null, "tag"))).isEqualTo("a\nbHi");
         assertThat(messages.lines(Locale.ENGLISH, "lore")).extracting(MessagesTest::plain)
             .containsExactly("a\nbx", "y");
     }
@@ -688,7 +704,7 @@ final class MessagesTest {
         assertThat(messages.lines(Locale.ENGLISH, "lore")).isEmpty();
         assertThat(messages.template(Locale.ENGLISH, "lore")).isEmpty();
         assertThat(messages.render(Locale.ENGLISH, "lore")).isEqualTo(Component.empty());
-        assertThat(plain(messages.render(new Text(null, null), null, "lore"))).isEmpty();
+        assertThat(plain(messages.render(new Text(log.logger, null, null), null, "lore"))).isEmpty();
     }
 
     @Test

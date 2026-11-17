@@ -22,9 +22,11 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.logging.Logger;
+import java.util.regex.Pattern;
 
 /**
  * Brings a database to the newest schema version of a list of {@link Migration}s and records each applied one in
@@ -42,10 +44,16 @@ import java.util.logging.Logger;
  * neither, so on MySQL an index belongs inline in its {@code CREATE TABLE IF NOT EXISTS}. An incomplete row keeps
  * the checksum of the script that started it, and a resumed migration whose script changed stops the start.
  *
+ * <p>A version table in another layout stops the migration before anything changes.
+ *
  * <p>On MySQL, MariaDB and PostgreSQL the version table is read and the migrations run while the connection holds
- * a database lock named after the version table, with no socket timeout, so starts that share a database migrate
- * one at a time. On SQLite a migration runs with foreign keys off, as SQLite's table rebuild needs, when the
- * connection enforces them, and fails when {@code PRAGMA foreign_key_check} then finds a row that breaks one.
+ * a lock keyed by the database (on PostgreSQL the schema) and the version table, with no socket timeout, so starts
+ * that share a database migrate one at a time. On SQLite a migration runs with foreign keys off, as SQLite's table
+ * rebuild needs, when the connection enforces them, and fails when {@code PRAGMA foreign_key_check} then finds a
+ * row that breaks one.
+ *
+ * <p>With a {@link Baseline} and no version table yet, the database is first taken over from the old version table,
+ * as {@link Baseline} describes, after every script is read and before the first pending migration runs.
  */
 final class Migrator {
 
@@ -63,6 +71,13 @@ final class Migrator {
 
     private static final String VERSION_TABLE = "schema_version";
 
+    private static final String BASELINE_SUFFIX = "_baseline";
+
+    private static final String TAKEOVER_SUFFIX = "_takeover";
+
+    // At most 18 ASCII digits, so the value always fits a long.
+    private static final Pattern WHOLE = Pattern.compile("[0-9]{1,18}");
+
     private static final long LOCK_WAIT_SECONDS = Duration.ofDays(1).toSeconds();
 
     private record Applied(String checksum, int statementsDone, boolean complete) {
@@ -71,20 +86,43 @@ final class Migrator {
     private record Pending(Migration migration, String checksum, List<String> statements, int from) {
     }
 
+    /** The old version table, the free name it is renamed to, and the highest version it records. */
+    private record Takeover(String source, String renameTo, int version) {
+    }
+
+    /**
+     * The migration lock of one version table in one database: {@code name} is the lock name on MySQL and MariaDB,
+     * and {@code key} the advisory lock key on PostgreSQL, where {@code database} is the schema.
+     */
+    private record Lock(String database, String name, long key) {
+    }
+
     private final Dialect dialect;
     private final String prefix;
     private final Clock clock;
     private final Logger logger;
     private final List<Migration> migrations;
     private final Function<String, @Nullable InputStream> resources;
+    private final @Nullable Baseline baseline;
 
     /**
-     * A migrator for one database.
+     * A migrator for one database, with no baseline.
      *
      * @throws IllegalArgumentException if the versions of {@code migrations} are not strictly increasing
      */
     Migrator(Dialect dialect, String prefix, Clock clock, Logger logger, List<Migration> migrations,
              Function<String, @Nullable InputStream> resources) {
+        this(dialect, prefix, clock, logger, migrations, resources, null);
+    }
+
+    /**
+     * A migrator for one database that takes over the version table of {@code baseline} when it is not
+     * {@code null}.
+     *
+     * @throws IllegalArgumentException if the versions of {@code migrations} are not strictly increasing
+     */
+    Migrator(Dialect dialect, String prefix, Clock clock, Logger logger, List<Migration> migrations,
+             Function<String, @Nullable InputStream> resources, @Nullable Baseline baseline) {
         List<Migration> copy = List.copyOf(migrations);
         for (int index = 1; index < copy.size(); index++) {
             if (copy.get(index).version() <= copy.get(index - 1).version()) {
@@ -98,6 +136,7 @@ final class Migrator {
         this.logger = logger;
         this.migrations = copy;
         this.resources = resources;
+        this.baseline = baseline;
     }
 
     void migrate(Connection connection, @Nullable Backup backup) throws SQLException, StorageException {
@@ -109,18 +148,20 @@ final class Migrator {
         int timeout = connection.getNetworkTimeout();
         connection.setNetworkTimeout(Runnable::run, 0);
         Throwable failed = null;
-        boolean locked = false;
+        Lock taken = null;
         try {
-            lock(connection, versionTable);
-            locked = true;
+            Lock named = lockOf(connection, versionTable);
+            lock(connection, versionTable, named);
+            taken = named;
             migrateLocked(connection, backup);
         } catch (Throwable failure) {
             failed = failure;
             throw failure;
         } finally {
             Throwable pending = failed;
-            if (locked) {
-                cleanUp(pending, () -> unlock(connection, versionTable));
+            Lock held = taken;
+            if (held != null) {
+                cleanUp(pending, () -> unlock(connection, held));
             }
             cleanUp(pending, () -> connection.setNetworkTimeout(Runnable::run, timeout));
         }
@@ -130,7 +171,13 @@ final class Migrator {
         String versionTable = prefix + VERSION_TABLE;
         List<String> tables = tables(connection);
         boolean existing = tables.contains(versionTable);
+        if (existing && !layoutMatches(connection, versionTable)) {
+            throw new StorageException("the database holds a table named " + versionTable + " that storage did not"
+                + " create, so it cannot record migrations there; rename or remove that table, or on MySQL, MariaDB"
+                + " and PostgreSQL set another table prefix");
+        }
         Map<Integer, Applied> applied = existing ? applied(connection, versionTable) : Map.of();
+        @Nullable Takeover takeover = existing || baseline == null ? null : takeover(connection, tables, baseline);
         if (!existing) {
             warnAboutOtherPrefixes(connection, tables);
         }
@@ -141,11 +188,28 @@ final class Migrator {
                 + ", set up by a newer version of the plugin; this version knows schema versions up to " + known
                 + "; install the newer version again, or restore a backup of the database");
         }
+        if (takeover != null && takeover.version() > known) {
+            throw new StorageException("the table " + takeover.source() + " records schema version "
+                + takeover.version() + ", but this version of the plugin knows schema versions up to " + known
+                + "; install the plugin version that set up the database, or restore a backup of the database");
+        }
+        if (takeover != null && takeover.version() > 0
+            && migrations.stream().noneMatch(migration -> migration.version() == takeover.version())) {
+            throw new StorageException("the table " + takeover.source() + " records schema version "
+                + takeover.version() + ", but this version of the plugin has no migration with that version; install"
+                + " the plugin version that set up the database, or restore a backup of the database");
+        }
         List<Pending> pending = new ArrayList<>();
+        List<Pending> baselined = new ArrayList<>();
         for (Migration migration : migrations) {
             String path = migration.resource(dialect);
             String script = decode(path, read(path));
             String checksum = checksum(script);
+            if (takeover != null && migration.version() <= takeover.version()) {
+                List<String> statements = split(path, script);
+                baselined.add(new Pending(migration, checksum, statements, statements.size()));
+                continue;
+            }
             Applied done = applied.get(migration.version());
             if (done != null && !done.checksum().equals(checksum)) {
                 throw changed(migration, versionTable, done, checksum);
@@ -155,13 +219,17 @@ final class Migrator {
                     done == null ? 0 : done.statementsDone()));
             }
         }
-        if (pending.isEmpty()) {
+        if (pending.isEmpty() && takeover == null) {
             return;
         }
         if (!tables.isEmpty() && backup != null) {
             backup.run(connection);
         }
         @Nullable String createVersionTable = versionTableDdl(versionTable);
+        if (takeover != null) {
+            takeOver(connection, versionTable, takeover, baselined);
+            createVersionTable = null;
+        }
         for (Pending migration : pending) {
             apply(connection, versionTable, createVersionTable, migration);
             createVersionTable = null;
@@ -169,13 +237,106 @@ final class Migrator {
         }
     }
 
-    static String checksum(String script) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(script.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException missing) {
-            throw new IllegalStateException("the JVM has no SHA-256", missing);
+    private @Nullable Takeover takeover(Connection connection, List<String> tables, Baseline from)
+        throws SQLException, StorageException {
+        String old = from.table();
+        @Nullable String source = tables.contains(old) ? old
+            : tables.stream().filter(table -> sameTable(table, old)).findFirst().orElse(null);
+        if (source == null) {
+            return null;
         }
+        String renamed = old + BASELINE_SUFFIX;
+        String free = renamed;
+        for (int suffix = 2; taken(tables, free); suffix++) {
+            free = renamed + suffix;
+        }
+        return new Takeover(source, free, highest(connection, source));
+    }
+
+    private boolean taken(List<String> tables, String name) {
+        return tables.stream().anyMatch(table -> table.equals(name) || sameTable(table, name));
+    }
+
+    /**
+     * Whether {@code listed}, a name from the table list, names the same table as {@code name}, a lowercase ASCII
+     * name. SQLite compares table names without regard to ASCII case and lists them as they were declared.
+     */
+    private boolean sameTable(String listed, String name) {
+        return dialect == Dialect.SQLITE && listed.chars().allMatch(c -> c < 0x80) && listed.equalsIgnoreCase(name);
+    }
+
+    private int highest(Connection connection, String table) throws SQLException, StorageException {
+        int highest = 0;
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("SELECT version FROM " + table)) {
+            while (result.next()) {
+                String value = result.getString(1);
+                if (value != null) {
+                    highest = Math.max(highest, version(table, value));
+                }
+            }
+        } catch (SQLException refused) {
+            if (missingColumn(refused)) {
+                throw new StorageException("the table " + table + " has no version column, so storage cannot read"
+                    + " the schema version from it", refused);
+            }
+            throw refused;
+        }
+        return highest;
+    }
+
+    private static int version(String table, String value) throws StorageException {
+        String digits = value.strip();
+        if (WHOLE.matcher(digits).matches() && Long.parseLong(digits) <= Integer.MAX_VALUE) {
+            return Integer.parseInt(digits);
+        }
+        throw new StorageException("the table " + table + " holds the version \"" + value + "\", which is not"
+            + " a whole number from 0 to " + Integer.MAX_VALUE + ", so storage cannot read the schema version from"
+            + " it");
+    }
+
+    // Creating the version table, recording the versions and renaming the old table take effect together: in one
+    // transaction where DDL is transactional, and otherwise through a staging table that one RENAME TABLE moves into
+    // place with the old table. Every step before that rename is rerunnable.
+    private void takeOver(Connection connection, String versionTable, Takeover takeover, List<Pending> baselined)
+        throws SQLException {
+        long now = clock.millis();
+        String renameTo = takeover.renameTo();
+        if (dialect.transactionalDdl()) {
+            Throwable failed = null;
+            try {
+                connection.setAutoCommit(false);
+                execute(connection, versionTableDdl(versionTable));
+                for (Pending step : baselined) {
+                    record(connection, versionTable, step.migration(), step.checksum(), step.from(), now);
+                }
+                execute(connection, "ALTER TABLE " + takeover.source() + " RENAME TO " + renameTo);
+                connection.commit();
+            } catch (Throwable failure) {
+                failed = failure;
+                cleanUp(failure, connection::rollback);
+                throw failure;
+            } finally {
+                Throwable rolledBack = failed;
+                cleanUp(rolledBack, () -> connection.setAutoCommit(true));
+            }
+        } else {
+            String staging = versionTable + TAKEOVER_SUFFIX;
+            connection.setAutoCommit(true);
+            execute(connection, versionTableDdl(staging));
+            execute(connection, "DELETE FROM " + staging);
+            for (Pending step : baselined) {
+                record(connection, staging, step.migration(), step.checksum(), step.from(), now);
+            }
+            execute(connection, "RENAME TABLE " + staging + " TO " + versionTable + ", " + takeover.source()
+                + " TO " + renameTo);
+        }
+        logger.info("Took over schema version " + takeover.version() + " from " + takeover.source()
+            + ", now renamed to " + renameTo + ".");
+    }
+
+    static String checksum(String script) {
+        return HexFormat.of().formatHex(sha256(script));
     }
 
     private String versionTableDdl(String versionTable) {
@@ -282,46 +443,83 @@ final class Migrator {
         }
     }
 
-    private void lock(Connection connection, String versionTable) throws SQLException, StorageException {
+    private Lock lockOf(Connection connection, String versionTable) throws SQLException, StorageException {
+        if (dialect == Dialect.POSTGRES) {
+            String schema = current(connection, "SELECT current_schema()");
+            if (schema == null) {
+                throw new StorageException("the connection has no current schema, so the migration lock for "
+                    + versionTable + " cannot be named; set a search_path");
+            }
+            return new Lock(schema, "", lockKey(schema, versionTable));
+        }
+        String database = current(connection, "SELECT DATABASE()");
+        if (database == null) {
+            throw new StorageException("the connection has no current database, so the migration lock for "
+                + versionTable + " cannot be named; name the database in the connection settings");
+        }
+        return new Lock(database, lockName(database, versionTable), 0);
+    }
+
+    private static @Nullable String current(Connection connection, String query) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(query);
+             ResultSet result = statement.executeQuery()) {
+            return result.next() ? result.getString(1) : null;
+        }
+    }
+
+    // Every Taffy version must derive the same name for the same database and version table. The database is
+    // lowercased, so two spellings of one database on a case-insensitive server name one lock. The name is
+    // 46 characters, within MySQL's limit of 64.
+    static String lockName(String database, String versionTable) {
+        byte[] digest = sha256(database.toLowerCase(Locale.ROOT) + "." + versionTable);
+        return "taffy_" + HexFormat.of().formatHex(digest).substring(0, 40);
+    }
+
+    // Every Taffy version must derive the same key for the same schema and version table: the first 8 bytes of the
+    // SHA-256 of the schema and the version table name, joined by a dot.
+    static long lockKey(String schema, String versionTable) {
+        return ByteBuffer.wrap(sha256(schema + "." + versionTable)).getLong();
+    }
+
+    private static byte[] sha256(String text) {
+        try {
+            return MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException missing) {
+            throw new IllegalStateException("the JVM has no SHA-256", missing);
+        }
+    }
+
+    private void lock(Connection connection, String versionTable, Lock lock) throws SQLException, StorageException {
         if (dialect == Dialect.POSTGRES) {
             try (PreparedStatement statement = connection.prepareStatement("SELECT pg_advisory_lock(?)")) {
-                statement.setLong(1, lockKey(versionTable));
+                statement.setLong(1, lock.key());
                 statement.execute();
             }
             return;
         }
         try (PreparedStatement statement = connection.prepareStatement("SELECT GET_LOCK(?, ?)")) {
-            statement.setString(1, versionTable);
+            statement.setString(1, lock.name());
             statement.setLong(2, LOCK_WAIT_SECONDS);
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next() || result.getInt(1) != 1) {
                     throw new StorageException("another start has held the migration lock of " + versionTable
-                        + " for a day; restart once the other server has started");
+                        + " in database " + lock.database() + " for a day; restart once the other server has"
+                        + " started");
                 }
             }
         }
     }
 
-    private void unlock(Connection connection, String versionTable) throws SQLException {
+    private void unlock(Connection connection, Lock lock) throws SQLException {
         boolean postgres = dialect == Dialect.POSTGRES;
         try (PreparedStatement statement = connection.prepareStatement(
             postgres ? "SELECT pg_advisory_unlock(?)" : "SELECT RELEASE_LOCK(?)")) {
             if (postgres) {
-                statement.setLong(1, lockKey(versionTable));
+                statement.setLong(1, lock.key());
             } else {
-                statement.setString(1, versionTable);
+                statement.setString(1, lock.name());
             }
             statement.execute();
-        }
-    }
-
-    // A PostgreSQL advisory lock is keyed by a number: the first 8 bytes of the SHA-256 of the version table name.
-    private static long lockKey(String versionTable) {
-        try {
-            return ByteBuffer.wrap(MessageDigest.getInstance("SHA-256")
-                .digest(versionTable.getBytes(StandardCharsets.UTF_8))).getLong();
-        } catch (NoSuchAlgorithmException missing) {
-            throw new IllegalStateException("the JVM has no SHA-256", missing);
         }
     }
 
@@ -378,12 +576,43 @@ final class Migrator {
     }
 
     private static boolean ours(Connection connection, String table) {
-        try (Statement statement = connection.createStatement()) {
-            statement.executeQuery("SELECT version, checksum, statements_done, applied_at FROM " + table + " WHERE 1 = 0")
-                .close();
+        try {
+            probe(connection, table);
             return true;
         } catch (SQLException otherLayout) {
             return false;
+        }
+    }
+
+    // Only a missing column counts as another layout; any other refusal, such as a denied read, a damaged file or
+    // a lost connection, is rethrown.
+    private boolean layoutMatches(Connection connection, String table) throws SQLException {
+        try {
+            probe(connection, table);
+            return true;
+        } catch (SQLException refused) {
+            if (missingColumn(refused)) {
+                return false;
+            }
+            throw refused;
+        }
+    }
+
+    // SQLState 42S22 is MySQL's and MariaDB's unknown column and 42703 PostgreSQL's undefined column; SQLite
+    // reports a missing column only in its message.
+    private boolean missingColumn(SQLException refused) {
+        String state = refused.getSQLState();
+        if ("42S22".equals(state) || "42703".equals(state)) {
+            return true;
+        }
+        String message = refused.getMessage();
+        return dialect == Dialect.SQLITE && message != null && message.contains("no such column");
+    }
+
+    private static void probe(Connection connection, String table) throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.executeQuery("SELECT version, checksum, statements_done, applied_at FROM " + table
+                + " WHERE 1 = 0").close();
         }
     }
 

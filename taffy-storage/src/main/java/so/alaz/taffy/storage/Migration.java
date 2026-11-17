@@ -10,6 +10,7 @@ import java.util.Objects;
  * lists its migrations with strictly increasing versions and ships one script per migration for every dialect
  * it offers. The table {@code <prefix>schema_version} that records the applied migrations is created by storage,
  * so no script needs to create it; a script that creates it with {@code CREATE TABLE IF NOT EXISTS} still runs.
+ * A table of that name in another layout stops the start before anything changes.
  *
  * <p>A script is read as UTF-8, and one that is not valid UTF-8 stops the start. It is split into statements by
  * the rules of a migration script: a statement ends at a semicolon that ends its line, and a line holds at most
@@ -35,7 +36,8 @@ import java.util.Objects;
  *
  * <p>On MySQL, MariaDB and PostgreSQL, starts that share a database migrate one at a time: a start holds a
  * database lock while it reads the applied migrations and runs the pending ones, and waits for that lock while
- * another start holds it. A statement of a migration has no socket timeout.
+ * another start holds it. Starts on another database of the same server, or in another PostgreSQL schema, do not
+ * wait for it. A statement of a migration has no socket timeout.
  *
  * @param version the version number, 1 or more
  * @param name the name, the part of the file name after {@code V<version>__}: not blank, at most 128 characters

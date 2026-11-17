@@ -15,8 +15,8 @@ import java.util.Objects;
  *     {@link ComfiConfState#NOT_ENABLED}, and the bridge's version with every other state
  * @param reason one or more full sentences for the server owner on what is missing or what went wrong, and what to
  *     do when there is something to do, each ending with a full stop, or {@code null} when {@link #describe()} says
- *     enough. It is given for {@link ComfiConfState#NOT_VISIBLE}, {@link ComfiConfState#API_MISSING} and
- *     {@link ComfiConfState#FAILED}
+ *     enough. It is given for {@link ComfiConfState#NOT_VISIBLE}, {@link ComfiConfState#API_MISSING},
+ *     {@link ComfiConfState#NOT_REGISTERED} and {@link ComfiConfState#FAILED}
  */
 public record ComfiConfStatus(ComfiConfState state, @Nullable String version, @Nullable String reason) {
 

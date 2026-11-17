@@ -2,7 +2,12 @@ package so.alaz.taffy.platform;
 
 import io.github.miniplaceholders.api.MiniPlaceholders;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.minimessage.Context;
 import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.minimessage.ParsingException;
+import net.kyori.adventure.text.minimessage.tag.PreProcess;
+import net.kyori.adventure.text.minimessage.tag.Tag;
+import net.kyori.adventure.text.minimessage.tag.resolver.ArgumentQueue;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.entity.Player;
@@ -23,29 +28,40 @@ import java.util.regex.Pattern;
  * plugin is absent, its pass is skipped.
  *
  * <p>MiniMessage refuses a section sign followed by a legacy code character, which is what many
- * PlaceholderAPI expansions return. Every render therefore passes the text it is about to parse, the
- * input together with what PlaceholderAPI put into it, through {@link LegacyText#sectionToMiniMessage},
- * so such a code becomes its tag. A value supplied as {@code Placeholder.parsed} is not seen by that
- * step: one that holds such a code makes the render throw MiniMessage's {@code ParsingException}, so the
- * caller converts it first.
+ * PlaceholderAPI expansions return. Every render therefore converts such a code to its tag, as
+ * {@link LegacyText#sectionToMiniMessage} does: in the input, in what PlaceholderAPI put into it, and in
+ * each value supplied as {@code Placeholder.parsed}. A converted code such as {@code <red>} in a parsed
+ * value is an open tag, so it colours the rest of the template after the value, as the legacy code would.
+ * A value supplied as {@code Placeholder.unparsed} or {@code Placeholder.component} is inserted as it is,
+ * section sign included.
  *
- * <p>An instance holds no mutable state and may be shared. PlaceholderAPI expansions and
- * MiniPlaceholders audience tags run on the calling thread and read the viewer, so a call that
- * passes a viewer belongs on the thread that owns that player.
+ * <p>An instance is thread-safe and may be shared. A PlaceholderAPI pass that throws, and a
+ * MiniPlaceholders resolver that cannot be built or that throws while the text is parsed, is skipped and
+ * logged as {@link ThrowLog} does, under the sources {@code placeholderapi} and {@code miniplaceholders};
+ * nothing is reported to {@link ErrorReports}. A single MiniPlaceholders tag that throws while it resolves
+ * is left as written by MiniMessage and is not logged. PlaceholderAPI expansions and MiniPlaceholders
+ * audience tags run on the calling thread and read the viewer, so a call that passes a viewer belongs on
+ * the thread that owns that player.
  */
 public final class Text {
 
     private static final Pattern BRACED_NAME = Pattern.compile("\\{([a-z0-9_-]+)}");
+    private static final String PLACEHOLDER_API = "placeholderapi";
+    private static final String MINI_PLACEHOLDERS = "miniplaceholders";
+    private static final String MINI_PLACEHOLDERS_FAILED =
+        "MiniPlaceholders failed, so the text is shown without its placeholders.";
 
     private final MiniMessage mm = MiniMessage.miniMessage();
     private final @Nullable BiFunction<Player, String, String> placeholderApi;
     private final @Nullable Supplier<@Nullable TagResolver> miniPlaceholders;
+    private final ThrowLog failures;
 
     /**
      * Detects PlaceholderAPI and MiniPlaceholders once, by class presence. A lookup that fails is
      * reported to {@code logger} and leaves that integration off.
      */
     public Text(Logger logger) {
+        this.failures = new ThrowLog(logger);
         this.placeholderApi = Classes.present("me.clip.placeholderapi.PlaceholderAPI", getClass(), logger)
             ? (viewer, input) -> me.clip.placeholderapi.PlaceholderAPI.setPlaceholders(viewer, input)
             : null;
@@ -56,9 +72,11 @@ public final class Text {
 
     /** Takes each integration's pass directly. {@code null} means the plugin is absent. */
     Text(
+        Logger logger,
         @Nullable BiFunction<Player, String, String> placeholderApi,
         @Nullable Supplier<@Nullable TagResolver> miniPlaceholders
     ) {
+        this.failures = new ThrowLog(logger);
         this.placeholderApi = placeholderApi;
         this.miniPlaceholders = miniPlaceholders;
     }
@@ -89,13 +107,16 @@ public final class Text {
      * the values afterwards, so PlaceholderAPI never sees them. A supplied {@code {name}} inside a
      * {@code %...%} placeholder is rewritten to {@code <name>} as well, so that placeholder does not
      * receive the value. A value that carries PlaceholderAPI placeholders of its own is passed
-     * through {@link #resolve(String, Player)} by the caller before it is supplied, and through
-     * {@link LegacyText#sectionToMiniMessage} as well when it is supplied as {@code Placeholder.parsed}.
+     * through {@link #resolve(String, Player)} by the caller before it is supplied.
      *
      * <p>The caller picks how each value goes in: {@code Placeholder.component} or
      * {@code Placeholder.unparsed} for player-typed text, which is then inserted as it is, and
      * {@code Placeholder.parsed} for a value that carries MiniMessage on purpose. A value wins over a
      * MiniPlaceholders tag of the same name.
+     *
+     * @throws ParsingException when the text still holds a section sign followed by a legacy code character
+     *     once the values are inserted, as when a parsed value that ends in a section sign is followed by a code
+     *     character in the template
      */
     public Component render(String template, @Nullable Player viewer, TagResolver... values) {
         TagResolver supplied = TagResolver.resolver(values);
@@ -117,8 +138,9 @@ public final class Text {
 
     /**
      * Resolves PlaceholderAPI placeholders in the input against the viewer, without MiniMessage
-     * parsing. Returns the input unchanged when PlaceholderAPI is absent or throws, or the viewer is
-     * null. The result is what PlaceholderAPI returned, with any section-sign code still in it.
+     * parsing. Returns the input unchanged when PlaceholderAPI is absent or throws, and logs the
+     * failure, or the viewer is null. The result is what PlaceholderAPI returned, with any
+     * section-sign code still in it.
      */
     public String resolve(String input, @Nullable Player viewer) {
         return applyPlaceholders(input, viewer);
@@ -139,8 +161,31 @@ public final class Text {
     }
 
     /**
+     * Wraps {@code resolver} so that the value of each pre-process tag it returns, such as a
+     * {@code Placeholder.parsed} value, has its section-sign codes converted as
+     * {@link LegacyText#sectionToMiniMessage} converts them. Every other tag is returned as it is.
+     */
+    static TagResolver sectionSafe(TagResolver resolver) {
+        return new TagResolver() {
+            @Override
+            public @Nullable Tag resolve(String name, ArgumentQueue arguments, Context ctx) throws ParsingException {
+                Tag tag = resolver.resolve(name, arguments, ctx);
+                return tag instanceof PreProcess pre
+                    ? Tag.preProcessParsed(LegacyText.sectionToMiniMessage(pre.value()))
+                    : tag;
+            }
+
+            @Override
+            public boolean has(String name) {
+                return resolver.has(name);
+            }
+        };
+    }
+
+    /**
      * Parses already-resolved text as MiniMessage with MiniPlaceholders' resolvers when installed,
-     * falling back to parsing without them if an expansion throws.
+     * falling back to parsing without them if an expansion throws. The failure is logged only when
+     * the fallback parse succeeds; when it throws as well, its exception propagates.
      */
     private Component deserialize(String placeholdersApplied, @Nullable Player viewer, TagResolver values) {
         String resolved = LegacyText.sectionToMiniMessage(placeholdersApplied);
@@ -152,19 +197,22 @@ public final class Text {
             // The later resolver answers first, so a supplied value wins a name both have.
             return parse(resolved, viewer, TagResolver.resolver(expansions, values));
         } catch (RuntimeException ex) {
-            return parse(resolved, viewer, values);
+            Component fallback = parse(resolved, viewer, values);
+            failures.warn(MINI_PLACEHOLDERS, MINI_PLACEHOLDERS_FAILED, ex);
+            return fallback;
         }
     }
 
     /** Parses with the viewer as the target that audience placeholders read, when there is one. */
     private Component parse(String resolved, @Nullable Player viewer, TagResolver resolver) {
-        return viewer == null ? mm.deserialize(resolved, resolver) : mm.deserialize(resolved, viewer, resolver);
+        TagResolver safe = sectionSafe(resolver);
+        return viewer == null ? mm.deserialize(resolved, safe) : mm.deserialize(resolved, viewer, safe);
     }
 
     /**
      * MiniPlaceholders' resolver for global and audience placeholders, built per render so
      * expansions registered later are included. {@code null} when MiniPlaceholders is absent or
-     * throws while building it.
+     * throws while building it, which is logged.
      */
     private @Nullable TagResolver miniPlaceholderResolver() {
         if (miniPlaceholders == null) {
@@ -173,6 +221,7 @@ public final class Text {
         try {
             return miniPlaceholders.get();
         } catch (LinkageError | RuntimeException ex) {
+            failures.warn(MINI_PLACEHOLDERS, MINI_PLACEHOLDERS_FAILED, ex);
             return null;
         }
     }
@@ -182,9 +231,10 @@ public final class Text {
             return input;
         }
         try {
-            // A throwing PlaceholderAPI expansion must not break rendering.
             return placeholderApi.apply(viewer, input);
-        } catch (RuntimeException ex) {
+        } catch (LinkageError | RuntimeException ex) {
+            failures.warn(PLACEHOLDER_API,
+                "PlaceholderAPI failed while resolving placeholders, so the text is shown without them.", ex);
             return input;
         }
     }

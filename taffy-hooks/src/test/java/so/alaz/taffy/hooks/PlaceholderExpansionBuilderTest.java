@@ -159,11 +159,11 @@ final class PlaceholderExpansionBuilderTest {
     }
 
     @Test
-    void aBlankPlaceholderNameIsRefusedForEveryKind() {
+    void aNameOutsideTheLowerCaseTagCharactersIsRefusedForEveryKind() {
         PlaceholderExpansionBuilder builder = new PlaceholderExpansionBuilder();
 
-        for (String name : List.of("", " ")) {
-            String message = "invalid placeholder name '" + name + "': expected a name that is not blank";
+        for (String name : List.of("", " ", "Balance", "Item", "balance.top", "top 10", "a%b", "ı")) {
+            String message = nameMessage(name);
             assertThatThrownBy(() -> builder.player(name, player -> "x"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(message);
@@ -174,6 +174,26 @@ final class PlaceholderExpansionBuilderTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage(message);
         }
+        assertThatCode(() -> builder.player("balance_top-2", player -> "x")
+            .offline("balance_top-2", player -> "x")
+            .global("balance_top-2", () -> "x")).doesNotThrowAnyException();
+    }
+
+    @Test
+    void anUpperCaseVariantOfAnAddedNameIsRefusedByTheCharacterRule() {
+        PlaceholderExpansionBuilder builder = new PlaceholderExpansionBuilder().player("balance", player -> "x");
+
+        assertThatThrownBy(() -> builder.player("Balance", player -> "y"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage(nameMessage("Balance"));
+        assertThatThrownBy(() -> builder.global("BALANCE", () -> "y"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage(nameMessage("BALANCE"));
+    }
+
+    private static String nameMessage(String name) {
+        return "invalid placeholder name '" + name + "': expected one or more of the letters a to z in lower case,"
+            + " the digits, '_' and '-'";
     }
 
     @Test

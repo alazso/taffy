@@ -1,6 +1,7 @@
 package so.alaz.taffy.storage;
 
 import com.zaxxer.hikari.HikariDataSource;
+import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -16,6 +17,9 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 final class MissingLibrariesTest {
+
+    // The Paper API and the libraries the signatures of its Plugin interface name, which a proxy of it loads.
+    private static final List<URL> PAPER = paper();
 
     @TempDir
     private Path folder;
@@ -54,6 +58,7 @@ final class MissingLibrariesTest {
     private @Nullable Throwable startWith(List<URL> libraries, String name) throws Exception {
         List<URL> urls = new ArrayList<>(List.of(location(Storage.class.getName()),
             location(ErrorReports.class.getName()), location(IsolatedStart.class.getName())));
+        urls.addAll(PAPER);
         urls.addAll(libraries);
         try (URLClassLoader loader = new URLClassLoader(urls.toArray(URL[]::new),
             ClassLoader.getPlatformClassLoader())) {
@@ -62,6 +67,17 @@ final class MissingLibrariesTest {
             Method failure = start.getDeclaredMethod("failure", Path.class, String.class);
             failure.setAccessible(true);
             return (Throwable) failure.invoke(null, folder, name);
+        }
+    }
+
+    private static List<URL> paper() {
+        try {
+            return List.of(location(Plugin.class.getName()), location("net.kyori.adventure.key.Namespaced"),
+                location("net.kyori.adventure.audience.Audience"),
+                location("net.kyori.adventure.text.logger.slf4j.ComponentLogger"),
+                location("org.apache.logging.log4j.Logger"), location("org.slf4j.Logger"));
+        } catch (ClassNotFoundException missing) {
+            throw new IllegalStateException(missing);
         }
     }
 

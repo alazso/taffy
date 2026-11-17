@@ -697,6 +697,32 @@ class YamlFileProviderTest {
     }
 
     @Test
+    void aFileThatDoesNotParseIsRefusedWithoutQuotingTheLine() throws Exception {
+        Files.writeString(file, SETTINGS.replace("radius: 16", "radius: hunter2: x"));
+
+        assertThatThrownBy(() -> provider.read()).isInstanceOf(ConfigLoadException.class)
+            .hasMessageStartingWith("config.yml is not valid YAML: ")
+            .hasNoCause()
+            .satisfies(failure -> assertThat(failure.getMessage()).doesNotContain("hunter2"));
+    }
+
+    @Test
+    void aFileOverTheSizeLimitIsRefusedAndLeftAlone() throws Exception {
+        byte[] large = new byte[YamlBytes.MAX_FILE_BYTES + 1];
+        Arrays.fill(large, (byte) '#');
+        Files.write(file, large);
+
+        assertThatThrownBy(() -> provider.read()).isInstanceOf(ConfigLoadException.class)
+            .hasMessage("config.yml is larger than 16 MiB");
+        TestApplyContext context = new TestApplyContext(Revisions.of(large), ConfigValues.empty(),
+            ConfigValues.empty(), List.of());
+        assertThatThrownBy(() -> provider.apply(context)).isInstanceOf(ConfigLoadException.class)
+            .hasMessage("config.yml is larger than 16 MiB");
+        assertThat(Files.readAllBytes(file)).isEqualTo(large);
+        assertThat(context.syncCalls).hasValue(0);
+    }
+
+    @Test
     void readingAMissingFileThrowsIOException() throws Exception {
         Files.delete(file);
 

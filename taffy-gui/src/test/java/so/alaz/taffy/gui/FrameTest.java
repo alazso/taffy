@@ -49,7 +49,7 @@ final class FrameTest {
 
         harness.open(viewer, MenuHarness.LIST.id());
 
-        assertThat(pages).containsExactly(new Pager.Page(0, 1, 0, 3, false, false));
+        assertThat(pages).containsExactly(new Pager.Page(0, 1, 0, 3));
         assertThat(List.of(9, 10, 11)).allSatisfy(slot -> assertThat(viewer.icon(slot)).isEqualTo(ROW));
         Map<Integer, Button> buttons = viewer.session().buttons();
         assertThat(buttons).containsOnlyKeys(10, 11);

@@ -33,25 +33,34 @@
  *
  * <h2>At enable</h2>
  *
- * <p>The plugin's integration class builds the provider and registers it, returning the API-free link:
+ * <p>The plugin's integration class builds the provider once and returns an API-free supplier that registers it and
+ * gives the link:
  *
  * <pre>{@code
  * final class MyComfiConf {
- *     static ComfiConfLink register(MyPlugin plugin, ConfigHolder<Settings> holder) {
+ *     static Supplier<ComfiConfLink> registration(MyPlugin plugin, ConfigHolder<Settings> holder) {
  *         YamlFileProvider provider = YamlFileProvider.builder(plugin.configFile(), SettingsSchema.mapper(),
  *                 holder::reload)
  *             .build(plugin.getLogger());
- *         return ComfiConfRegistration.register(plugin, RESOURCE_ID, DISPLAY_NAME, DESCRIPTION, provider);
+ *         return () -> ComfiConfRegistration.register(plugin, RESOURCE_ID, DISPLAY_NAME, DESCRIPTION, provider);
  *     }
  * }
  * }</pre>
  *
  * <p>At the end of {@code onEnable}, after the settings file loaded and after any migration that writes it, the main
- * class connects through a supplier, so the integration class loads only after the bridge was found installed,
- * enabled and visible:
+ * class connects through a method that fills a {@code Supplier<ComfiConfLink>} field on its first call. The
+ * integration class loads only inside that method, so only after the bridge was found installed, enabled and
+ * visible:
  *
  * <pre>{@code
- * comfiConf = ComfiConfConnection.connect(this, errors, true, () -> MyComfiConf.register(this, holder));
+ * comfiConf = ComfiConfConnection.connect(this, errors, true, this::registerComfiConf);
+ *
+ * private ComfiConfLink registerComfiConf() {
+ *     if (comfiConfRegistration == null) {
+ *         comfiConfRegistration = MyComfiConf.registration(this, holder);
+ *     }
+ *     return comfiConfRegistration.get();
+ * }
  * }</pre>
  *
  * <p>The switch is {@code false} when the server owner turned the connection off. {@code connect} reads it once, so
@@ -94,6 +103,19 @@
  * and what the owner can do when there is something to do; together they are the owner's line.
  * {@link so.alaz.taffy.comficonf.ComfiConfConnection#resourceId()} gives the registered resource id for the same
  * line.
+ *
+ * <h2>Connecting again</h2>
+ *
+ * <p>A connection whose status reads {@link so.alaz.taffy.comficonf.ComfiConfState#NOT_REGISTERED}, for example
+ * after ComfiConf was reloaded, stays unregistered: its link never registers again. To register the settings again
+ * without a restart, the plugin calls {@link so.alaz.taffy.comficonf.ComfiConfConnection#close()} on the connection
+ * it holds, then calls {@link so.alaz.taffy.comficonf.ComfiConfConnection#connect} on the main thread with the same
+ * supplier and keeps the new connection. A {@code connect} while the old resource is still registered gives
+ * {@link so.alaz.taffy.comficonf.ComfiConfState#FAILED}, because the bridge refuses a second resource with the same
+ * id. The {@link so.alaz.taffy.comficonf.YamlFileProvider} is built once, in the integration class, at the first
+ * {@code connect} that passed its checks, and every later {@code connect} registers that same provider: a provider
+ * built later takes the file at that moment as its startup values, so a restart-only change made since the start
+ * would no longer be reported as waiting.
  *
  * <h2>At disable</h2>
  *

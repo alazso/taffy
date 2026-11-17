@@ -15,6 +15,8 @@ import so.alaz.taffy.test.CapturedLog;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -407,6 +409,32 @@ class MetricsBuilderTest {
         assertThat(System.getProperty("faststats.first-run")).isNull();
         assertThat(fixture.log.lines()).containsExactly(
             "WARNING FastStats metrics failed to start: Invalid token 'CHANGE_ME_TOKEN', must match '[a-z0-9]{32}'");
+
+        Metrics next = start(new MetricsBuilder(fixture.plugin, new ErrorReports(), true)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN));
+
+        assertThat(next.fastStats).isNotNull();
+        assertThat(next.fastStats.metrics()).isEmpty();
+        assertThat(next.fastStats.errorTrackerService()).isEmpty();
+        assertThat(System.getProperty("faststats.first-run")).isEqualTo("true");
+        next.shutdown();
+        assertThat(sink.requests).isEmpty();
+    }
+
+    @Test
+    void aLoaderWithoutFastStatsPropertiesWritesNoFastStatsConfigSoTheNextStartKeepsItsFirstRun() throws IOException {
+        BukkitContext refused;
+        try (URLClassLoader empty = new URLClassLoader(new URL[0], null)) {
+            refused = MetricsBuilder.startFastStats(fixture.plugin, MetricsFixture.FASTSTATS_TOKEN, List.of(), true,
+                fixture.log.logger, MetricsBuilder.FASTSTATS_FAILED, empty);
+        }
+
+        assertThat(refused).isNull();
+        assertThat(plugins.resolve("faststats")).doesNotExist();
+        assertThat(System.getProperty("faststats.first-run")).isNull();
+        assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(savedHandler);
+        assertThat(fixture.log.lines()).containsExactly(
+            "WARNING FastStats metrics failed to start: Resource '/META-INF/faststats.properties' not found");
 
         Metrics next = start(new MetricsBuilder(fixture.plugin, new ErrorReports(), true)
             .fastStats(MetricsFixture.FASTSTATS_TOKEN));

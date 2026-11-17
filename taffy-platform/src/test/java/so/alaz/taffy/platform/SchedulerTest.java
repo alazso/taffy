@@ -353,6 +353,19 @@ final class SchedulerTest {
     }
 
     @Test
+    void closeLeavesAnAcceptedButUnrunDispatchIncomplete() {
+        CompletableFuture<Integer> result = scheduler.dispatch(ThreadTag.GLOBAL, taskRuns::incrementAndGet);
+        when(plugin.isEnabled()).thenReturn(false);
+
+        scheduler.close();
+
+        verify(globalScheduler).run(eq(plugin), any());
+        assertThat(queued).hasSize(1);
+        assertThat(result).isNotDone();
+        assertThat(taskRuns).hasValue(0);
+    }
+
+    @Test
     void aDisabledPluginRefusesRepeatingWork() {
         when(plugin.isEnabled()).thenReturn(false);
 

@@ -9,17 +9,21 @@ import org.jetbrains.annotations.Nullable;
  * <p>The text before the first colon is treated as a provider hint (matched through
  * {@link CustomItemPlugin#byKey}); the remainder is the provider's own item id, which may itself contain colons.
  *
- * @param providerHint the provider name hint, or {@code null} if none was given
+ * @param providerHint the provider name hint, not blank, or {@code null} if none was given
  * @param id           the provider's item id
  */
 public record CustomItemRef(@Nullable String providerHint, String id) {
 
     /**
-     * Checks the id.
+     * Checks the hint and the id.
      *
-     * @throws IllegalArgumentException if {@code id} is {@code null} or blank
+     * @throws IllegalArgumentException if {@code providerHint} is blank, or {@code id} is {@code null} or blank
      */
     public CustomItemRef {
+        if (providerHint != null && providerHint.isBlank()) {
+            throw new IllegalArgumentException("invalid provider hint '" + providerHint + "': expected null or a hint"
+                + " that is not blank");
+        }
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("invalid custom item id '" + id + "': expected an id that is not"
                 + " blank");

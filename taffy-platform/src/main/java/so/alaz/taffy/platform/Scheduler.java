@@ -161,7 +161,9 @@ public final class Scheduler implements Dispatcher {
      * Cancels every task {@link #repeatingAsync} started through this instance, whichever class started it. A
      * run already in progress finishes. One-shot tasks are left to Paper. The owning plugin calls this first
      * in {@code onDisable}. The instance stays usable: a repeating task started after the call, or while it
-     * runs, is cancelled by the next call.
+     * runs, is cancelled by the next call. It completes no future that {@link #dispatch} returned: one whose
+     * task Paper accepted and then dropped at disable stays incomplete. Work that must settle is tracked in
+     * {@link PendingSettlements} before it is dispatched.
      */
     public void close() {
         // A task tracked during this pass is not in the snapshot being iterated and stays tracked.

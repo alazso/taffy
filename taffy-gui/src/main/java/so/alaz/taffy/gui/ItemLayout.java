@@ -11,6 +11,9 @@ import java.util.Objects;
  * one is decoration, drawn as given. A name or lore set here is trusted MiniMessage from the owner and replaces the
  * lang text in every language.
  *
+ * <p>Build an item with {@link #of(String, List, Material)} and the withers, which name each optional text; the
+ * canonical constructor takes the three optional texts by position.
+ *
  * @param id the item's id within its menu
  * @param slots the slots the item fills; not empty
  * @param material the item shown
@@ -39,6 +42,61 @@ public record ItemLayout(String id, List<Integer> slots, Material material, @Nul
             throw new IllegalArgumentException("item " + id + " fills no slot");
         }
         lore = lore == null ? null : List.copyOf(lore);
+    }
+
+    /**
+     * Gives a shown item with no action, permission, name or lore.
+     *
+     * @param id the item's id within its menu
+     * @param slots the slots the item fills; not empty
+     * @param material the item shown
+     * @return the item
+     * @throws NullPointerException if {@code id}, {@code material}, {@code slots} or a slot is {@code null}
+     * @throws IllegalArgumentException if {@code slots} is empty
+     */
+    public static ItemLayout of(String id, List<Integer> slots, Material material) {
+        return new ItemLayout(id, slots, material, null, null, true, null, null);
+    }
+
+    /**
+     * Gives this item standing for another action.
+     *
+     * @param action the menu action the item stands for, or {@code null} for decoration
+     * @return a copy of this item with {@code action} replaced
+     */
+    public ItemLayout action(@Nullable String action) {
+        return new ItemLayout(id, slots, material, action, permission, enabled, name, lore);
+    }
+
+    /**
+     * Gives this item behind another permission.
+     *
+     * @param permission the permission a viewer needs to see the item, or {@code null} for none
+     * @return a copy of this item with {@code permission} replaced
+     */
+    public ItemLayout permission(@Nullable String permission) {
+        return new ItemLayout(id, slots, material, action, permission, enabled, name, lore);
+    }
+
+    /**
+     * Gives this item with another name.
+     *
+     * @param name the name as MiniMessage, or {@code null} to read it from the lang file
+     * @return a copy of this item with {@code name} replaced
+     */
+    public ItemLayout name(@Nullable String name) {
+        return new ItemLayout(id, slots, material, action, permission, enabled, name, lore);
+    }
+
+    /**
+     * Gives this item with other lore.
+     *
+     * @param lore the lore lines as MiniMessage, or {@code null} to read them from the lang file
+     * @return a copy of this item with {@code lore} replaced
+     * @throws NullPointerException if a lore line is {@code null}
+     */
+    public ItemLayout lore(@Nullable List<String> lore) {
+        return new ItemLayout(id, slots, material, action, permission, enabled, name, lore);
     }
 
     /**

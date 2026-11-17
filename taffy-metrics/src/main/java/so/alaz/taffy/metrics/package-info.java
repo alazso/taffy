@@ -12,7 +12,8 @@
  * needs nothing more: it relocates {@code org.bstats}, {@code dev.faststats} and {@code so.alaz.taffy} under
  * {@code <group>.libs} and keeps one {@code META-INF/faststats.properties}. Any other build relocates the same three
  * packages and keeps that file in its shadow jar: bStats refuses to start from classes that were not relocated, and
- * FastStats cannot create its context without the file. The FastStats SDK resolves from
+ * FastStats cannot create its context without the file; without it, {@code start()} logs one warning and leaves
+ * FastStats off before it writes {@code plugins/faststats/config.properties}. The FastStats SDK resolves from
  * {@code https://repo.faststats.dev/releases}. Neither SDK may be listed as a Paper runtime library, which would
  * load it unrelocated.
  *

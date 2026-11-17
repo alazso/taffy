@@ -1,16 +1,25 @@
 package so.alaz.taffy.storage;
 
+import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import so.alaz.taffy.test.RaceRunner;
 
 import java.math.BigDecimal;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -29,6 +38,27 @@ abstract class StorageContract {
     abstract String name();
 
     abstract String createProbe(String table);
+
+    abstract Dialect dialect();
+
+    /**
+     * Starts another storage on the database of {@link #storage()}, with the prefix where the dialect has one, taking
+     * over the old version table of {@code baseline} when it is not {@code null}.
+     */
+    abstract CompletableFuture<Storage> starting(String prefix, List<Migration> migrations,
+                                                 Map<String, String> scripts, @Nullable Baseline baseline);
+
+    /** Starts another storage on the database of {@link #storage()}, with no baseline. */
+    CompletableFuture<Storage> starting(String prefix, List<Migration> migrations, Map<String, String> scripts) {
+        return starting(prefix, migrations, scripts, null);
+    }
+
+    /** A connection of its own to the database of {@link #storage()}. */
+    abstract Connection connect() throws SQLException;
+
+    /** Checks that no start of this test wrote a backup of the database. */
+    void assertNoBackup() {
+    }
 
     String probe() {
         return storage().table("probe");
@@ -223,6 +253,79 @@ abstract class StorageContract {
     }
 
     @Test
+    void aVersionTableInAnotherLayoutStopsTheStartAndStaysAsItWas() throws Exception {
+        String prefix = "alien_";
+        String versionTable = (dialect() == Dialect.SQLITE ? "" : prefix) + "schema_version";
+        Migration first = new Migration(1, "alpha");
+        Map<String, String> scripts = Map.of(first.resource(dialect()), "CREATE TABLE ${prefix}alpha (id INTEGER);\n");
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            try {
+                statement.execute("CREATE TABLE " + versionTable + " (version INTEGER NOT NULL)");
+                statement.execute("INSERT INTO " + versionTable + " VALUES (7)");
+                List<String> before = ProbeSchema.tables(connection, dialect(), "");
+
+                assertThatThrownBy(() -> starting(prefix, List.of(first), scripts).join())
+                    .isInstanceOf(CompletionException.class)
+                    .cause().isInstanceOf(StorageException.class)
+                    .hasMessage("the database holds a table named " + versionTable + " that storage did not create,"
+                        + " so it cannot record migrations there; rename or remove that table, or on MySQL, MariaDB"
+                        + " and PostgreSQL set another table prefix");
+
+                assertThat(ProbeSchema.tables(connection, dialect(), "")).isEqualTo(before);
+                assertThat(columns(connection, versionTable)).containsExactly("version");
+                assertThat(ProbeSchema.ids(connection, versionTable, "version")).containsExactly(7);
+                assertNoBackup();
+            } finally {
+                statement.execute("DROP TABLE IF EXISTS " + versionTable);
+            }
+        }
+    }
+
+    @Test
+    void aBaselineTakesOverAMultiRowVersionTableOnce() throws Exception {
+        String prefix = dialect() == Dialect.SQLITE ? "" : "taken_";
+        String legacy = "legacy_schema_version";
+        Baseline baseline = Baseline.versionTable(legacy);
+        List<Migration> migrations =
+            List.of(new Migration(1, "alpha"), new Migration(2, "beta"), new Migration(3, "gamma"));
+        Map<String, String> scripts = Map.of(
+            migrations.get(0).resource(dialect()), "CREATE TABLE ${prefix}alpha (id INTEGER);\n",
+            migrations.get(1).resource(dialect()), "CREATE TABLE ${prefix}beta (id INTEGER);\n",
+            migrations.get(2).resource(dialect()), "CREATE TABLE ${prefix}gamma (id INTEGER);\n");
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            try {
+                statement.execute("CREATE TABLE " + legacy + " (version INTEGER NOT NULL, description VARCHAR(32))");
+                statement.execute("INSERT INTO " + legacy + " VALUES (1, 'first')");
+                statement.execute("INSERT INTO " + legacy + " VALUES (2, 'second')");
+                statement.execute("CREATE TABLE " + prefix + "alpha (id INTEGER)");
+                statement.execute("INSERT INTO " + prefix + "alpha VALUES (7)");
+                statement.execute("CREATE TABLE " + prefix + "beta (id INTEGER)");
+
+                starting(prefix, migrations, scripts, baseline).join().close(Duration.ofSeconds(5));
+                starting(prefix, migrations, scripts, baseline).join().close(Duration.ofSeconds(5));
+
+                assertThat(ProbeSchema.tables(connection, dialect(), ""))
+                    .contains(legacy + "_baseline", prefix + "gamma", prefix + "schema_version")
+                    .doesNotContain(legacy, legacy + "_baseline2", prefix + "schema_version_takeover");
+                assertThat(ProbeSchema.versions(connection, prefix)).containsExactly(1, 2, 3);
+                for (Migration migration : migrations) {
+                    assertThat(checksum(connection, prefix, migration.version())).as("checksum of %s", migration.id())
+                        .isEqualTo(Migrator.checksum(scripts.get(migration.resource(dialect()))));
+                    assertThat(ProbeSchema.appliedAt(connection, prefix, migration.version())).isEqualTo(
+                        NOW.toEpochMilli());
+                }
+                assertThat(ProbeSchema.ids(connection, legacy + "_baseline", "version")).containsExactly(1, 2);
+                assertThat(ProbeSchema.ids(connection, prefix + "alpha", "id")).containsExactly(7);
+            } finally {
+                for (String table : List.of(legacy, legacy + "_baseline", prefix + "alpha", prefix + "beta",
+                    prefix + "gamma", prefix + "schema_version", prefix + "schema_version_takeover")) {
+                    statement.execute("DROP TABLE IF EXISTS " + table);
+                }
+            }
+        }
+    }
+
+    @Test
     void queryOneRefusesSeveralRows() {
         insert(UUID.randomUUID(), "A", null, null, null, null);
         insert(UUID.randomUUID(), "A", null, null, null, null);
@@ -241,6 +344,28 @@ abstract class StorageContract {
     String state(UUID id) {
         return storage().read(tx -> tx.queryOne("SELECT state FROM " + probe() + " WHERE id = ?",
             params -> params.uuid(id), row -> row.text("state")).orElseThrow()).join();
+    }
+
+    static List<String> columns(Connection connection, String table) throws SQLException {
+        List<String> columns = new ArrayList<>();
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("SELECT * FROM " + table)) {
+            for (int column = 1; column <= result.getMetaData().getColumnCount(); column++) {
+                columns.add(result.getMetaData().getColumnName(column));
+            }
+        }
+        return columns;
+    }
+
+    static String checksum(Connection connection, String prefix, int version) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT checksum FROM " + prefix + "schema_version WHERE version = ?")) {
+            statement.setInt(1, version);
+            try (ResultSet result = statement.executeQuery()) {
+                assertThat(result.next()).as("a row for version %d", version).isTrue();
+                return result.getString(1);
+            }
+        }
     }
 
     long count() {

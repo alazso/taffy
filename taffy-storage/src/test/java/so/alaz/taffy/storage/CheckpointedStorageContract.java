@@ -1,14 +1,16 @@
 package so.alaz.taffy.storage;
 
+import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-import so.alaz.taffy.platform.ErrorReports;
+import so.alaz.taffy.test.FaultyDataSource;
 
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -19,8 +21,11 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.logging.Logger;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
@@ -38,10 +43,9 @@ abstract class CheckpointedStorageContract extends StorageContract {
     private static final Clock EARLIER_CLOCK = Clock.fixed(EARLIER, ZoneOffset.UTC);
     private static final String CONTRACT_PREFIX = "contract_";
     private static final Migration RESUME = new Migration(4, "resume");
+    private static final String OTHER_DATABASE = "taffy_other";
 
     private Storage storage;
-
-    abstract Dialect dialect();
 
     abstract StorageSettings.Server server(String prefix);
 
@@ -173,6 +177,94 @@ abstract class CheckpointedStorageContract extends StorageContract {
     }
 
     @Test
+    void theMigrationLockIsKeyedByTheDatabase() throws Exception {
+        String prefix = "keyed_";
+        String versionTable = prefix + "schema_version";
+        Migration first = new Migration(1, "alpha");
+        Migration second = new Migration(2, "beta");
+        Map<String, String> scripts = Map.of(
+            first.resource(dialect()), "CREATE TABLE IF NOT EXISTS ${prefix}alpha (id INT);\n",
+            second.resource(dialect()), "CREATE TABLE IF NOT EXISTS ${prefix}beta (id INT);\n");
+        StorageSettings.Server server = server(prefix);
+        try (Connection root = DriverManager.getConnection(Storage.serverUrl(dialect(), server), "root",
+                 server.password());
+             Statement admin = root.createStatement()) {
+            admin.execute("CREATE DATABASE " + OTHER_DATABASE);
+            try {
+                admin.execute("GRANT ALL PRIVILEGES ON " + OTHER_DATABASE + ".* TO '" + server.user() + "'@'%'");
+                try (Connection holder = connect()) {
+                    assertThat(namedLock(holder, "GET_LOCK", Migrator.lockName(server.database(), versionTable)))
+                        .isEqualTo(1);
+                    startingOn(OTHER_DATABASE, prefix, List.of(first), scripts).orTimeout(30, TimeUnit.SECONDS)
+                        .join().close(Duration.ofSeconds(5));
+
+                    String other = Migrator.lockName(OTHER_DATABASE, versionTable);
+                    assertThat(namedLock(holder, "GET_LOCK", other)).isEqualTo(1);
+                    CompletableFuture<Storage> waiting = startingOn(OTHER_DATABASE, prefix, List.of(first, second),
+                        scripts);
+                    assertThatThrownBy(() -> waiting.get(2, TimeUnit.SECONDS)).isInstanceOf(TimeoutException.class);
+                    assertThat(namedLock(holder, "RELEASE_LOCK", other)).isEqualTo(1);
+                    waiting.orTimeout(30, TimeUnit.SECONDS).join().close(Duration.ofSeconds(5));
+                }
+                assertThat(ProbeSchema.versions(root, OTHER_DATABASE + "." + prefix)).containsExactly(1, 2);
+            } finally {
+                admin.execute("DROP DATABASE IF EXISTS " + OTHER_DATABASE);
+            }
+        }
+    }
+
+    @Test
+    void aTakeoverInterruptedBeforeItsRenameIsCompletedByTheNextStart() throws Exception {
+        String prefix = "halted_";
+        String legacy = prefix + "legacy_version";
+        String staging = prefix + "schema_version_takeover";
+        Baseline baseline = Baseline.versionTable(legacy);
+        Map<String, String> scripts = ProbeSchema.scripts(dialect());
+        StorageSettings.Server server = server(prefix);
+        Properties credentials = new Properties();
+        credentials.setProperty("user", server.user());
+        credentials.setProperty("password", server.password());
+        FaultyDataSource faulty = new FaultyDataSource(Storage.serverUrl(dialect(), server), credentials);
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            try {
+                migrator(prefix, ProbeSchema.MIGRATIONS.subList(0, 2), scripts).migrate(connection, null);
+                statement.execute("DROP TABLE " + prefix + "schema_version");
+                statement.execute("CREATE TABLE " + legacy + " (version INT NOT NULL)");
+                statement.execute("INSERT INTO " + legacy + " VALUES (2)");
+                faulty.faults().failMatching("RENAME TABLE", 1);
+
+                try (Connection failing = faulty.getConnection()) {
+                    assertThatThrownBy(() -> new Migrator(dialect(), prefix, EARLIER_CLOCK,
+                        Logger.getAnonymousLogger(), ProbeSchema.MIGRATIONS, ProbeSchema.source(scripts), baseline)
+                        .migrate(failing, null))
+                        .isInstanceOf(SQLException.class).hasMessage("injected failure of RENAME TABLE");
+                }
+
+                assertThat(ProbeSchema.tables(connection, dialect(), prefix))
+                    .containsExactly(prefix + "alpha", prefix + "beta", legacy, staging);
+                assertThat(ProbeSchema.ids(connection, staging, "version")).containsExactly(1, 2);
+                statement.execute("INSERT INTO " + staging + " (version, name, checksum, statements_done, applied_at)"
+                    + " VALUES (4, 'delta', '" + "0".repeat(64) + "', 1, 1)");
+
+                starting(prefix, ProbeSchema.MIGRATIONS, scripts, baseline).join().close(Duration.ofSeconds(5));
+
+                assertThat(ProbeSchema.tables(connection, dialect(), prefix)).containsExactly(prefix + "alpha",
+                    prefix + "beta", prefix + "gamma", legacy + "_baseline", prefix + "schema_version");
+                assertThat(ProbeSchema.versions(connection, prefix)).containsExactly(1, 2, 3);
+                for (Migration migration : ProbeSchema.MIGRATIONS) {
+                    assertThat(ProbeSchema.appliedAt(connection, prefix, migration.version()))
+                        .isEqualTo(NOW.toEpochMilli());
+                    assertThat(checksum(connection, prefix, migration.version()))
+                        .isEqualTo(Migrator.checksum(scripts.get(migration.resource(dialect()))));
+                }
+                assertThat(ProbeSchema.ids(connection, prefix + "alpha", "id")).containsExactly(1);
+            } finally {
+                ProbeSchema.drop(connection, dialect(), prefix);
+            }
+        }
+    }
+
+    @Test
     void anUpdateThatChangesNoColumnCountsNoRows() {
         UUID id = UUID.randomUUID();
         insert(id, "A", null, null, null, null);
@@ -190,12 +282,26 @@ abstract class CheckpointedStorageContract extends StorageContract {
         return starting(prefix, migrations, scripts).join();
     }
 
-    private CompletableFuture<Storage> starting(String prefix, List<Migration> migrations,
-                                                Map<String, String> scripts) {
-        StorageSettings settings = new StorageSettings(dialect(), "data.db", server(prefix),
+    @Override
+    CompletableFuture<Storage> starting(String prefix, List<Migration> migrations, Map<String, String> scripts,
+                                        @Nullable Baseline baseline) {
+        return startingOn(server(prefix).database(), prefix, migrations, scripts, baseline);
+    }
+
+    private CompletableFuture<Storage> startingOn(String database, String prefix, List<Migration> migrations,
+                                                  Map<String, String> scripts) {
+        return startingOn(database, prefix, migrations, scripts, null);
+    }
+
+    private CompletableFuture<Storage> startingOn(String database, String prefix, List<Migration> migrations,
+                                                  Map<String, String> scripts, @Nullable Baseline baseline) {
+        StorageSettings.Server base = server(prefix);
+        StorageSettings.Server server = new StorageSettings.Server(base.host(), base.port(), database, base.user(),
+            base.password(), base.sslMode(), prefix);
+        StorageSettings settings = new StorageSettings(dialect(), "data.db", server,
             new StorageSettings.Pool(4, 1, Duration.ofSeconds(10)), 2, 5);
-        return Storage.start(settings, Path.of("unused"), name(), "9.9.9", migrations, ProbeSchema.source(scripts),
-            Logger.getAnonymousLogger(), new ErrorReports(), CLOCK);
+        return TestPlugins.start(TestPlugins.plugin(name(), Path.of("unused"), Logger.getAnonymousLogger(),
+            ProbeSchema.source(scripts)), settings, migrations, baseline, CLOCK);
     }
 
     private Migrator migrator(String prefix, List<Migration> migrations, Map<String, String> scripts) {
@@ -203,9 +309,21 @@ abstract class CheckpointedStorageContract extends StorageContract {
             ProbeSchema.source(scripts));
     }
 
-    private Connection connect() throws SQLException {
+    @Override
+    Connection connect() throws SQLException {
         StorageSettings.Server server = server("");
         return DriverManager.getConnection(Storage.serverUrl(dialect(), server), server.user(), server.password());
+    }
+
+    private static int namedLock(Connection connection, String function, String name) throws SQLException {
+        String sql = "SELECT " + function + (function.equals("GET_LOCK") ? "(?, 0)" : "(?)");
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, name);
+            try (ResultSet result = statement.executeQuery()) {
+                result.next();
+                return result.getInt(1);
+            }
+        }
     }
 
     private static List<String> indexes(Connection connection, String table) throws SQLException {

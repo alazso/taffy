@@ -4,16 +4,42 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import so.alaz.taffy.config.ConfigLoadException;
 import so.alaz.taffy.config.StrictYaml;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 final class YamlBytes {
+
+    /** The largest file {@link #read(Path, String)} accepts, in bytes. */
+    static final int MAX_FILE_BYTES = 16 * 1024 * 1024;
 
     private static final String BYTE_ORDER_MARK = "﻿";
 
     private YamlBytes() {
+    }
+
+    /**
+     * Reads the bytes of {@code file}, at most {@link #MAX_FILE_BYTES} of them. The read blocks the calling thread.
+     *
+     * @param source the name of the file in the failure message, such as {@code config.yml}
+     * @throws IOException when the file cannot be read, a missing file included
+     * @throws ConfigLoadException when the file is larger than 16 MiB (the message is {@code source}, then
+     *     {@code " is larger than 16 MiB"})
+     */
+    static byte[] read(Path file, String source) throws IOException, ConfigLoadException {
+        byte[] content;
+        try (InputStream in = Files.newInputStream(file)) {
+            content = in.readNBytes(MAX_FILE_BYTES + 1);
+        }
+        if (content.length > MAX_FILE_BYTES) {
+            throw new ConfigLoadException(source + " is larger than 16 MiB");
+        }
+        return content;
     }
 
     /**

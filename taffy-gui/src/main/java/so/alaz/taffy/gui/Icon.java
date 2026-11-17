@@ -84,10 +84,12 @@ public sealed interface Icon {
      *
      * @param material the item shown
      * @param amount the stack size shown
-     * @param customName the name the item was renamed to, or {@code null} for none
-     * @param itemName the item's own name, or {@code null} for the material's name
-     * @param lore the stored lore lines
-     * @param extraLore the lines added under the stored lore, or empty for none
+     * @param customName the name the item was renamed to, as {@code ItemMeta.displayName()} holds it, or {@code null}
+     *     for none; the client shows it in italics unless it sets its own style
+     * @param itemName the item's own name, as {@code ItemMeta.itemName()} holds it, or {@code null} for the material's
+     *     name; shown without italics when there is no custom name, which the client shows in its place
+     * @param lore the stored lore lines, as {@code ItemMeta.lore()} holds them, shown first
+     * @param extraLore the menu's own lines, shown under the stored lore after a blank line, or empty for none
      * @param glint whether the item shows the enchantment glint
      */
     record Saved(Material material, int amount, @Nullable Component customName, @Nullable Component itemName,

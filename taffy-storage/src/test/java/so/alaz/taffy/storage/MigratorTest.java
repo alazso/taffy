@@ -1,5 +1,6 @@
 package so.alaz.taffy.storage;
 
+import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,7 +39,6 @@ import java.util.function.Function;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
@@ -71,6 +71,13 @@ final class MigratorTest {
     private static final String SQLITE_VERSION_TABLE = "CREATE TABLE IF NOT EXISTS p_schema_version"
         + " (version INTEGER NOT NULL PRIMARY KEY, name VARCHAR(128) NOT NULL, checksum CHAR(64) NOT NULL,"
         + " statements_done INTEGER NOT NULL, applied_at BIGINT)";
+
+    private static final String LAYOUT_PROBE =
+        "SELECT version, checksum, statements_done, applied_at FROM p_schema_version WHERE 1 = 0";
+
+    private static final String FOREIGN_TABLE = "the database holds a table named p_schema_version that storage did"
+        + " not create, so it cannot record migrations there; rename or remove that table, or on MySQL, MariaDB and"
+        + " PostgreSQL set another table prefix";
 
     private static final String MARIADB_VERSION_TABLE = "CREATE TABLE IF NOT EXISTS p_schema_version"
         + " (version INT NOT NULL PRIMARY KEY, name VARCHAR(128) NOT NULL, checksum CHAR(64) NOT NULL,"
@@ -339,6 +346,7 @@ final class MigratorTest {
         when(server.createStatement()).thenReturn(statement);
         when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
         when(statement.executeQuery(Dialect.POSTGRES.listTables())).thenReturn(mock(ResultSet.class));
+        nameDatabase(server, "public");
         SQLException timedOut = new SQLException("Read timed out", "08006");
         SQLException closed = new SQLException("This connection has been closed.", "08003");
         when(statement.execute("CREATE TABLE p_a (id INT)")).thenThrow(timedOut);
@@ -390,6 +398,7 @@ final class MigratorTest {
         when(statement.executeQuery(Dialect.MARIADB.listTables())).thenReturn(tables);
         when(tables.next()).thenReturn(true, false);
         when(tables.getString(1)).thenReturn("p_schema_version");
+        when(statement.executeQuery(LAYOUT_PROBE)).thenReturn(mock(ResultSet.class));
         when(statement.executeQuery("SELECT version, checksum, statements_done, applied_at FROM p_schema_version"))
             .thenReturn(applied);
         when(applied.next()).thenReturn(true, false);
@@ -421,6 +430,7 @@ final class MigratorTest {
         when(statement.executeQuery(dialect.listTables())).thenReturn(mock(ResultSet.class));
         boolean postgres = dialect == Dialect.POSTGRES;
         if (postgres) {
+            nameDatabase(server, "public");
             when(server.prepareStatement("SELECT pg_advisory_lock(?)")).thenReturn(lock);
             when(server.prepareStatement("SELECT pg_advisory_unlock(?)")).thenReturn(unlock);
         } else {
@@ -433,18 +443,18 @@ final class MigratorTest {
         InOrder order = inOrder(server, statement, lock, unlock);
         order.verify(server).setNetworkTimeout(any(), eq(0));
         if (postgres) {
-            order.verify(lock).setLong(eq(1), anyLong());
+            order.verify(lock).setLong(1, Migrator.lockKey("public", "p_schema_version"));
             order.verify(lock).execute();
         } else {
-            order.verify(lock).setString(1, "p_schema_version");
+            order.verify(lock).setString(1, Migrator.lockName("shop", "p_schema_version"));
             order.verify(lock).executeQuery();
         }
         order.verify(statement).executeQuery(dialect.listTables());
         order.verify(statement).execute("CREATE TABLE p_a (id INT)");
         if (postgres) {
-            order.verify(unlock).setLong(eq(1), anyLong());
+            order.verify(unlock).setLong(1, Migrator.lockKey("public", "p_schema_version"));
         } else {
-            order.verify(unlock).setString(1, "p_schema_version");
+            order.verify(unlock).setString(1, Migrator.lockName("shop", "p_schema_version"));
         }
         order.verify(unlock).execute();
         order.verify(server).setNetworkTimeout(any(), eq(30_000));
@@ -457,6 +467,7 @@ final class MigratorTest {
         ResultSet refused = mock(ResultSet.class);
         when(server.getNetworkTimeout()).thenReturn(30_000);
         when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
+        nameDatabase(server, "Shop");
         when(server.prepareStatement("SELECT GET_LOCK(?, ?)")).thenReturn(lock);
         when(lock.executeQuery()).thenReturn(refused);
         when(refused.next()).thenReturn(true);
@@ -464,11 +475,162 @@ final class MigratorTest {
 
         assertThatThrownBy(() -> migrator(Dialect.MYSQL, "p_", List.of(V1)).migrate(server, null))
             .isInstanceOf(StorageException.class)
-            .hasMessage("another start has held the migration lock of p_schema_version for a day; restart once the"
-                + " other server has started");
+            .hasMessage("another start has held the migration lock of p_schema_version in database Shop for a day;"
+                + " restart once the other server has started");
+        verify(lock).setString(1, Migrator.lockName("shop", "p_schema_version"));
         verify(server, never()).prepareStatement("SELECT RELEASE_LOCK(?)");
         verify(server, never()).createStatement();
         verify(server).setNetworkTimeout(any(), eq(30_000));
+    }
+
+    @Test
+    void theMySqlLockNameIsKeyedByTheDatabaseAndTheVersionTable() {
+        String longest = Migrator.lockName("d".repeat(64), "p".repeat(32) + "schema_version");
+
+        assertThat(longest).hasSize(46).matches("taffy_[0-9a-f]{40}");
+        assertThat(Migrator.lockName("shop", "p_schema_version"))
+            .isEqualTo("taffy_9c93f249db2fafee53a9887960daa1aab62294ce")
+            .isEqualTo(Migrator.lockName("shop", "p_schema_version"))
+            .isEqualTo(Migrator.lockName("Shop", "p_schema_version"))
+            .isNotEqualTo(Migrator.lockName("other", "p_schema_version"))
+            .isNotEqualTo(Migrator.lockName("shop", "q_schema_version"));
+        assertThat(Migrator.lockName("SHOPI", "p_schema_version"))
+            .isEqualTo(Migrator.lockName("shopi", "p_schema_version"));
+    }
+
+    @Test
+    void thePostgresLockKeyIsKeyedByTheSchemaAndTheVersionTable() throws Exception {
+        assertThat(Migrator.lockKey("public", "p_schema_version")).isEqualTo(3636661416060457810L);
+        assertThat(Migrator.lockKey("tenant_a", "p_schema_version"))
+            .isNotEqualTo(Migrator.lockKey("tenant_b", "p_schema_version"))
+            .isNotEqualTo(Migrator.lockKey("tenant_a", "q_schema_version"));
+
+        assertThat(postgresLockKey("tenant_a")).isEqualTo(Migrator.lockKey("tenant_a", "p_schema_version"));
+        assertThat(postgresLockKey("tenant_b")).isEqualTo(Migrator.lockKey("tenant_b", "p_schema_version"));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Dialect.class, names = {"MYSQL", "MARIADB"})
+    void aConnectionWithoutADatabaseStopsTheStartBeforeTheLock(Dialect dialect) throws Exception {
+        Connection server = mock(Connection.class);
+        when(server.getNetworkTimeout()).thenReturn(30_000);
+        when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
+        nameDatabase(server, null);
+
+        assertThatThrownBy(() -> migrator(dialect, "p_", List.of(V1)).migrate(server, null))
+            .isInstanceOf(StorageException.class)
+            .hasMessage("the connection has no current database, so the migration lock for p_schema_version cannot"
+                + " be named; name the database in the connection settings");
+        verify(server, never()).prepareStatement("SELECT GET_LOCK(?, ?)");
+        verify(server, never()).prepareStatement("SELECT RELEASE_LOCK(?)");
+        verify(server, never()).createStatement();
+        verify(server).setNetworkTimeout(any(), eq(30_000));
+    }
+
+    @Test
+    void aConnectionWithoutASchemaStopsTheStartBeforeTheLock() throws Exception {
+        Connection server = mock(Connection.class);
+        PreparedStatement current = mock(PreparedStatement.class);
+        when(server.getNetworkTimeout()).thenReturn(30_000);
+        when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
+        when(server.prepareStatement("SELECT current_schema()")).thenReturn(current);
+        when(current.executeQuery()).thenReturn(mock(ResultSet.class));
+
+        assertThatThrownBy(() -> migrator(Dialect.POSTGRES, "p_", List.of(V1)).migrate(server, null))
+            .isInstanceOf(StorageException.class)
+            .hasMessage("the connection has no current schema, so the migration lock for p_schema_version cannot be"
+                + " named; set a search_path");
+        verify(server, never()).prepareStatement("SELECT pg_advisory_lock(?)");
+        verify(server, never()).prepareStatement("SELECT pg_advisory_unlock(?)");
+        verify(server, never()).createStatement();
+        verify(server).setNetworkTimeout(any(), eq(30_000));
+    }
+
+    @Test
+    void aVersionTableInAnotherLayoutStopsTheStartBeforeTheBackupAndChangesNothing() throws Exception {
+        execute("CREATE TABLE p_schema_version (version INTEGER NOT NULL)");
+        execute("INSERT INTO p_schema_version VALUES (1)");
+        scripts.put(V2.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}probe (id INTEGER);\n");
+
+        assertThatThrownBy(() -> migrator("p_", List.of(V1, V2)).migrate(connection, this::backup))
+            .isInstanceOf(StorageException.class)
+            .hasMessage(FOREIGN_TABLE);
+
+        assertThat(backups).hasValue(0);
+        assertThat(tables()).containsExactly("p_schema_version");
+        assertThat(columns("p_schema_version")).containsExactly("version");
+        assertThat(count(connection, "p_schema_version")).isEqualTo(1);
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void aServerVersionTableInAnotherLayoutStopsTheStartUnderTheLockAndReleasesIt() throws Exception {
+        Connection server = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        ResultSet tables = mock(ResultSet.class);
+        PreparedStatement unlock = mock(PreparedStatement.class);
+        when(server.createStatement()).thenReturn(statement);
+        when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
+        grantLock(server);
+        when(server.prepareStatement("SELECT RELEASE_LOCK(?)")).thenReturn(unlock);
+        when(statement.executeQuery(Dialect.MYSQL.listTables())).thenReturn(tables);
+        when(tables.next()).thenReturn(true, false);
+        when(tables.getString(1)).thenReturn("p_schema_version");
+        when(statement.executeQuery(LAYOUT_PROBE))
+            .thenThrow(new SQLException("Unknown column 'checksum' in 'field list'", "42S22", 1054));
+
+        assertThatThrownBy(() -> migrator(Dialect.MYSQL, "p_", List.of(V1)).migrate(server, this::backup))
+            .isInstanceOf(StorageException.class)
+            .hasMessage(FOREIGN_TABLE);
+
+        verify(statement, never()).executeQuery(
+            "SELECT version, checksum, statements_done, applied_at FROM p_schema_version");
+        verify(statement, never()).execute(anyString());
+        verify(unlock).setString(1, Migrator.lockName("shop", "p_schema_version"));
+        verify(unlock).execute();
+        assertThat(backups).hasValue(0);
+    }
+
+    @Test
+    void aVersionTableThatCannotBeProbedFailsTheStartWithTheDatabaseErrorAndReleasesTheLock() throws Exception {
+        Connection server = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        ResultSet tables = mock(ResultSet.class);
+        PreparedStatement unlock = mock(PreparedStatement.class);
+        when(server.createStatement()).thenReturn(statement);
+        when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
+        grantLock(server);
+        when(server.prepareStatement("SELECT RELEASE_LOCK(?)")).thenReturn(unlock);
+        when(statement.executeQuery(Dialect.MYSQL.listTables())).thenReturn(tables);
+        when(tables.next()).thenReturn(true, false);
+        when(tables.getString(1)).thenReturn("p_schema_version");
+        SQLException lost = new SQLException("Communications link failure", "08S01");
+        when(statement.executeQuery(LAYOUT_PROBE)).thenThrow(lost);
+
+        assertThatThrownBy(() -> migrator(Dialect.MYSQL, "p_", List.of(V1)).migrate(server, this::backup))
+            .isSameAs(lost);
+
+        verify(statement, never()).execute(anyString());
+        verify(unlock).execute();
+        assertThat(backups).hasValue(0);
+    }
+
+    @Test
+    void aSqliteVersionTableThatCannotBeProbedFailsTheStartWithTheDatabaseError() throws Exception {
+        Connection sqlite = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        ResultSet tables = mock(ResultSet.class);
+        when(sqlite.createStatement()).thenReturn(statement);
+        when(statement.executeQuery(Dialect.SQLITE.listTables())).thenReturn(tables);
+        when(tables.next()).thenReturn(true, false);
+        when(tables.getString(1)).thenReturn("p_schema_version");
+        SQLException corrupt = new SQLException("[SQLITE_CORRUPT] The database disk image is malformed", null, 11);
+        when(statement.executeQuery(LAYOUT_PROBE)).thenThrow(corrupt);
+
+        assertThatThrownBy(() -> migrator("p_", List.of(V1)).migrate(sqlite, this::backup)).isSameAs(corrupt);
+
+        verify(statement, never()).execute(anyString());
+        assertThat(backups).hasValue(0);
     }
 
     @Test
@@ -627,6 +789,7 @@ final class MigratorTest {
         when(statement.executeQuery(Dialect.MARIADB.listTables())).thenReturn(tables);
         when(tables.next()).thenReturn(true, false);
         when(tables.getString(1)).thenReturn("p_schema_version");
+        when(statement.executeQuery(LAYOUT_PROBE)).thenReturn(mock(ResultSet.class));
         when(statement.executeQuery("SELECT version, checksum, statements_done, applied_at FROM p_schema_version"))
             .thenReturn(applied);
         when(applied.next()).thenReturn(true, false);
@@ -704,11 +867,24 @@ final class MigratorTest {
     }
 
     private static void grantLock(Connection server, PreparedStatement lock) throws SQLException {
+        nameDatabase(server, "shop");
         ResultSet granted = mock(ResultSet.class);
         when(server.prepareStatement("SELECT GET_LOCK(?, ?)")).thenReturn(lock);
         when(lock.executeQuery()).thenReturn(granted);
         when(granted.next()).thenReturn(true);
         when(granted.getInt(1)).thenReturn(1);
+    }
+
+    // Answers both SELECT DATABASE() and SELECT current_schema() with the name.
+    private static void nameDatabase(Connection server, @Nullable String database) throws SQLException {
+        for (String query : List.of("SELECT DATABASE()", "SELECT current_schema()")) {
+            PreparedStatement current = mock(PreparedStatement.class);
+            ResultSet result = mock(ResultSet.class);
+            when(server.prepareStatement(query)).thenReturn(current);
+            when(current.executeQuery()).thenReturn(result);
+            when(result.next()).thenReturn(true);
+            when(result.getString(1)).thenReturn(database);
+        }
     }
 
     private Connection foreignKeyConnection() throws SQLException {
@@ -731,6 +907,34 @@ final class MigratorTest {
             result.next();
             return result.getInt(1);
         }
+    }
+
+    private long postgresLockKey(String schema) throws Exception {
+        Connection server = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        PreparedStatement lock = mock(PreparedStatement.class);
+        when(server.createStatement()).thenReturn(statement);
+        when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
+        when(server.prepareStatement("SELECT pg_advisory_lock(?)")).thenReturn(lock);
+        when(statement.executeQuery(Dialect.POSTGRES.listTables())).thenReturn(mock(ResultSet.class));
+        nameDatabase(server, schema);
+
+        migrator(Dialect.POSTGRES, "p_", List.of()).migrate(server, null);
+
+        ArgumentCaptor<Long> key = ArgumentCaptor.forClass(Long.class);
+        verify(lock).setLong(eq(1), key.capture());
+        return key.getValue();
+    }
+
+    private List<String> columns(String table) throws SQLException {
+        List<String> columns = new ArrayList<>();
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("SELECT * FROM " + table)) {
+            for (int column = 1; column <= result.getMetaData().getColumnCount(); column++) {
+                columns.add(result.getMetaData().getColumnName(column));
+            }
+        }
+        return columns;
     }
 
     private Migrator migrator(String prefix, List<Migration> migrations) {

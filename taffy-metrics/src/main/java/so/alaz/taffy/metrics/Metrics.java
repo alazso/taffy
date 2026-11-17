@@ -18,14 +18,15 @@ import java.util.function.Predicate;
  * one source merge into one error with a count, and each error carries its source as the {@code source} attribute.
  * Two reports are of one kind when their exception classes, stack frames and messages match once the anonymize
  * rules have hidden addresses, UUIDs and the like, through the whole cause chain. Each source sends at most 32
- * kinds, and a report of any further kind is dropped. The first 64 sources get a tracker of their own; reports from
+ * kinds for the life of this handle, and a report of any further kind from that source is dropped; a handle from a
+ * new {@link MetricsBuilder#start()} starts with none. The first 64 sources get a tracker of their own; reports from
  * any further source are sent without a source, and those sources share one limit of 32 kinds. Once the first
  * report has arrived, every scheduled error submission (every 30 minutes) and the final send in {@link #shutdown()}
  * post an {@code errors} array, even when it is empty.
  *
  * <p>FastStats clears every report it holds once a scheduled error submission is accepted, so a report made while
- * that send is in flight is lost. The final send in {@link #shutdown()} has no such window, because the error sink
- * is cleared before it.
+ * that send is in flight is lost. A later report of the same kind is sent as usual, with its count starting again.
+ * The final send in {@link #shutdown()} has no such window, because the error sink is cleared before it.
  *
  * <p>The error sink has one target. A target the plugin installs into it after {@link MetricsBuilder#start()}
  * replaces this handle, and FastStats receives no further report through the sink. A plugin that also wants its
@@ -156,9 +157,10 @@ public final class Metrics {
      * and stops, and the JVM default uncaught exception handler FastStats attached is detached, unless another
      * handler has replaced it since. A step that fails does not stop the next. Idempotent, and never throws.
      *
-     * <p>The final send makes one request for errors and one for metrics. Each has 3 second connect and request
-     * timeouts, which do not cover a stalled name lookup or a response that never finishes, so on a stalled network
-     * this call can block the disabling thread for tens of seconds.
+     * <p>The final send makes one request for errors and one for metrics, on the calling thread. Each has 3 second
+     * connect and request timeouts, which do not cover a stalled name lookup or a response that never finishes, so on
+     * a stalled network this call can block the disabling thread for tens of seconds. No thread is started to bound
+     * it, since such a thread would outlive the plugin's class loader.
      *
      * <p>When another handler has replaced the one FastStats attached, such as the handler of another plugin's copy
      * of FastStats, this copy stays in the JVM's handler chain until that handler is removed or the JVM exits. It

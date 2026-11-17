@@ -154,8 +154,26 @@ final class DiscordWebhookTest {
 
         String error = errorFrom("http://127.0.0.1:" + port + "/204");
 
-        assertThat(error).contains("ConnectException");
+        assertThat(error).startsWith("java.net.ConnectException");
         assertThat(received).isEmpty();
+    }
+
+    @Test
+    void aCallbackThatThrowsForAStatusIsCalledOnce() throws Exception {
+        List<String> reasons = new CopyOnWriteArrayList<>();
+        CountDownLatch called = new CountDownLatch(1);
+
+        webhook.post(url("/500"), "hi", reason -> {
+            reasons.add(reason);
+            called.countDown();
+            throw new RuntimeException("callback failed");
+        });
+        assertThat(called.await(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+        nextRequest();
+        webhook.post(url("/204"), "barrier", errors::add);
+        nextRequest();
+
+        assertThat(reasons).containsExactly("Discord returned HTTP 500");
     }
 
     @Test
@@ -208,7 +226,7 @@ final class DiscordWebhookTest {
         webhook.post(url("/204"), "hi", errors::add);
 
         assertThat(errors).hasSize(1);
-        assertThat(errors.get(0)).contains("closed");
+        assertThat(errors.get(0)).startsWith("java.io.IOException").contains("closed");
         assertThat(received).isEmpty();
     }
 

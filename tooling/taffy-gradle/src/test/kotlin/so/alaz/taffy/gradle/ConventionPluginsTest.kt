@@ -674,6 +674,24 @@ class ConventionPluginsTest {
     }
 
     @Test
+    fun aJarBuildsWithoutALicenseWhenTheRootHasNone() {
+        write("gradle.properties", "group=so.alaz.demo\nversion=1.2.3\n")
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.java\")\n}")
+        write("src/main/java/so/alaz/demo/Covered.java", covered)
+
+        val result = run("jar")
+
+        assertThat(projectDirectory.resolve("LICENSE")).doesNotExist()
+        assertThat(result.task(":jar")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.output).doesNotContain("LICENSE")
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            assertThat(jar.getEntry("so/alaz/demo/Covered.class")).isNotNull()
+            assertThat(jar.getEntry("META-INF/LICENSE")).isNull()
+        }
+    }
+
+    @Test
     fun paperApiPublishesSnapshotsToTheSnapshotsRepositoryAndTakesTheUrlFromTheProperty() {
         project()
         write("gradle.properties", "group=so.alaz.demo\nalaz.repositoryUrl=https://example.org/demo\n")

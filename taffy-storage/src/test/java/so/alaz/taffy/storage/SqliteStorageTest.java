@@ -1,14 +1,19 @@
 package so.alaz.taffy.storage;
 
+import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import so.alaz.taffy.platform.ErrorReports;
 
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.logging.Logger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,8 +31,8 @@ final class SqliteStorageTest extends StorageContract {
     @Override
     Storage storage() {
         if (storage == null) {
-            storage = Storage.start(settings(), folder, NAME, "9.9.9", List.of(), path -> null,
-                Logger.getAnonymousLogger(), new ErrorReports(), CLOCK).join();
+            storage = Storage.start(TestPlugins.plugin(NAME, folder, Logger.getAnonymousLogger()), new ErrorReports(),
+                settings(), List.of(), CLOCK).join();
         }
         return storage;
     }
@@ -35,6 +40,28 @@ final class SqliteStorageTest extends StorageContract {
     @Override
     String name() {
         return NAME;
+    }
+
+    @Override
+    Dialect dialect() {
+        return Dialect.SQLITE;
+    }
+
+    @Override
+    CompletableFuture<Storage> starting(String prefix, List<Migration> migrations, Map<String, String> scripts,
+                                        @Nullable Baseline baseline) {
+        return TestPlugins.start(TestPlugins.plugin(NAME, folder, Logger.getAnonymousLogger(),
+            ProbeSchema.source(scripts)), settings(), migrations, baseline, CLOCK);
+    }
+
+    @Override
+    Connection connect() throws SQLException {
+        return DriverManager.getConnection("jdbc:sqlite:" + folder.resolve("data.db"));
+    }
+
+    @Override
+    void assertNoBackup() {
+        assertThat(folder.resolve("backups")).doesNotExist();
     }
 
     @Override

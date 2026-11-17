@@ -108,6 +108,67 @@ final class LayoutTest {
     }
 
     @Test
+    void ofGivesAShownItemWithNoOptionalText() {
+        ItemLayout item = ItemLayout.of("pick", List.of(1, 2), Material.STONE);
+
+        assertThat(item).isEqualTo(new ItemLayout("pick", List.of(1, 2), Material.STONE, null, null, true, null,
+            null));
+        assertThat(item.enabled()).isTrue();
+        assertThat(item.action()).isNull();
+        assertThat(item.permission()).isNull();
+        assertThat(item.name()).isNull();
+        assertThat(item.lore()).isNull();
+    }
+
+    @Test
+    void ofNeedsAnIdAMaterialAndASlot() {
+        assertThatThrownBy(() -> ItemLayout.of(null, List.of(1), Material.STONE))
+            .isInstanceOf(NullPointerException.class).hasMessage("id");
+        assertThatThrownBy(() -> ItemLayout.of("pick", List.of(1), null))
+            .isInstanceOf(NullPointerException.class).hasMessage("material");
+        assertThatThrownBy(() -> ItemLayout.of("pick", List.of(), Material.STONE))
+            .isInstanceOf(IllegalArgumentException.class).hasMessage("item pick fills no slot");
+    }
+
+    @Test
+    void eachWitherReplacesOnlyItsOwnComponent() {
+        ItemLayout item = new ItemLayout("pick", List.of(1), Material.STONE, "browse", "menus.pick", false, "Pick",
+            List.of("one"));
+
+        ItemLayout acted = item.action("close");
+        ItemLayout guarded = item.permission("menus.other");
+        ItemLayout named = item.name("Other");
+        ItemLayout described = item.lore(List.of("two", "three"));
+
+        assertThat(acted).isEqualTo(new ItemLayout("pick", List.of(1), Material.STONE, "close", "menus.pick", false,
+            "Pick", List.of("one")));
+        assertThat(guarded).isEqualTo(new ItemLayout("pick", List.of(1), Material.STONE, "browse", "menus.other",
+            false, "Pick", List.of("one")));
+        assertThat(named).isEqualTo(new ItemLayout("pick", List.of(1), Material.STONE, "browse", "menus.pick", false,
+            "Other", List.of("one")));
+        assertThat(described).isEqualTo(new ItemLayout("pick", List.of(1), Material.STONE, "browse", "menus.pick",
+            false, "Pick", List.of("two", "three")));
+        assertThat(item.action(null).action()).isNull();
+        assertThat(item.permission(null).permission()).isNull();
+        assertThat(item.name(null).name()).isNull();
+        assertThat(item).isEqualTo(new ItemLayout("pick", List.of(1), Material.STONE, "browse", "menus.pick", false,
+            "Pick", List.of("one")));
+    }
+
+    @Test
+    void loreCopiesTheListAndNullKeepsItNull() {
+        List<String> lore = new ArrayList<>(List.of("one"));
+
+        ItemLayout item = ItemLayout.of("pick", List.of(1), Material.STONE).lore(lore);
+        lore.add("two");
+
+        assertThat(item.lore()).containsExactly("one");
+        assertThatThrownBy(() -> item.lore().add("three")).isInstanceOf(UnsupportedOperationException.class);
+        assertThat(item.lore(null).lore()).isNull();
+        assertThatThrownBy(() -> item.lore(Arrays.asList("one", null))).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
     void enabledGivesTheSameItemShownOrHidden() {
         ItemLayout item = new ItemLayout("pick", List.of(1), Material.STONE, "browse", "menus.pick", true, "Pick",
             List.of("one"));

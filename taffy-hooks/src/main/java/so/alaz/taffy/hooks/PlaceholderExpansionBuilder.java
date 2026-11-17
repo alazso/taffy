@@ -22,14 +22,13 @@ import java.util.logging.Logger;
  * enabled and its API classes are present. With the identifier {@code shop}, the name {@code balance} is reachable as
  * {@code %shop_balance%} in PlaceholderAPI and {@code <shop_balance>} in MiniPlaceholders.
  *
- * <p>PlaceholderAPI matches a name exactly. MiniPlaceholders matches a name case-insensitively, so in MiniPlaceholders
- * two names that differ only in case, or a player and a global placeholder of the same name, collide, and which one
- * answers is unspecified. A MiniMessage tag holds only letters, digits, {@code _} and {@code -}, so MiniPlaceholders
- * never resolves a name with any other character. A handler that returns {@code null} gives no value. A handler that
- * throws a {@link RuntimeException} gives no value either, and the failure is logged as a warning, at most once per
- * minute for each placeholder. MiniPlaceholders inserts a value as plain text, so markup in it is shown as written.
- * Offline placeholders are registered with PlaceholderAPI only, since MiniPlaceholders resolves against an online
- * audience.
+ * <p>A name holds only the lower case letters a to z, the digits, {@code _} and {@code -}, the characters a
+ * MiniMessage tag allows, so every player and global placeholder resolves in both backends. In MiniPlaceholders a
+ * player and a global placeholder of the same name collide, and which one answers is unspecified. A handler that
+ * returns {@code null} gives no value. A handler that throws a {@link RuntimeException} gives no value either, and
+ * the failure is logged as a warning, at most once per minute for each placeholder. MiniPlaceholders inserts a value
+ * as plain text, so markup in it is shown as written. Offline placeholders are registered with PlaceholderAPI only,
+ * since MiniPlaceholders resolves against an online audience.
  *
  * <p>Registering replaces any PlaceholderAPI expansion that already uses the identifier. MiniPlaceholders refuses an
  * identifier another expansion already uses, which gives it {@link HookState#FAILED}.
@@ -101,11 +100,15 @@ public final class PlaceholderExpansionBuilder {
 
     private static String checkedName(String name) {
         Objects.requireNonNull(name, "name");
-        if (name.isBlank()) {
-            throw new IllegalArgumentException("invalid placeholder name '" + name + "': expected a name that is not"
-                + " blank");
+        if (name.isEmpty() || !name.chars().allMatch(PlaceholderExpansionBuilder::nameChar)) {
+            throw new IllegalArgumentException("invalid placeholder name '" + name + "': expected one or more of the"
+                + " letters a to z in lower case, the digits, '_' and '-'");
         }
         return name;
+    }
+
+    private static boolean nameChar(int c) {
+        return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
     }
 
     /**
@@ -115,7 +118,8 @@ public final class PlaceholderExpansionBuilder {
      * @param name the name after the identifier
      * @param handler gives the value for the player, or {@code null} for no value
      * @return this builder
-     * @throws IllegalArgumentException if {@code name} is blank
+     * @throws IllegalArgumentException if {@code name} is empty or holds a character other than the letters
+     *     {@code a} to {@code z} in lower case, the digits, {@code _} and {@code -}
      */
     public PlaceholderExpansionBuilder player(String name, Function<Player, @Nullable String> handler) {
         players.put(checkedName(name), Objects.requireNonNull(handler, "handler"));
@@ -129,7 +133,8 @@ public final class PlaceholderExpansionBuilder {
      * @param name the name after the identifier
      * @param handler gives the value for the player, or {@code null} for no value
      * @return this builder
-     * @throws IllegalArgumentException if {@code name} is blank
+     * @throws IllegalArgumentException if {@code name} is empty or holds a character other than the letters
+     *     {@code a} to {@code z} in lower case, the digits, {@code _} and {@code -}
      */
     public PlaceholderExpansionBuilder offline(String name, Function<OfflinePlayer, @Nullable String> handler) {
         offline.put(checkedName(name), Objects.requireNonNull(handler, "handler"));
@@ -144,7 +149,8 @@ public final class PlaceholderExpansionBuilder {
      * @param name the name after the identifier
      * @param handler gives the value, or {@code null} for no value
      * @return this builder
-     * @throws IllegalArgumentException if {@code name} is blank
+     * @throws IllegalArgumentException if {@code name} is empty or holds a character other than the letters
+     *     {@code a} to {@code z} in lower case, the digits, {@code _} and {@code -}
      */
     public PlaceholderExpansionBuilder global(String name, Supplier<@Nullable String> handler) {
         globals.put(checkedName(name), Objects.requireNonNull(handler, "handler"));

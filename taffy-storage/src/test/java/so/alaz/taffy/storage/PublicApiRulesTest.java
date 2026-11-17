@@ -14,7 +14,7 @@ class PublicApiRulesTest {
             .contains(StorageException.class, Dialect.class, MoneyColumn.class, MoneyOutOfRangeException.class,
                 Params.class, Row.class, Migration.class, Tx.class, Tx.Binder.class, Tx.Mapper.class,
                 TxWork.class, CommitUnknownException.class, StorageSettings.class, StorageSettings.Server.class,
-                StorageSettings.Pool.class, StorageSettings.SslMode.class, Storage.class)
+                StorageSettings.Pool.class, StorageSettings.SslMode.class, Storage.class, Baseline.class)
             .allSatisfy(type -> assertThat(type.getPackageName()).startsWith(getClass().getPackageName()));
     }
 

@@ -69,9 +69,10 @@ public final class CustomItems {
      * visible to it and the plugin is enabled first when it is installed. A plugin that is not listed is
      * {@link HookState#NOT_VISIBLE}.
      *
-     * <p>Call from the owner's {@code onEnable}, on the server thread: the ItemsAdder integration registers a
-     * listener for the owner, which the server refuses while the owner is not enabled, and that listener stays
-     * registered until the owner disables. Each call registers another one.
+     * <p>Call on the server thread while the owner is enabled, normally from its {@code onEnable}: when ItemsAdder is
+     * on, its integration registers a listener for the owner, which the server refuses while the owner is not
+     * enabled. That listener stays registered until the owner disables, so each further call, such as one from the
+     * plugin's own reload command, leaves at most one more small listener registered.
      *
      * @param owner the plugin that uses the integrations: its server's plugin manager is searched, its logger
      *     receives every log line, and the ItemsAdder integration registers its listener for it

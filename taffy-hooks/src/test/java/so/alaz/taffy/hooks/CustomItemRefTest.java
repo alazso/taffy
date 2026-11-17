@@ -45,6 +45,23 @@ final class CustomItemRefTest {
     }
 
     @Test
+    void aBlankHintIsRefusedByTheConstructor() {
+        for (String hint : new String[] {"", " ", "	"}) {
+            assertThatThrownBy(() -> new CustomItemRef(hint, "ruby"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("invalid provider hint '" + hint + "': expected null or a hint that is not blank");
+        }
+    }
+
+    @Test
+    void aMissingOrNamedHintIsAccepted() {
+        assertThat(new CustomItemRef(null, "ruby").providerHint()).isNull();
+        CustomItemRef named = new CustomItemRef("nexo", "ruby");
+        assertThat(named.providerHint()).isEqualTo("nexo");
+        assertThat(named.id()).isEqualTo("ruby");
+    }
+
+    @Test
     void blankIdRejected() {
         assertThatThrownBy(() -> CustomItemRef.parse("oraxen:"))
             .isInstanceOf(IllegalArgumentException.class)

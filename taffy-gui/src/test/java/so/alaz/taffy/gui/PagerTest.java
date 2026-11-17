@@ -29,13 +29,13 @@ final class PagerTest {
 
     @Test
     void anEmptyListHasOneEmptyPage() {
-        assertThat(Pager.page(0, 36, 0)).isEqualTo(new Pager.Page(0, 1, 0, 0, false, false));
+        assertThat(Pager.page(0, 36, 0)).isEqualTo(new Pager.Page(0, 1, 0, 0));
     }
 
     @Test
     void rowsSplitIntoPagesOfCapacity() {
-        assertThat(Pager.page(36, 36, 0)).isEqualTo(new Pager.Page(0, 1, 0, 36, false, false));
-        assertThat(Pager.page(37, 36, 1)).isEqualTo(new Pager.Page(1, 2, 36, 37, true, false));
+        assertThat(Pager.page(36, 36, 0)).isEqualTo(new Pager.Page(0, 1, 0, 36));
+        assertThat(Pager.page(37, 36, 1)).isEqualTo(new Pager.Page(1, 2, 36, 37));
     }
 
     @Test
@@ -67,17 +67,48 @@ final class PagerTest {
     }
 
     @Test
+    void aPageTellsWhetherAPageComesBeforeOrAfterIt() {
+        assertThat(new Pager.Page(0, 1, 0, 0)).extracting(Pager.Page::previous, Pager.Page::next)
+            .containsExactly(false, false);
+        assertThat(new Pager.Page(0, 3, 0, 36)).extracting(Pager.Page::previous, Pager.Page::next)
+            .containsExactly(false, true);
+        assertThat(new Pager.Page(2, 3, 72, 80)).extracting(Pager.Page::previous, Pager.Page::next)
+            .containsExactly(true, false);
+    }
+
+    @Test
+    void aPageRefusesNumbersThatDoNotDescribeOne() {
+        assertThatThrownBy(() -> new Pager.Page(0, 0, 0, 0)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("a list has at least one page, not 0");
+        assertThatThrownBy(() -> new Pager.Page(-1, 2, 0, 0)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("page -1 is outside 0 to 1");
+        assertThatThrownBy(() -> new Pager.Page(2, 2, 0, 0)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("page 2 is outside 0 to 1");
+        assertThatThrownBy(() -> new Pager.Page(0, 1, -1, 0)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("a page starts at entry 0 or later, not -1");
+        assertThatThrownBy(() -> new Pager.Page(0, 1, 5, 4)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("a page ends at or after its start 5, not at 4");
+    }
+
+    @Test
+    void aPageWithItsIndexAndPageCountSwappedIsRefused() {
+        assertThat(new Pager.Page(1, 3, 0, 0).index()).isEqualTo(1);
+        assertThatThrownBy(() -> new Pager.Page(3, 1, 0, 0)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("page 3 is outside 0 to 0");
+    }
+
+    @Test
     void aCountNearTheIntegerLimitSplitsWithoutOverflow() {
         int count = Integer.MAX_VALUE;
         int pages = 59_652_324;
 
-        assertThat(Pager.page(count, 36, 0)).isEqualTo(new Pager.Page(0, pages, 0, 36, false, true));
+        assertThat(Pager.page(count, 36, 0)).isEqualTo(new Pager.Page(0, pages, 0, 36));
         assertThat(Pager.page(count, 36, Integer.MAX_VALUE))
-            .isEqualTo(new Pager.Page(pages - 1, pages, 2_147_483_628, count, true, false));
+            .isEqualTo(new Pager.Page(pages - 1, pages, 2_147_483_628, count));
         assertThat(Pager.page(count, 1, Integer.MAX_VALUE))
-            .isEqualTo(new Pager.Page(count - 1, count, count - 1, count, true, false));
+            .isEqualTo(new Pager.Page(count - 1, count, count - 1, count));
         assertThat(Pager.page(count, Integer.MAX_VALUE, 3))
-            .isEqualTo(new Pager.Page(0, 1, 0, count, false, false));
+            .isEqualTo(new Pager.Page(0, 1, 0, count));
     }
 
     @Test

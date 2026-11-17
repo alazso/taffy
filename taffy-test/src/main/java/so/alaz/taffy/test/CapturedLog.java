@@ -10,6 +10,8 @@ import java.util.logging.Logger;
  * A logger that keeps its records: each line as {@code "LEVEL message"}, and the records themselves for their
  * throwables.
  *
+ * <p>The wording of Taffy's own log lines is not part of its API and can change in any release.
+ *
  * <p>{@link #logger} and {@link #records} are public fields and are read directly. The logger is anonymous and
  * passes nothing to its parent's handlers, so a captured record is not printed. A record below the logger's level
  * is not captured: the level is the root logger's, {@code INFO} unless changed.

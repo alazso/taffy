@@ -35,8 +35,8 @@ final class FaultyStorage implements AutoCloseable {
         pragmas.setProperty("busy_timeout", "5000");
         pragmas.setProperty("foreign_keys", "true");
         this.source = new FaultyDataSource(url, pragmas);
-        this.storage = Storage.over(Dialect.SQLITE, source, "", NAME, Logger.getAnonymousLogger(),
-            new ErrorReports(), clock);
+        this.storage = Storage.over(TestPlugins.plugin(NAME, Logger.getAnonymousLogger()), new ErrorReports(),
+            Dialect.SQLITE, source, "", clock);
     }
 
     /** Migrates a new database in {@code folder} and opens it. */
@@ -44,8 +44,8 @@ final class FaultyStorage implements AutoCloseable {
                               Function<String, @Nullable InputStream> scripts) {
         StorageSettings settings = new StorageSettings(Dialect.SQLITE, "data.db", null,
             new StorageSettings.Pool(4, 1, Duration.ofSeconds(5)), 1, 0);
-        Storage migrated = Storage.start(settings, folder, NAME, "9.9.9", migrations, scripts,
-            Logger.getAnonymousLogger(), new ErrorReports(), clock).join();
+        Storage migrated = Storage.start(TestPlugins.plugin(NAME, folder, Logger.getAnonymousLogger(), scripts),
+            new ErrorReports(), settings, migrations, clock).join();
         migrated.close(Duration.ofSeconds(5));
         return new FaultyStorage(folder, clock);
     }

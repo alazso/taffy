@@ -1,17 +1,66 @@
 package so.alaz.taffy.comficonf;
 
-import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import so.alaz.taffy.config.ConfigLoadException;
+import so.alaz.taffy.config.StrictYaml;
 
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 final class YamlBytesTest {
+
+    @TempDir
+    private Path folder;
+
+    @Test
+    void readingAFileOfExactlyTheLimitGivesAllItsBytes() throws Exception {
+        byte[] content = new byte[YamlBytes.MAX_FILE_BYTES];
+        Arrays.fill(content, (byte) '#');
+        Path file = Files.write(folder.resolve("config.yml"), content);
+
+        assertThat(YamlBytes.read(file, "config.yml")).isEqualTo(content);
+    }
+
+    @Test
+    void readingAFileOneByteOverTheLimitIsRefused() throws Exception {
+        Path file = Files.write(folder.resolve("config.yml"), new byte[YamlBytes.MAX_FILE_BYTES + 1]);
+
+        assertThatThrownBy(() -> YamlBytes.read(file, "menus/main.yml"))
+            .isInstanceOf(ConfigLoadException.class)
+            .hasMessage("menus/main.yml is larger than 16 MiB")
+            .hasNoCause();
+    }
+
+    @Test
+    void theLimitAndItsMessageMatchThoseOfStrictYaml() throws Exception {
+        byte[] notUtf8 = new byte[YamlBytes.MAX_FILE_BYTES];
+        Arrays.fill(notUtf8, (byte) 0xFF);
+        Path atLimit = Files.write(folder.resolve("at.yml"), notUtf8);
+        Path over = Files.write(folder.resolve("over.yml"), new byte[YamlBytes.MAX_FILE_BYTES + 1]);
+
+        assertThatThrownBy(() -> StrictYaml.read(atLimit, "config.yml"))
+            .isInstanceOf(ConfigLoadException.class)
+            .hasMessage("config.yml is not saved as UTF-8");
+        Throwable refused = catchThrowable(() -> StrictYaml.read(over, "config.yml"));
+        assertThat(refused).isInstanceOf(ConfigLoadException.class);
+        assertThatThrownBy(() -> YamlBytes.read(over, "config.yml")).hasMessage(refused.getMessage());
+    }
+
+    @Test
+    void readingAMissingFileThrowsTheIoFailure() {
+        assertThatThrownBy(() -> YamlBytes.read(folder.resolve("absent.yml"), "absent.yml"))
+            .isInstanceOf(NoSuchFileException.class);
+    }
 
     @Test
     void textWithoutLineBreaksDoesNotUseCarriageReturns() {
@@ -158,8 +207,9 @@ final class YamlBytesTest {
     void textTheParserRejectsIsNotValidYaml() {
         assertThatThrownBy(() -> YamlBytes.parse(bytes("rows: 6\nmodules: [\n"), "config.yml"))
             .isInstanceOf(ConfigLoadException.class)
-            .hasMessageStartingWith("config.yml is not valid YAML: ")
-            .hasCauseInstanceOf(InvalidConfigurationException.class);
+            .hasMessage("config.yml is not valid YAML: expected the node content, but found '<stream end>'"
+                + " at line 3, column 1")
+            .hasNoCause();
     }
 
     @Test
@@ -167,7 +217,7 @@ final class YamlBytesTest {
         assertThatThrownBy(() -> YamlBytes.parse(bytes("prefix: !Custom value\n"), "config.yml"))
             .isInstanceOf(ConfigLoadException.class)
             .hasMessageStartingWith("config.yml is not valid YAML: ")
-            .hasCauseInstanceOf(RuntimeException.class);
+            .hasNoCause();
     }
 
     @Test

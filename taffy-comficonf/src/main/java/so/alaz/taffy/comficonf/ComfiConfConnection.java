@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -37,6 +38,12 @@ public final class ComfiConfConnection {
     private static final String SOURCE = "hook.comficonf";
     private static final String STATUS_FAILED_REASON = "ComfiConf could not say whether these settings are still"
         + " registered, so they may not be editable in ComfiConf. The server log holds the error.";
+    private static final String BUNDLED_REASON = "This plugin's jar holds its own copy of the ComfiConf API, so it"
+        + " cannot reach the installed ComfiConf and its settings are edited in their files only. Only a build of"
+        + " this plugin without that copy fixes this.";
+    private static final String NOT_REGISTERED_REASON = "ComfiConf no longer holds these settings, so they are edited"
+        + " in their files only until this plugin connects to ComfiConf again, at the latest when the server"
+        + " restarts.";
 
     private final @Nullable Plugin bridge;
     private final @Nullable ComfiConfLink link;
@@ -58,30 +65,42 @@ public final class ComfiConfConnection {
 
     /**
      * Connects this plugin's settings to ComfiConf when the bridge is there. Call at the end of {@code onEnable},
-     * on the main thread, after the settings file loaded and after any migration that writes it.
+     * on the main thread, after the settings file loaded and after any migration that writes it. It may be called
+     * again later, on the main thread, after {@link #close()} of the previous connection, as the package description
+     * states.
      *
      * <p>The checks run in the order of {@link ComfiConfState}: the switch, then the bridge plugin installed,
      * enabled and its API visible to this plugin, and only then {@code registration}. Nothing is logged when the
-     * connection is switched off or the bridge is not installed or not enabled. A bridge this plugin cannot see, or
-     * one that lacks an API class, logs one warning and reports nothing. A registration that throws or returns
-     * {@code null} logs one warning with the stack and is reported under {@code hook.comficonf}. A
-     * {@link LinkageError} means the bridge lacks an API class when its message names a {@code com.comficonf} class
-     * or it has no message; any other, such as a class of the plugin that failed to initialize, counts as a failed
-     * registration. A registration that succeeds logs one line naming the resource id. A {@link RuntimeException} or
-     * {@link LinkageError} from {@code registration} never leaves this method.
+     * connection is switched off or the bridge is not installed or not enabled. A bridge this plugin cannot see, its
+     * own copy of the API included, or one that lacks an API class, logs one warning and reports nothing. A
+     * registration that throws or returns {@code null} logs one warning with the stack and is reported under
+     * {@code hook.comficonf}. A {@link LinkageError} means the bridge lacks an API class when its message names a
+     * {@code com.comficonf} class or it has no message; any other, such as a class of the plugin that failed to
+     * initialize, counts as a failed registration. A registration that succeeds logs one line naming the resource id.
+     * A {@link RuntimeException} or {@link LinkageError} from {@code registration} never leaves this method.
      *
      * @param owner the plugin whose settings are registered; its logger receives the lines
      * @param errors where a failed registration is reported
      * @param switchedOn {@code false} when the server owner turned the connection off; the bridge is then not
      *     looked at
      * @param registration registers the settings through the plugin's own integration class, as
-     *     {@code () -> MyComfiConf.register(this, holder)}, and returns the link; called at most once, on this
-     *     thread, and only after every check passed
+     *     {@code this::registerComfiConf} in the package description, and returns the link; called at most once,
+     *     on this thread, and only after every check passed
      * @return the connection, never {@code null}; a field that holds it is still {@code null} when {@code onEnable}
      *     stopped before this call
      */
     public static ComfiConfConnection connect(Plugin owner, ErrorReports errors, boolean switchedOn,
                                               Supplier<ComfiConfLink> registration) {
+        return connect(owner, errors, switchedOn, registration, bridge -> bridge.getClass().getClassLoader());
+    }
+
+    /**
+     * {@link #connect(Plugin, ErrorReports, boolean, Supplier)} with the class loader that defines the bridge's API
+     * taken from {@code loaderOf}, applied to the bridge plugin once the API was found visible to this plugin.
+     */
+    static ComfiConfConnection connect(Plugin owner, ErrorReports errors, boolean switchedOn,
+                                       Supplier<ComfiConfLink> registration,
+                                       Function<Plugin, ClassLoader> loaderOf) {
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(errors, "errors");
         Objects.requireNonNull(registration, "registration");
@@ -109,6 +128,11 @@ public final class ComfiConfConnection {
             }
             return apiMissing(bridge, version, "missing " + PROBE, logger);
         }
+        if (!sameApi(ComfiConfConnection.class.getClassLoader(), loaderOf.apply(bridge))) {
+            logger.warning(BUNDLED_REASON);
+            return new ComfiConfConnection(bridge, null, new ComfiConfStatus(ComfiConfState.NOT_VISIBLE, version,
+                BUNDLED_REASON), logger);
+        }
         ComfiConfLink link;
         try {
             link = Objects.requireNonNull(registration.get(), "the registration returned null");
@@ -129,8 +153,9 @@ public final class ComfiConfConnection {
     /**
      * The state of the connection now. A connection that reached {@link ComfiConfState#ON} reads
      * {@link ComfiConfState#NOT_ENABLED} while the bridge plugin is disabled and {@link ComfiConfState#NOT_REGISTERED}
-     * while the bridge no longer holds the resource, and {@link ComfiConfState#FAILED} with a reason while the link
-     * throws when asked whether it holds the resource; every other state is the one {@link #connect} found.
+     * with a reason while the bridge no longer holds the resource, and {@link ComfiConfState#FAILED} with a reason
+     * while the link throws when asked whether it holds the resource; every other state is the one {@link #connect}
+     * found.
      *
      * @return the status, never {@code null}
      */
@@ -149,7 +174,8 @@ public final class ComfiConfConnection {
             return new ComfiConfStatus(ComfiConfState.FAILED, found.version(), STATUS_FAILED_REASON);
         }
         if (!registered) {
-            return new ComfiConfStatus(ComfiConfState.NOT_REGISTERED, found.version(), null);
+            return new ComfiConfStatus(ComfiConfState.NOT_REGISTERED, found.version(),
+                NOT_REGISTERED_REASON);
         }
         return found;
     }
@@ -230,6 +256,18 @@ public final class ComfiConfConnection {
                 failure);
         } catch (RuntimeException ignored) {
             // A log handler that throws drops the line; the caller goes on either way.
+        }
+    }
+
+    /**
+     * Whether {@code mine} and {@code bridges} give the same ComfiConf API class. A lookup that fails on either
+     * loader counts as the same, since connect handles a missing API on its other checks.
+     */
+    static boolean sameApi(@Nullable ClassLoader mine, @Nullable ClassLoader bridges) {
+        try {
+            return Class.forName(PROBE, false, mine) == Class.forName(PROBE, false, bridges);
+        } catch (ClassNotFoundException | LinkageError | RuntimeException e) {
+            return true;
         }
     }
 

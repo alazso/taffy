@@ -18,9 +18,10 @@ import java.util.regex.Pattern;
  *     {@link Dialect#SQLITE}, ignored otherwise
  * @param server the server to connect to, or {@code null} for {@link Dialect#SQLITE}
  * @param pool the connection pool settings
- * @param asyncThreads the number of threads database work runs on, 1 or more. On SQLite every write goes through
- *     one connection, so more threads let reads run beside a write but do not speed writes up: a write queued
- *     behind others then waits for that connection, and fails after {@link Pool#connectionTimeout()}
+ * @param asyncThreads the number of threads database work runs on, 1 or more. On SQLite these threads run the
+ *     reads and complete the futures of writes, and writes run on one more thread of their own, one at a time in
+ *     the order they were submitted. Work, or a stage chained onto its future, that waits on one of these threads
+ *     for other database work needs another of them free, so with 1 such a wait never ends
  * @param backupKeep how many SQLite backups taken before a migration to keep, 0 or more
  */
 public record StorageSettings(Dialect dialect, String sqliteFile, @Nullable Server server, Pool pool,

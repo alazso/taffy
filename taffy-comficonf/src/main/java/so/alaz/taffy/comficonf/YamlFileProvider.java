@@ -19,7 +19,6 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import so.alaz.taffy.config.ConfigLoadException;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -72,10 +71,12 @@ import java.util.logging.Logger;
  *
  * <p>A changed field declared {@code restartRequired()} is reported as waiting for a restart unless its new value
  * equals the value the file held when the provider was built. A change inside an object list has a path through the
- * index of its item, which names another item once an item was added, removed or moved, so such a change is reported
- * as waiting whatever its value. The report is true only when the code using a restart-only value reads the
- * settings of the first load, {@link so.alaz.taffy.config.ConfigHolder#startup()}; code reading the settings in
- * effect sees the new value at once, and the {@code savedRestartRequired} result is then untrue.
+ * index of its item, which names another item once an item was added, removed or moved, so such a change may be
+ * reported as waiting even when its new value equals its value at startup. A restart-only change is never reported as
+ * in effect while its value differs from the value at startup. The report is true only when the code using a
+ * restart-only value reads the settings of the first load, {@link so.alaz.taffy.config.ConfigHolder#startup()}; code
+ * reading the settings in effect sees the new value at once, and the {@code savedRestartRequired} result is then
+ * untrue.
  *
  * <h2>The plugin's own writes</h2>
  *
@@ -144,13 +145,14 @@ public final class YamlFileProvider implements ConfigProvider {
      * Reads the file once; values and revision come from the same bytes, so edits by hand are detected.
      *
      * @throws IOException when the file cannot be read, a missing file included
-     * @throws ConfigLoadException when the file is not UTF-8 or not valid YAML; for invalid YAML the message quotes
-     *     the line of the file where parsing failed, as the plugin's own load of the file does
+     * @throws ConfigLoadException when the file is not UTF-8, not valid YAML or larger than 16 MiB; for invalid YAML
+     *     the message is shaped as {@link so.alaz.taffy.config.StrictYaml#parse(String, String)} states: it
+     *     names the line and column where the parser gives them and does not quote that line
      * @throws IllegalStateException when the mapper cannot read a stored value without losing data
      */
     @Override
     public ConfigSnapshot read() throws IOException, ConfigLoadException {
-        byte[] content = Files.readAllBytes(file);
+        byte[] content = YamlBytes.read(file, fileName);
         return ConfigSnapshot.of(mapper.read(YamlBytes.parse(content, fileName)), Revisions.of(content));
     }
 
@@ -166,11 +168,12 @@ public final class YamlFileProvider implements ConfigProvider {
      * Writes the proposal into the file and runs the activation.
      *
      * @throws IOException when the file cannot be read or written; nothing was written
-     * @throws ConfigLoadException when the file is not UTF-8 or not valid YAML; nothing was written
+     * @throws ConfigLoadException when the file is not UTF-8, not valid YAML or larger than 16 MiB; nothing was
+     *     written
      */
     @Override
     public ApplyResult apply(ApplyContext context) throws IOException, ConfigLoadException {
-        byte[] current = Files.readAllBytes(file);
+        byte[] current = YamlBytes.read(file, fileName);
         String currentRevision = Revisions.of(current);
         if (!currentRevision.equals(context.baseRevision())) {
             return ApplyResult.conflict(currentRevision);
@@ -239,7 +242,9 @@ public final class YamlFileProvider implements ConfigProvider {
 
     /**
      * Changed restart-only paths whose new value differs from the value in effect since startup, and every changed
-     * restart-only path inside a list, whose index may name another item at startup.
+     * restart-only path inside a list: its index may name another item at startup, so such a path is listed even when
+     * its new value equals its value at startup. A path whose value differs from its value at startup is always
+     * listed.
      */
     private List<String> restartPending(ApplyContext context) {
         if (!context.requiresRestart()) {
@@ -262,7 +267,7 @@ public final class YamlFileProvider implements ConfigProvider {
      */
     private ConfigValues readStartupValues() {
         try {
-            return mapper.read(YamlBytes.parse(Files.readAllBytes(file), fileName));
+            return mapper.read(YamlBytes.parse(YamlBytes.read(file, fileName), fileName));
         } catch (IOException | ConfigLoadException | RuntimeException e) {
             return ConfigValues.empty();
         }

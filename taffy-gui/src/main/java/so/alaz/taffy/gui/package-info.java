@@ -2,11 +2,11 @@
  * Chest menus for Paper plugins.
  *
  * <p>A {@link so.alaz.taffy.gui.MenuLayout} describes how one menu looks: its rows, filler, the
- * {@link so.alaz.taffy.gui.PagerLayout} its list fills and the {@link so.alaz.taffy.gui.ItemLayout} items it places.
- * The plugin builds layouts in code or from files it reads itself; the library reads no file. A
- * {@link so.alaz.taffy.gui.MenuKind} names a menu's actions and the lang keys their text reads, and
- * {@link so.alaz.taffy.gui.Pager} gives the page to show for a requested page, a list size and the number of entries
- * a page holds.
+ * {@link so.alaz.taffy.gui.PagerLayout} its list fills and the {@link so.alaz.taffy.gui.ItemLayout} items it places,
+ * each built with {@code ItemLayout.of} and its withers. The plugin builds layouts in code or from files it reads
+ * itself; the library reads no file. A {@link so.alaz.taffy.gui.MenuKind} names a menu's actions and the lang keys
+ * their text reads, and {@link so.alaz.taffy.gui.Pager} gives the page to show for a requested page, a list size and
+ * the number of entries a page holds.
  *
  * <p>An {@link so.alaz.taffy.gui.Icon} describes what one slot shows: a button, a filler, a copy of a real item or an
  * item drawn from its saved description. {@link so.alaz.taffy.gui.MenuText} gives a menu's title and each item's name
@@ -72,6 +72,8 @@
  * {@code Scheduler.close}, in the order the {@code so.alaz.taffy.platform} package states. Shutdown closes the menus
  * and anvils of the viewers the calling thread owns and runs the menus' closed steps itself, since no close event
  * arrives while the plugin disables. The menus and anvils of viewers the calling thread does not own are forgotten and
- * stay open with no listener guarding them.
+ * stay open with no listener guarding them. Such a viewer can take the copies that menu shows; each carries
+ * {@link so.alaz.taffy.gui.Menus.Parts#preview()}, and the listener of a later enable deletes one when a click meets it
+ * outside a menu. On Paper the disabling thread owns every player, so this happens only on Folia.
  */
 package so.alaz.taffy.gui;

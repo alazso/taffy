@@ -8,11 +8,13 @@ import so.alaz.taffy.test.CapturedLog;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.attribute.DosFileAttributeView;
 import java.nio.file.attribute.PosixFileAttributeView;
@@ -237,6 +239,135 @@ final class ConfigLoaderTest {
 
         assertThat(Files.isSymbolicLink(configFile())).isTrue();
         assertThat(Files.readString(shared)).contains("config-version: 2");
+    }
+
+    @Test
+    void aLeftoverTemporaryFileIsRemovedByALoadOfACurrentFile() throws Exception {
+        Files.writeString(configFile(), SHIPPED_V2);
+        Files.writeString(temporaryFile(), "junk: [");
+
+        loader(SHIPPED_V2).load();
+
+        assertThat(temporaryFile()).doesNotExist();
+        assertThat(Files.readString(configFile())).isEqualTo(SHIPPED_V2);
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void anUpgradeWithALeftoverTemporaryFileSavesAndLeavesNoTemporaryFile() throws Exception {
+        Files.writeString(configFile(), OWNER_V1);
+        Files.writeString(temporaryFile(), "junk: [");
+
+        loader(SHIPPED_V2).load();
+
+        assertThat(reread().getInt("config-version")).isEqualTo(2);
+        assertThat(reread().getInt("my-key")).isEqualTo(7);
+        assertThat(leftovers()).isEmpty();
+    }
+
+    @Test
+    void aLeftoverThatCannotBeRemovedStillLetsACurrentFileLoad() throws Exception {
+        Files.writeString(configFile(), SHIPPED_V2);
+        Path inside = Files.writeString(Files.createDirectory(temporaryFile()).resolve("inside.txt"), "kept");
+
+        YamlConfiguration loaded = loader(SHIPPED_V2).load();
+
+        assertThat(loaded.getInt("config-version")).isEqualTo(2);
+        assertThat(Files.readString(inside)).isEqualTo("kept");
+        assertThat(Files.readString(configFile())).isEqualTo(SHIPPED_V2);
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void aLeftoverThatCannotBeRemovedStopsTheSaveOfAnUpgradeAndKeepsTheFile() throws Exception {
+        Files.writeString(configFile(), OWNER_V1);
+        Path inside = Files.writeString(Files.createDirectory(temporaryFile()).resolve("inside.txt"), "kept");
+
+        YamlConfiguration loaded = loader(SHIPPED_V2).load();
+
+        assertThat(loaded.getInt("config-version")).isEqualTo(2);
+        assertThat(Files.readString(configFile())).isEqualTo(OWNER_V1);
+        assertThat(Files.readString(inside)).isEqualTo("kept");
+        assertThat(log.lines()).singleElement().asString()
+            .startsWith("WARNING Could not save the upgraded config.yml: cannot write ");
+    }
+
+    @Test
+    void aTemporaryFileThatAppearsAfterTheLoadStartsIsReplacedByTheSave() throws Exception {
+        Files.writeString(configFile(), OWNER_V1);
+        Supplier<InputStream> planting = () -> {
+            plant(() -> Files.writeString(temporaryFile(), "junk: ["));
+            return new ByteArrayInputStream(SHIPPED_V2.getBytes(StandardCharsets.UTF_8));
+        };
+
+        new ConfigLoader(folder, planting, log.logger).load();
+
+        assertThat(reread().getInt("config-version")).isEqualTo(2);
+        assertThat(log.lines()).singleElement().asString().startsWith("INFO Upgraded config.yml from version 1 to 2");
+        assertThat(leftovers()).isEmpty();
+    }
+
+    @Test
+    void aLeftoverTemporaryLinkNeverChangesTheFileItLeadsTo() throws Exception {
+        Path other = Files.writeString(folder.resolve("other.txt"), "untouched");
+        Files.writeString(configFile(), OWNER_V1);
+        link(temporaryFile(), other);
+
+        loader(SHIPPED_V2).load();
+
+        assertThat(Files.readString(other)).isEqualTo("untouched");
+        assertThat(reread().getInt("config-version")).isEqualTo(2);
+        assertThat(Files.exists(temporaryFile(), LinkOption.NOFOLLOW_LINKS)).isFalse();
+    }
+
+    @Test
+    void aTemporaryLinkThatAppearsAfterTheLoadStartsNeverChangesTheFileItLeadsTo() throws Exception {
+        Path other = Files.writeString(folder.resolve("other.txt"), "untouched");
+        Files.writeString(configFile(), OWNER_V1);
+        link(folder.resolve("probe.link"), other);
+        Files.delete(folder.resolve("probe.link"));
+        Supplier<InputStream> planting = () -> {
+            plant(() -> Files.createSymbolicLink(temporaryFile(), other));
+            return new ByteArrayInputStream(SHIPPED_V2.getBytes(StandardCharsets.UTF_8));
+        };
+
+        new ConfigLoader(folder, planting, log.logger).load();
+
+        assertThat(Files.readString(other)).isEqualTo("untouched");
+        assertThat(reread().getInt("config-version")).isEqualTo(2);
+        assertThat(Files.exists(temporaryFile(), LinkOption.NOFOLLOW_LINKS)).isFalse();
+    }
+
+    @Test
+    void aLinkedFileIsWrittenAndCleanedInTheFolderOfTheFileItLeadsTo() throws Exception {
+        Path shared = Files.createDirectory(folder.resolve("shared"));
+        Path real = Files.writeString(shared.resolve("real.yml"), OWNER_V1);
+        Path leftover = Files.writeString(shared.resolve("real.yml.tmp"), "junk: [");
+        link(configFile(), real);
+
+        loader(SHIPPED_V2).load();
+
+        assertThat(leftover).doesNotExist();
+        assertThat(Files.isSymbolicLink(configFile())).isTrue();
+        assertThat(Files.readString(real)).contains("config-version: 2");
+        assertThat(leftovers()).isEmpty();
+        try (Stream<Path> files = Files.list(shared)) {
+            assertThat(files.map(path -> path.getFileName().toString()))
+                .containsExactly("real.yml");
+        }
+    }
+
+    @Test
+    void aLinkedFileLeftoverIsRemovedByALoadOfACurrentFile() throws Exception {
+        Path shared = Files.createDirectory(folder.resolve("shared"));
+        Path real = Files.writeString(shared.resolve("real.yml"), SHIPPED_V2);
+        Path leftover = Files.writeString(shared.resolve("real.yml.tmp"), "junk: [");
+        link(configFile(), real);
+
+        loader(SHIPPED_V2).load();
+
+        assertThat(leftover).doesNotExist();
+        assertThat(Files.readString(real)).isEqualTo(SHIPPED_V2);
     }
 
     @Test
@@ -601,6 +732,31 @@ final class ConfigLoaderTest {
 
     private Path configFile() {
         return folder.resolve("config.yml");
+    }
+
+    private Path temporaryFile() {
+        return folder.resolve("config.yml.tmp");
+    }
+
+    private static void link(Path link, Path target) {
+        try {
+            Files.createSymbolicLink(link, target);
+        } catch (IOException | UnsupportedOperationException noLinks) {
+            assumeTrue(false, "this file system cannot create symbolic links");
+        }
+    }
+
+    private static void plant(IoAction action) {
+        try {
+            action.run();
+        } catch (IOException failure) {
+            throw new UncheckedIOException(failure);
+        }
+    }
+
+    @FunctionalInterface
+    private interface IoAction {
+        void run() throws IOException;
     }
 
     private YamlConfiguration reread() throws Exception {

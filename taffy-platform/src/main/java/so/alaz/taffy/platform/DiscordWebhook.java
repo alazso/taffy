@@ -10,17 +10,19 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.CompletionException;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
 /**
- * Posts messages to Discord webhooks over HTTP, asynchronously, through one client. Failures are
- * reported to the caller's callback, not thrown. The callback runs either on the calling thread
- * before the post method returns, as it does for a URL that does not parse and for a post after
- * {@link #close()}, or later on a thread the caller does not choose. A callback for a request that
- * has already finished can still run after {@link #close()} has returned. The callback must not
- * throw: one that throws for an HTTP status is called a second time, with its own exception as the
- * reason.
+ * Posts messages to Discord webhooks over HTTP, asynchronously, through one client. Failures are not
+ * thrown. Each is passed to the caller's callback as a one-line reason for the server owner's log,
+ * with no Throwable, and nothing is reported to {@link ErrorReports}. The callback runs either on the
+ * calling thread before the post method returns, as it does for a URL that does not parse and for a
+ * post after {@link #close()}, or later on a thread the caller does not choose. A callback for a
+ * request that has already finished can still run after {@link #close()} has returned. The callback
+ * runs at most once per post. It must not throw: what it throws for a request that was sent is
+ * discarded, and for a URL that does not parse it reaches the caller of the post method.
  *
  * <p>Neither post method checks that the URL points at Discord. {@link #isWebhookUrl(String)} does,
  * for a caller to apply when it reads the URL from config.
@@ -74,14 +76,14 @@ public final class DiscordWebhook {
             return;
         }
         client.sendAsync(request, HttpResponse.BodyHandlers.discarding())
-            .thenAccept(response -> {
-                if (response.statusCode() >= 300) {
+            .whenComplete((response, failure) -> {
+                if (failure != null) {
+                    Throwable cause = failure instanceof CompletionException c && c.getCause() != null
+                        ? c.getCause() : failure;
+                    onError.accept(cause.toString());
+                } else if (response.statusCode() >= 300) {
                     onError.accept("Discord returned HTTP " + response.statusCode());
                 }
-            })
-            .exceptionally(ex -> {
-                onError.accept(ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName());
-                return null;
             });
     }
 

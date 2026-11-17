@@ -20,6 +20,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -29,7 +31,12 @@ import static org.mockito.Mockito.verify;
 class TextTest {
 
     private static final MiniMessage MINI = MiniMessage.miniMessage();
+    private static final String PLACEHOLDER_API_WARNING =
+        "WARNING PlaceholderAPI failed while resolving placeholders, so the text is shown without them.";
+    private static final String MINI_PLACEHOLDERS_WARNING =
+        "WARNING MiniPlaceholders failed, so the text is shown without its placeholders.";
 
+    private final CapturedLog log = new CapturedLog();
     private final Player viewer = mock(Player.class);
     private final List<Player> passViewers = new ArrayList<>();
     private final List<String> passInputs = new ArrayList<>();
@@ -57,9 +64,16 @@ class TextTest {
         return PlainTextComponentSerializer.plainText().serialize(component);
     }
 
+    private void assertOneWarning(String line, Class<? extends Throwable> thrown) {
+        assertThat(log.lines()).containsExactly(line);
+        LogRecord record = log.records.get(0);
+        assertThat(record.getLevel()).isEqualTo(Level.WARNING);
+        assertThat(record.getThrown()).isInstanceOf(thrown);
+    }
+
     @Test
     void rendersMiniMessageWhenNeitherIntegrationIsPresent() {
-        Text text = new Text(null, null);
+        Text text = new Text(log.logger, null, null);
 
         assertThat(text.render("<red>Hi")).isEqualTo(Component.text("Hi", NamedTextColor.RED));
         assertThat(text.render("<red>Hi", viewer)).isEqualTo(Component.text("Hi", NamedTextColor.RED));
@@ -68,7 +82,7 @@ class TextTest {
 
     @Test
     void nullViewerSkipsThePlaceholderApiPass() {
-        Text text = new Text(pass, null);
+        Text text = new Text(log.logger, pass, null);
 
         assertThat(plain(text.render("%x%"))).isEqualTo("%x%");
         assertThat(plain(text.render("%x%", null))).isEqualTo("%x%");
@@ -80,7 +94,7 @@ class TextTest {
 
     @Test
     void placeholderApiRunsForTheViewerBeforeMiniMessageParsing() {
-        Text text = new Text(pass, null);
+        Text text = new Text(log.logger, pass, null);
 
         Component rendered = text.render("%rank% joined", viewer);
 
@@ -91,23 +105,38 @@ class TextTest {
 
     @Test
     void resolveRunsThePlaceholderApiPassWithoutParsing() {
-        Text text = new Text(pass, null);
+        Text text = new Text(log.logger, pass, null);
 
         assertThat(text.resolve("<red>%x% %rank%", viewer)).isEqualTo("<red>1 <green>VIP");
     }
 
     @Test
     void throwingPlaceholderApiPassReturnsTheInput() {
-        Text text = new Text(THROWING_PASS, null);
+        Text text = new Text(log.logger, THROWING_PASS, null);
 
         assertThat(text.resolve("<red>%x%", viewer)).isEqualTo("<red>%x%");
         assertThat(text.render("<red>%x%", viewer)).isEqualTo(Component.text("%x%", NamedTextColor.RED));
         assertThat(plain(text.render("%x% {name}", viewer, Placeholder.unparsed("name", "Ann")))).isEqualTo("%x% Ann");
+        assertThat(text.render("%x%", viewer)).isEqualTo(Component.text("%x%"));
+        assertOneWarning(PLACEHOLDER_API_WARNING, IllegalStateException.class);
+        assertThat(log.records.get(0).getThrown()).hasMessage("expansion failed");
+    }
+
+    @Test
+    void placeholderApiPassThatFailsToLinkReturnsTheInput() {
+        Text text = new Text(log.logger, (player, input) -> {
+            throw new NoSuchMethodError("org.bukkit.OfflinePlayer.getName()");
+        }, null);
+
+        assertThat(text.resolve("%x% hi", viewer)).isEqualTo("%x% hi");
+        assertThat(text.render("<red>%x% hi", viewer)).isEqualTo(Component.text("%x% hi", NamedTextColor.RED));
+        assertThat(text.plain("%x% hi", viewer)).isEqualTo("%x% hi");
+        assertOneWarning(PLACEHOLDER_API_WARNING, NoSuchMethodError.class);
     }
 
     @Test
     void sectionSignCodesThatPlaceholderApiReturnsAreRenderedAsTheirTags() {
-        Text text = new Text(
+        Text text = new Text(log.logger,
             (player, input) -> input.replace("%nick%", "§cAnn").replace("%hex%", "§x§F§F§8§8§0§0Bo"), null);
 
         assertThat(text.render("<gray>Hello %nick%", viewer)).isEqualTo(MINI.deserialize("<gray>Hello <red>Ann"));
@@ -120,7 +149,7 @@ class TextTest {
 
     @Test
     void sectionSignCodesInTheInputAreRenderedAsTheirTags() {
-        Text text = new Text(null, this::expansions);
+        Text text = new Text(log.logger, null, this::expansions);
 
         assertThat(text.render("§aHi &b")).isEqualTo(Component.text("Hi &b", NamedTextColor.GREEN));
         assertThat(text.render("§aHi &b", viewer)).isEqualTo(Component.text("Hi &b", NamedTextColor.GREEN));
@@ -131,26 +160,52 @@ class TextTest {
 
     @Test
     void resolveKeepsTheSectionSignCodesPlaceholderApiReturns() {
-        Text text = new Text((player, input) -> input.replace("%nick%", "§cAnn"), null);
+        Text text = new Text(log.logger, (player, input) -> input.replace("%nick%", "§cAnn"), null);
 
         assertThat(text.resolve("<gray>%nick%", viewer)).isEqualTo("<gray>§cAnn");
     }
 
     @Test
-    void anUnparsedValueKeepsItsSectionSignAndAParsedOneIsRejectedUntilConverted() {
-        Text text = new Text(null, null);
+    void aParsedValueHasItsSectionSignCodesConvertedAndAnUnparsedOneKeepsThem() {
+        Text text = new Text(log.logger, null, null);
 
-        assertThat(plain(text.render("<name>", viewer, Placeholder.unparsed("name", "§cAnn")))).isEqualTo("§cAnn");
-        assertThatThrownBy(() -> text.render("<name>", viewer, Placeholder.parsed("name", "§cAnn")))
-            .isInstanceOf(ParsingException.class);
-        assertThat(text.render("<name>", viewer, Placeholder.parsed("name", LegacyText.sectionToMiniMessage("§cAnn"))))
+        assertThat(text.render("<name>", viewer, Placeholder.parsed("name", "§cAnn")))
             .isEqualTo(MINI.deserialize("<red>Ann"));
+        assertThat(text.render("<name>", null, Placeholder.parsed("name", "§cAnn")))
+            .isEqualTo(MINI.deserialize("<red>Ann"));
+        assertThat(plain(text.render("<name>", viewer, Placeholder.unparsed("name", "§cAnn")))).isEqualTo("§cAnn");
+        assertThat(log.records).isEmpty();
+    }
+
+    @Test
+    void aParsedValueWrittenAsABracedNameIsAliasedAndConverted() {
+        Text text = new Text(log.logger, null, this::expansions);
+
+        assertThat(text.render("{name} here", viewer, Placeholder.parsed("name", "§cAnn")))
+            .isEqualTo(MINI.deserialize("<red>Ann here"));
+    }
+
+    @Test
+    void aMiniPlaceholdersPreProcessTagHasItsSectionSignCodesConverted() {
+        Text text = new Text(log.logger, null, () -> TagResolver.resolver("tag", Tag.preProcessParsed("§aX")));
+
+        assertThat(text.render("<tag>", viewer)).isEqualTo(Component.text("X", NamedTextColor.GREEN));
+        assertThat(log.records).isEmpty();
+    }
+
+    @Test
+    void sectionSafeAsksTheWrappedResolverWhichNamesItHas() {
+        TagResolver safe = Text.sectionSafe(Placeholder.unparsed("a", "§c1"));
+
+        assertThat(safe.has("a")).isTrue();
+        assertThat(safe.has("nope")).isFalse();
+        assertThat(plain(MINI.deserialize("<a> <nope>", safe))).isEqualTo("§c1 <nope>");
     }
 
     @Test
     void miniPlaceholdersTagsAreResolvedWithTheViewerAsTarget() {
         AtomicInteger built = new AtomicInteger();
-        Text text = new Text(null, () -> {
+        Text text = new Text(log.logger, null, () -> {
             built.incrementAndGet();
             return expansions();
         });
@@ -165,31 +220,34 @@ class TextTest {
 
     @Test
     void throwingMiniPlaceholdersSupplierFallsBackToParsingWithoutIt() {
-        Text text = new Text(null, () -> {
+        Text text = new Text(log.logger, null, () -> {
             throw new IllegalStateException("not enabled");
         });
 
         assertThat(text.render("<red>Hi <server>", viewer)).isEqualTo(MINI.deserialize("<red>Hi <server>"));
         assertThat(plain(text.render("<red>Hi <server> {name}", viewer, Placeholder.unparsed("name", "Ann"))))
             .isEqualTo("Hi <server> Ann");
+        assertOneWarning(MINI_PLACEHOLDERS_WARNING, IllegalStateException.class);
     }
 
     @Test
     void miniPlaceholdersSupplierThatFailsToLinkFallsBackToParsingWithoutIt() {
-        Text text = new Text(null, () -> {
+        Text text = new Text(log.logger, null, () -> {
             throw new NoSuchMethodError("audienceGlobalPlaceholders");
         });
 
         assertThat(text.render("<red>Hi <server>", viewer)).isEqualTo(MINI.deserialize("<red>Hi <server>"));
         assertThat(plain(text.render("{name} on <server>", viewer, Placeholder.unparsed("name", "Ann"))))
             .isEqualTo("Ann on <server>");
+        assertOneWarning(MINI_PLACEHOLDERS_WARNING, NoSuchMethodError.class);
     }
 
     @Test
     void miniPlaceholdersSupplierReturningNullIsSkipped() {
-        Text text = new Text(null, () -> null);
+        Text text = new Text(log.logger, null, () -> null);
 
         assertThat(plain(text.render("<red>Hi <server>", viewer))).isEqualTo("Hi <server>");
+        assertThat(log.records).isEmpty();
     }
 
     @Test
@@ -197,10 +255,12 @@ class TextTest {
         TagResolver broken = TagResolver.resolver("boom", (arguments, context) -> {
             throw new IllegalStateException("expansion failed");
         });
-        Text text = new Text(null, () -> TagResolver.resolver(broken, Placeholder.unparsed("server", "lobby")));
+        TagResolver expansions = TagResolver.resolver(broken, Placeholder.unparsed("server", "lobby"));
+        Text text = new Text(log.logger, null, () -> expansions);
 
         assertThat(text.render("<boom><red>Hi <server>", viewer))
             .isEqualTo(Component.text("<boom>").append(Component.text("Hi lobby", NamedTextColor.RED)));
+        assertThat(log.records).isEmpty();
     }
 
     @Test
@@ -216,16 +276,27 @@ class TextTest {
                 throw new IllegalStateException("expansion failed");
             }
         };
-        Text text = new Text(null, () -> TagResolver.resolver(broken, Placeholder.unparsed("server", "lobby")));
+        TagResolver expansions = TagResolver.resolver(broken, Placeholder.unparsed("server", "lobby"));
+        Text text = new Text(log.logger, null, () -> expansions);
 
         assertThat(text.render("<red>Hi <server>", viewer)).isEqualTo(Component.text("Hi <server>", NamedTextColor.RED));
         assertThat(plain(text.render("<red><server> <name>", null, Placeholder.unparsed("name", "Ann"))))
             .isEqualTo("<server> Ann");
+        assertOneWarning(MINI_PLACEHOLDERS_WARNING, IllegalStateException.class);
+    }
+
+    @Test
+    void inputThatFailsWithAndWithoutMiniPlaceholdersThrowsAndLogsNothing() {
+        Text text = new Text(log.logger, null, this::expansions);
+
+        assertThatThrownBy(() -> text.render("<cut>cAnn <server>", viewer, Placeholder.parsed("cut", "§")))
+            .isInstanceOf(ParsingException.class);
+        assertThat(log.records).isEmpty();
     }
 
     @Test
     void unparsedAndComponentValuesAreInsertedAsTheyAre() {
-        Text text = new Text(pass, this::expansions);
+        Text text = new Text(log.logger, pass, this::expansions);
 
         Component unparsed = text.render("Hello <name>", viewer, Placeholder.unparsed("name", "<red>%x%<server>"));
         Component component = text.render(
@@ -239,7 +310,7 @@ class TextTest {
 
     @Test
     void parsedValueIsReadAsMiniMessage() {
-        Text text = new Text(pass, null);
+        Text text = new Text(log.logger, pass, null);
 
         Component rendered = text.render("Hello <name>", viewer, Placeholder.parsed("name", "<red>Ann"));
 
@@ -249,7 +320,7 @@ class TextTest {
 
     @Test
     void bracedNameReadsAsATagOnlyForSuppliedNames() {
-        Text text = new Text(pass, this::expansions);
+        Text text = new Text(log.logger, pass, this::expansions);
 
         Component rendered = text.render(
             "{player} has {count} of {max} on {server} %x%", viewer,
@@ -262,7 +333,7 @@ class TextTest {
 
     @Test
     void suppliedBracedNameInsideAPlaceholderApiPlaceholderDoesNotReachThePass() {
-        Text text = new Text(pass, null);
+        Text text = new Text(log.logger, pass, null);
 
         Component rendered = text.render("%math_{count}*2% %x%", viewer, Placeholder.unparsed("count", "3"));
 
@@ -272,7 +343,7 @@ class TextTest {
 
     @Test
     void bracedNameWithoutValuesStaysAsWritten() {
-        Text text = new Text(pass, this::expansions);
+        Text text = new Text(log.logger, pass, this::expansions);
 
         assertThat(plain(text.render("{server} {name}", viewer))).isEqualTo("{server} {name}");
         assertThat(plain(text.render("{server} {name}", viewer, new TagResolver[0]))).isEqualTo("{server} {name}");
@@ -291,7 +362,7 @@ class TextTest {
 
     @Test
     void bracedNameIsFilledInInsideHoverTextButNotInsideAClickValue() {
-        Text text = new Text(null, null);
+        Text text = new Text(log.logger, null, null);
 
         Component hover = text.render("<hover:show_text:'{name}'>x</hover>", null, Placeholder.unparsed("name", "Ann"));
         Component click = text.render(
@@ -303,7 +374,7 @@ class TextTest {
 
     @Test
     void suppliedBracedNameAsAnUnquotedTagArgumentLeavesTheTagAsText() {
-        Text text = new Text(null, null);
+        Text text = new Text(log.logger, null, null);
 
         Component rendered = text.render("<hover:show_text:{name}>x</hover>", null, Placeholder.unparsed("name", "Ann"));
 
@@ -313,7 +384,7 @@ class TextTest {
 
     @Test
     void suppliedValueWinsOverAMiniPlaceholdersTagOfTheSameName() {
-        Text text = new Text(null, this::expansions);
+        Text text = new Text(log.logger, null, this::expansions);
 
         assertThat(plain(text.render("<server> {server}", viewer, Placeholder.unparsed("server", "mine"))))
             .isEqualTo("mine mine");
@@ -321,14 +392,14 @@ class TextTest {
 
     @Test
     void plainFlattensTheRenderedInput() {
-        Text text = new Text(pass, this::expansions);
+        Text text = new Text(log.logger, pass, this::expansions);
 
         assertThat(text.plain("<red>Hi <bold>%x%</bold> <who>", viewer)).isEqualTo("Hi 1 viewer");
     }
 
     @Test
     void rendersEachLineForTheViewer() {
-        Text text = new Text(pass, null);
+        Text text = new Text(log.logger, pass, null);
 
         List<Component> lines = text.render(List.of("<red>a", "%rank%", ""), viewer);
 
@@ -339,7 +410,7 @@ class TextTest {
 
     @Test
     void sendDeliversTheRenderedMessageToThePlayer() {
-        Text text = new Text(pass, null);
+        Text text = new Text(log.logger, pass, null);
 
         text.send(viewer, "<red>You are %x%");
 
@@ -351,8 +422,6 @@ class TextTest {
 
     @Test
     void publicConstructorRendersWithNeitherPluginOnTheClasspath() {
-        CapturedLog log = new CapturedLog();
-
         Text text = new Text(log.logger);
 
         assertThat(text.render("<red>%x%", viewer)).isEqualTo(Component.text("%x%", NamedTextColor.RED));

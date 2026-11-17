@@ -50,7 +50,8 @@ import java.util.logging.Logger;
  * {@code {prefix}}, and is empty when no file has the key.
  *
  * <p>A key that no file has renders as the visible marker {@code <red>missing:key}. A section-sign code in a
- * template or in the prefix is rendered as {@link LegacyText#sectionToMiniMessage} converts it.
+ * template, in the prefix or in a value supplied as {@code Placeholder.parsed} is rendered as
+ * {@link LegacyText#sectionToMiniMessage} converts it.
  *
  * <p>Every method that takes no viewer may be called from any thread. The methods that take a viewer follow the
  * thread rule of {@link Text}. {@link #reload()} replaces every loaded file at once.
@@ -276,7 +277,8 @@ public final class Messages {
     }
 
     private static Component parse(String template, TagResolver all) {
-        return MINI.deserialize(LegacyText.sectionToMiniMessage(Text.aliasBraces(template, all)), all);
+        String converted = LegacyText.sectionToMiniMessage(Text.aliasBraces(template, all));
+        return MINI.deserialize(converted, Text.sectionSafe(all));
     }
 
     /**

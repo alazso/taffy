@@ -20,7 +20,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
 
@@ -54,7 +53,9 @@ import java.util.logging.Logger;
  * and the upgraded settings are returned, so the next load tries the upgrade again. The save goes through a
  * temporary file in the same folder that is flushed to the device and then replaces the target. It follows a
  * symbolic link to the file it names and keeps the POSIX permissions of the file where the file system has
- * them. A file written where none existed gets the permissions the file system gives any new file.
+ * them. A file written where none existed gets the permissions the file system gives any new file. The
+ * temporary file is {@code config.yml.tmp} (for a symbolic link, the name of the file it leads to followed by
+ * {@code .tmp}); one left behind by a write that was cut off is removed by the next load.
  *
  * <p>The loader holds no state between loads. Calls to {@link #load()} must not overlap.
  */
@@ -123,6 +124,11 @@ public final class ConfigLoader {
      *     file cannot be written. A file that exists in the data folder is not changed in any of these cases.
      */
     public YamlConfiguration load() throws ConfigLoadException {
+        try {
+            Files.deleteIfExists(temporary(target()));
+        } catch (IOException leftoverKept) {
+            // A leftover that cannot be removed here is removed or refused by the next write.
+        }
         String shippedText = readShipped();
         YamlConfiguration defaults = StrictYaml.parse(shippedText, "the " + FILE_NAME + " inside the plugin jar");
         if (Files.notExists(file)) {
@@ -239,11 +245,10 @@ public final class ConfigLoader {
 
     private void write(String text) throws ConfigLoadException {
         try {
-            Path target = Files.isSymbolicLink(file) ? file.toRealPath() : file;
-            Path folder = target.getParent();
-            Files.createDirectories(folder);
-            Path temporary = folder.resolve(
-                FILE_NAME + "." + Long.toUnsignedString(ThreadLocalRandom.current().nextLong()) + ".tmp");
+            Path target = target();
+            Files.createDirectories(target.getParent());
+            Path temporary = temporary(target);
+            Files.deleteIfExists(temporary);
             FileChannel channel = FileChannel.open(temporary, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
             try {
                 try (channel) {
@@ -269,6 +274,14 @@ public final class ConfigLoader {
         } catch (IOException failure) {
             throw new ConfigLoadException("cannot write " + file + ": " + describe(failure), failure);
         }
+    }
+
+    private Path target() throws IOException {
+        return Files.isSymbolicLink(file) ? file.toRealPath() : file;
+    }
+
+    private static Path temporary(Path target) {
+        return target.resolveSibling(target.getFileName() + ".tmp");
     }
 
     private static String describe(IOException failure) {

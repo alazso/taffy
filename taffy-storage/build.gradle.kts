@@ -6,6 +6,7 @@ description = "Taffy storage: JDBC over HikariCP for SQLite, MySQL, MariaDB and 
 
 dependencies {
     api(project(":taffy-platform"))
+    compileOnly(libs.paper.api)
     compileOnly(libs.jetbrains.annotations)
     compileOnly(libs.hikari)
 

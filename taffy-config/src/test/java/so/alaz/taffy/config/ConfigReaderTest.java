@@ -6,12 +6,16 @@ import org.junit.jupiter.api.Test;
 import so.alaz.taffy.platform.Durations;
 import so.alaz.taffy.test.JvmDefaults;
 
+import java.math.BigInteger;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -19,6 +23,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 final class ConfigReaderTest {
 
     private static final String PERCENT_EXPECTED = "a percent from 0% to 100% such as 5%";
+
+    private static final String DATES = """
+        day: 2026-12-31
+        moment: 2026-12-31T10:00:00Z
+        quoted: "2026-12-31T10:00:00"
+        """;
 
     private final List<String> warnings = new ArrayList<>();
 
@@ -145,9 +155,89 @@ final class ConfigReaderTest {
         assertThat(reader.errors()).hasSize(2);
         assertThat(reader.errors().get(0)).startsWith("octal must be in quotes");
         assertThat(reader.errors()).containsExactly(
-            "octal must be in quotes, because YAML changes an unquoted value it reads as a number or true/false.",
-            "switch must be in quotes, because YAML changes an unquoted value it reads as a number or true/false.");
+            "octal must be in quotes, because YAML changes an unquoted value it reads as a number, a date or"
+                + " true/false.",
+            "switch must be in quotes, because YAML changes an unquoted value it reads as a number, a date or"
+                + " true/false.");
         assertThat(warnings).isEmpty();
+    }
+
+    @Test
+    void textReadsAnUnquotedDateAsItsDateAndAsksForQuotesAroundADateWithATime() throws Exception {
+        forEachZone(() -> {
+            ConfigReader reader = reader(DATES);
+
+            assertThat(reader.text("day", "x")).isEqualTo("2026-12-31");
+            assertThat(reader.text("moment", "x")).isEqualTo("x");
+            assertThat(reader.text("quoted", "x")).isEqualTo("2026-12-31T10:00:00");
+
+            assertThat(warnings).containsExactly(
+                "moment must be in quotes, because YAML reads a date and time written without them in UTC, so x is"
+                    + " used.");
+            assertThat(reader.errors()).isEmpty();
+        });
+    }
+
+    @Test
+    void stringsKeepsAnUnquotedDateAndSkipsADateWithATime() throws Exception {
+        forEachZone(() -> {
+            ConfigReader reader = reader("days: [2026-12-31, 2026-12-31T10:00:00Z, \"2026-12-31T10:00:00\"]\n");
+
+            assertThat(reader.strings("days", List.of("X"))).containsExactly("2026-12-31", "2026-12-31T10:00:00");
+
+            assertThat(warnings).containsExactly(
+                "days has 2026-12-31T10:00:00Z, which must be in quotes, because YAML reads a date and time written"
+                    + " without them in UTC, so it is skipped.");
+            assertThat(reader.errors()).isEmpty();
+        });
+    }
+
+    @Test
+    void requiredTextReadsAnUnquotedDateAndReportsADateWithATimeAsAnError() throws Exception {
+        forEachZone(() -> {
+            ConfigReader reader = reader(DATES);
+
+            assertThat(reader.requiredText("day", "set it")).isEqualTo("2026-12-31");
+            assertThat(reader.requiredText("moment", "set it")).isNull();
+            assertThat(reader.requiredText("quoted", "set it")).isEqualTo("2026-12-31T10:00:00");
+
+            assertThat(reader.errors()).containsExactly(
+                "moment must be in quotes, because YAML reads a date and time written without them in UTC.");
+            assertThat(warnings).isEmpty();
+        });
+    }
+
+    @Test
+    void strictTextReadsAnUnquotedDateAndReportsADateWithATimeAsAnError() throws Exception {
+        forEachZone(() -> {
+            ConfigReader reader = reader(DATES);
+
+            assertThat(reader.strictText("day", "never", "a date")).isEqualTo("2026-12-31");
+            assertThat(reader.strictText("moment", "never", "a date")).isNull();
+            assertThat(reader.strictText("quoted", "never", "a date")).isEqualTo("2026-12-31T10:00:00");
+
+            assertThat(reader.errors()).containsExactly(
+                "moment must be in quotes, because YAML reads a date and time written without them in UTC.");
+            assertThat(warnings).isEmpty();
+        });
+    }
+
+    @Test
+    void quotedRefusesAnyUnquotedDate() throws Exception {
+        forEachZone(() -> {
+            ConfigReader reader = reader(DATES);
+
+            assertThat(reader.quoted("day", "f")).isEqualTo("f");
+            assertThat(reader.quoted("moment", "f")).isEqualTo("f");
+            assertThat(reader.quoted("quoted", "f")).isEqualTo("2026-12-31T10:00:00");
+
+            assertThat(reader.errors()).containsExactly(
+                "day must be in quotes, because YAML changes an unquoted value it reads as a number, a date or"
+                    + " true/false.",
+                "moment must be in quotes, because YAML changes an unquoted value it reads as a number, a date or"
+                    + " true/false.");
+            assertThat(warnings).isEmpty();
+        });
     }
 
     @Test
@@ -594,6 +684,72 @@ final class ConfigReaderTest {
                     .isEqualTo("2026-12-31T23:59:59Z");
             });
         }
+    }
+
+    @Test
+    void describeWritesAListLongerThanAHundredCharactersAsItsEntryCount() throws Exception {
+        List<String> exact = List.of("x".repeat(98));
+        List<Integer> many = IntStream.range(0, 500).boxed().toList();
+
+        assertThat(String.valueOf(exact)).hasSize(100);
+        assertThat(ConfigReader.describe(exact)).isEqualTo(String.valueOf(exact));
+        assertThat(ConfigReader.describe(List.of("x".repeat(48), "y".repeat(49)))).isEqualTo("a list of 2 entries");
+        assertThat(ConfigReader.describe(many)).isEqualTo("a list of 500 entries");
+        assertThat(ConfigReader.describe(List.of("z".repeat(120)))).isEqualTo("a list of 1 entry");
+    }
+
+    @Test
+    void describeCutsATextLongerThanAHundredCharacters() throws Exception {
+        String hundred = "a".repeat(100);
+
+        assertThat(ConfigReader.describe(hundred)).isEqualTo("\"" + hundred + "\"");
+        assertThat(ConfigReader.describe(hundred + "b")).isEqualTo("\"" + hundred + "\"...");
+    }
+
+    @Test
+    void describeDoesNotSplitASurrogatePairWhereItCutsAText() throws Exception {
+        String face = "😀";
+        String straddling = "a".repeat(99) + face + "b";
+        String inside = "a".repeat(98) + face + "bc";
+
+        assertThat(ConfigReader.describe(straddling)).isEqualTo("\"" + "a".repeat(99) + "\"...");
+        assertThat(ConfigReader.describe(inside)).isEqualTo("\"" + "a".repeat(98) + face + "\"...");
+    }
+
+    @Test
+    void aWarningAboutALongListNamesItsEntryCount() throws Exception {
+        String entries = IntStream.range(0, 500).mapToObj(Integer::toString).collect(Collectors.joining(", "));
+        ConfigReader reader = reader("big: [" + entries + "]\n");
+
+        assertThat(reader.integer("big", 4)).isEqualTo(4);
+
+        assertThat(warnings).containsExactly("big is a list of 500 entries; expected a whole number, so 4 is used.");
+    }
+
+    @Test
+    void describeWritesAMapOrOtherValueLongerThanAHundredCharactersInShortForm() throws Exception {
+        Map<String, String> exact = Map.of("k", "x".repeat(96));
+        String digits = "1".repeat(150);
+
+        assertThat(String.valueOf(exact)).hasSize(100);
+        assertThat(ConfigReader.describe(exact)).isEqualTo(String.valueOf(exact));
+        assertThat(ConfigReader.describe(Map.of("token", "x".repeat(300)))).isEqualTo("a group of 1 key");
+        assertThat(ConfigReader.describe(Map.of("a", "x".repeat(60), "b", "y".repeat(60))))
+            .isEqualTo("a group of 2 keys");
+        assertThat(ConfigReader.describe(new BigInteger(digits))).isEqualTo("1".repeat(100) + "...");
+    }
+
+    @Test
+    void aWarningAboutALongGroupInsideAListNamesItsKeyCount() throws Exception {
+        ConfigReader reader = reader("""
+            motd:
+              - hello
+              - token: %s
+            """.formatted("x".repeat(300)));
+
+        assertThat(reader.strings("motd", List.of())).containsExactly("hello");
+        assertThat(warnings)
+            .containsExactly("motd has a group of 1 key, which is not a single value, so it is skipped.");
     }
 
     @Test
@@ -1094,6 +1250,13 @@ final class ConfigReaderTest {
     private enum Shape {
         ROUND { },
         SQUARE
+    }
+
+    private void forEachZone(JvmDefaults.Block block) throws Exception {
+        for (String zone : List.of("America/St_Johns", "Pacific/Auckland")) {
+            warnings.clear();
+            JvmDefaults.withTimeZone(zone, block);
+        }
     }
 
     private ConfigReader reader(String text) throws Exception {

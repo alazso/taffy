@@ -15,6 +15,7 @@ import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -29,20 +30,27 @@ import java.util.function.Function;
  *
  * <p>A warning about a value has the form {@code <path> is <value>; expected <what>, so <fallback> is used.},
  * with the value written as {@link #describe} writes it. A key that is absent gives the fallback with no
- * warning. A single value is a text, a number or {@code true}/{@code false}, as opposed to a list or a group of
- * keys.
+ * warning. A single value is a text, a number, {@code true}/{@code false} or a date.
  *
  * <p>A blank text (empty or only whitespace) reads as an absent key in {@link #integer}, {@link #optionalInteger},
  * {@link #whole}, {@link #decimal}, {@link #bool}, {@link #duration}, {@link #durations}, {@link #strings},
  * {@link #parsed} and {@link #choice}: it gives the fallback with no warning. {@link #text}, {@link #quoted} and
  * {@link #strictText} return a blank text as it is, and {@link #requiredText} reports it as an error.
  *
+ * <p>Every reader that gives text reads an unquoted date such as {@code 2026-12-31} as that date written
+ * {@code yyyy-MM-dd}, and treats an unquoted date with a time as {@link #parsed} does: {@link #text} and
+ * {@link #strings} warn and use the fallback or skip the entry, {@link #requiredText} and {@link #strictText} add
+ * an error, and {@link #quoted} adds its error for any unquoted date. An unquoted date and time whose offset brings
+ * it to midnight UTC, such as {@code 2026-12-31T19:00:00-05:00}, cannot be told apart from a date: {@link #text},
+ * {@link #strings}, {@link #requiredText}, {@link #strictText} and {@link #parsed} read it as the UTC date,
+ * {@code 2027-01-01}, with no warning.
+ *
  * <p>Every path a method is called with is recorded and returned by {@link #readPaths()}, whether or not the
  * key exists. Paths are dotted and relative to the section given to the constructor.
  *
  * <p>The two list readers differ. {@link #durations} treats an empty list as invalid and uses its whole
  * fallback when one entry is not a duration. {@link #strings} accepts an empty list and skips only the entries
- * that are not single values.
+ * that are not single values and the unquoted dates with a time.
  *
  * <p>One instance serves one load of one configuration. It is not thread-safe.
  */
@@ -50,6 +58,9 @@ public final class ConfigReader {
 
     private static final Set<String> YAML_TRUE = Set.of("TRUE", "YES", "ON");
     private static final Set<String> YAML_FALSE = Set.of("FALSE", "NO", "OFF");
+    private static final String QUOTE_DATE_TIME =
+        " must be in quotes, because YAML reads a date and time written without them in UTC";
+    private static final int DESCRIBE_LIMIT = 100;
 
     private final ConfigurationSection root;
     private final Consumer<String> warnings;
@@ -203,35 +214,47 @@ public final class ConfigReader {
     }
 
     /**
-     * The single value at {@code path} as text. A key that is absent, a blank text, a list and a group of keys
-     * each add an error and give {@code null}. The error is {@code <path> is missing; <fix>.} for an absent key
-     * and {@code <path> is <value>; <fix>.} otherwise.
+     * The single value at {@code path} as text, with an unquoted date written as {@code 2026-12-31}. A key that
+     * is absent, a blank text, a list and a group of keys each add an error and give {@code null}. The error is
+     * {@code <path> is missing; <fix>.} for an absent key and {@code <path> is <value>; <fix>.} otherwise. An
+     * unquoted date with a time adds the error {@code <path> must be in quotes, because YAML reads a date and time
+     * written without them in UTC.} and gives {@code null}.
      *
      * @param fix what the owner has to do, without a full stop at the end
      */
     public @Nullable String requiredText(String path, String fix) {
         Object value = value(path);
-        if (value instanceof String || value instanceof Number || value instanceof Boolean) {
-            String text = value.toString();
-            if (!text.isBlank()) {
-                return text;
-            }
+        if (isDateTime(value)) {
+            error(path + QUOTE_DATE_TIME + ".");
+            return null;
+        }
+        String text = singleText(value);
+        if (text != null && !text.isBlank()) {
+            return text;
         }
         error(path + (value == null ? " is missing" : " is " + describe(value)) + "; " + fix + ".");
         return null;
     }
 
     /**
-     * The single value at {@code path} as text, or {@code fallback} when the key is absent. A list and a group
-     * of keys add the error {@code <path> is <value>; expected <expected>.} and give {@code null}.
+     * The single value at {@code path} as text, with an unquoted date written as {@code 2026-12-31}, or
+     * {@code fallback} when the key is absent. A list and a group of keys add the error
+     * {@code <path> is <value>; expected <expected>.} and give {@code null}. An unquoted date with a time adds the
+     * error {@code <path> must be in quotes, because YAML reads a date and time written without them in UTC.} and
+     * gives {@code null}.
      */
     public @Nullable String strictText(String path, @Nullable String fallback, String expected) {
         Object value = value(path);
         if (value == null) {
             return fallback;
         }
-        if (value instanceof String || value instanceof Number || value instanceof Boolean) {
-            return value.toString();
+        if (isDateTime(value)) {
+            error(path + QUOTE_DATE_TIME + ".");
+            return null;
+        }
+        String text = singleText(value);
+        if (text != null) {
+            return text;
         }
         error(path + " is " + describe(value) + "; expected " + expected + ".");
         return null;
@@ -239,31 +262,36 @@ public final class ConfigReader {
 
     /**
      * The single value at {@code path} as text, or {@code fallback} when the key is absent. A number and
-     * {@code true}/{@code false} read as their text form, and a blank text is returned as it is. A list and a
-     * group of keys give {@code fallback} and a warning.
+     * {@code true}/{@code false} read as their text form, an unquoted date as {@code 2026-12-31}, and a blank
+     * text is returned as it is. An unquoted date with a time gives {@code fallback} and the warning
+     * {@code <path> must be in quotes, because YAML reads a date and time written without them in UTC, so
+     * <fallback> is used.} A list and a group of keys give {@code fallback} and a warning.
      */
     public String text(String path, String fallback) {
         Object value = value(path);
         if (value == null) {
             return fallback;
         }
-        if (value instanceof String || value instanceof Number || value instanceof Boolean) {
-            return value.toString();
+        if (isDateTime(value)) {
+            warn(path + QUOTE_DATE_TIME + ", so " + fallback + " is used.");
+            return fallback;
         }
-        return invalid(path, value, "a single value", fallback);
+        String text = singleText(value);
+        return text != null ? text : invalid(path, value, "a single value", fallback);
     }
 
     /**
-     * Reads as {@link #text} does, for a value that has to be written in quotes. A value YAML read as a number
-     * or as {@code true}/{@code false} may no longer be what the file says ({@code 0451} is read as a number),
-     * so it adds the error {@code <path> must be in quotes, because YAML changes an unquoted value it reads as a
-     * number or true/false.} and gives {@code fallback}.
+     * Reads as {@link #text} does, for a value that has to be written in quotes. A value YAML read as a number,
+     * a date or {@code true}/{@code false} may no longer be what the file says ({@code 0451} is read as a number
+     * and {@code 2026-12-31T10:00:00} as a time in UTC), so it adds the error {@code <path> must be in quotes,
+     * because YAML changes an unquoted value it reads as a number, a date or true/false.} and gives
+     * {@code fallback}.
      */
     public String quoted(String path, String fallback) {
         Object value = value(path);
-        if (value instanceof Number || value instanceof Boolean) {
-            error(path + " must be in quotes, because YAML changes an unquoted value it reads as a number or"
-                + " true/false.");
+        if (value instanceof Number || value instanceof Boolean || value instanceof Date) {
+            error(path + " must be in quotes, because YAML changes an unquoted value it reads as a number, a date"
+                + " or true/false.");
             return fallback;
         }
         return text(path, fallback);
@@ -358,9 +386,12 @@ public final class ConfigReader {
 
     /**
      * The list of single values at {@code path}, each as text and in file order, or {@code fallback} when the
-     * key is absent. An empty list is valid. An entry that is not a single value is skipped with the warning
-     * {@code <path> has <entry>, which is not a single value, so it is skipped.} and the other entries are
-     * kept. A value that is not a list gives {@code fallback} and a warning.
+     * key is absent. An empty list is valid. An unquoted date entry is kept as {@code 2026-12-31}. An entry that
+     * is not a single value is skipped with the warning
+     * {@code <path> has <entry>, which is not a single value, so it is skipped.}, an unquoted date with a time
+     * with the warning {@code <path> has <entry>, which must be in quotes, because YAML reads a date and time
+     * written without them in UTC, so it is skipped.}, and the other entries are kept. A value that is not a list
+     * gives {@code fallback} and a warning.
      *
      * @return an unmodifiable list, or {@code fallback} itself
      */
@@ -375,8 +406,11 @@ public final class ConfigReader {
         }
         List<String> strings = new ArrayList<>();
         for (Object entry : list) {
-            if (entry instanceof String || entry instanceof Number || entry instanceof Boolean) {
-                strings.add(entry.toString());
+            String text = singleText(entry);
+            if (text != null) {
+                strings.add(text);
+            } else if (isDateTime(entry)) {
+                warn(path + " has " + describe(entry) + ", which" + QUOTE_DATE_TIME + ", so it is skipped.");
             } else {
                 warn(path + " has " + (entry == null ? "an empty entry" : describe(entry)) + ", which is not a"
                     + " single value, so it is skipped.");
@@ -393,10 +427,10 @@ public final class ConfigReader {
      * is not called for a list or a group of keys.
      *
      * <p>An unquoted date such as {@code 2026-12-31}, which YAML reads as midnight UTC, is a single value here
-     * too, and {@code parser} receives it as it is written. YAML reads an unquoted date with a time as UTC
-     * whether the text names a zone or not, so such a value gives {@code fallback} and the warning
-     * {@code <path> must be in quotes, because YAML reads a date and time written without them in UTC, so
-     * <fallback> is used.} An unquoted date and time at midnight UTC, such as {@code 2026-12-31T00:00:00Z}, is
+     * too, and {@code parser} receives it written {@code yyyy-MM-dd}, as YAML read it. YAML reads an unquoted
+     * date with a time as UTC whether the text names a zone or not, so such a value gives {@code fallback} and
+     * the warning {@code <path> must be in quotes, because YAML reads a date and time written without them in
+     * UTC, so <fallback> is used.} An unquoted date and time at midnight UTC, such as {@code 2026-12-31T00:00:00Z}, is
      * indistinguishable from the date and reaches {@code parser} as {@code 2026-12-31}.
      *
      * <p>The warning writes the fallback with {@link String#valueOf(Object)}, so {@code T} needs a
@@ -428,17 +462,12 @@ public final class ConfigReader {
             return fallback;
         }
         String shown = fallbackText == null ? String.valueOf(fallback) : fallbackText;
-        String text;
-        if (value instanceof Date date) {
-            if (!midnightUtc(date)) {
-                warn(path + " must be in quotes, because YAML reads a date and time written without them in UTC,"
-                    + " so " + shown + " is used.");
-                return fallback;
-            }
-            text = dateText(date);
-        } else if (value instanceof String || value instanceof Number || value instanceof Boolean) {
-            text = value.toString();
-        } else {
+        if (isDateTime(value)) {
+            warn(path + QUOTE_DATE_TIME + ", so " + shown + " is used.");
+            return fallback;
+        }
+        String text = singleText(value);
+        if (text == null) {
             warnInvalid(path, value, expected, shown);
             return fallback;
         }
@@ -533,9 +562,13 @@ public final class ConfigReader {
     }
 
     /**
-     * How a warning or an error writes a value: {@code a group of keys} for a {@link ConfigurationSection}, a
-     * text inside double quotes, a {@link Date} in UTC as {@code 2026-12-31} when it falls on midnight and as
-     * {@code 2026-12-31T23:59:59Z} otherwise, and {@link String#valueOf(Object)} for anything else.
+     * How a warning or an error writes a value: {@code a group of keys} for a {@link ConfigurationSection}; a
+     * text inside double quotes, cut to its first 100 characters followed by {@code ...} when longer; a
+     * {@link Date} in UTC as {@code 2026-12-31} when it falls on midnight and as {@code 2026-12-31T23:59:59Z}
+     * otherwise; and anything else as {@link String#valueOf(Object)} writes it. When that is longer than 100
+     * characters, a list is written as {@code a list of <n> entries} (or {@code a list of 1 entry}), a
+     * {@link Map}, such as a group of keys inside a list, as {@code a group of <n> keys} (or
+     * {@code a group of 1 key}), and any other value as its first 100 characters followed by {@code ...}.
      */
     public static String describe(@Nullable Object value) {
         if (value instanceof ConfigurationSection) {
@@ -544,7 +577,43 @@ public final class ConfigReader {
         if (value instanceof Date date) {
             return dateText(date);
         }
-        return value instanceof String ? "\"" + value + "\"" : String.valueOf(value);
+        if (value instanceof String text) {
+            return text.length() > DESCRIBE_LIMIT ? "\"" + cut(text) + "\"..." : "\"" + text + "\"";
+        }
+        String written = String.valueOf(value);
+        if (written.length() <= DESCRIBE_LIMIT) {
+            return written;
+        }
+        if (value instanceof List<?> list) {
+            return list.size() == 1 ? "a list of 1 entry" : "a list of " + list.size() + " entries";
+        }
+        if (value instanceof Map<?, ?> map) {
+            return map.size() == 1 ? "a group of 1 key" : "a group of " + map.size() + " keys";
+        }
+        return cut(written) + "...";
+    }
+
+    /** The first {@code DESCRIBE_LIMIT} characters of {@code text}, one fewer where that splits a surrogate pair. */
+    private static String cut(String text) {
+        int end = Character.isHighSurrogate(text.charAt(DESCRIBE_LIMIT - 1))
+            && Character.isLowSurrogate(text.charAt(DESCRIBE_LIMIT)) ? DESCRIBE_LIMIT - 1 : DESCRIBE_LIMIT;
+        return text.substring(0, end);
+    }
+
+    /**
+     * The text form of a single value: a text as it is, a number and {@code true}/{@code false} as their
+     * {@code toString}, and a date at midnight UTC as {@code 2026-12-31}. Anything else gives {@code null}.
+     */
+    private static @Nullable String singleText(@Nullable Object value) {
+        if (value instanceof String || value instanceof Number || value instanceof Boolean) {
+            return value.toString();
+        }
+        return value instanceof Date date && midnightUtc(date) ? dateText(date) : null;
+    }
+
+    /** Whether {@code value} is a date that YAML read from an unquoted date with a time not at midnight UTC. */
+    private static boolean isDateTime(@Nullable Object value) {
+        return value instanceof Date date && !midnightUtc(date);
     }
 
     /** YAML builds a date written without a time as midnight UTC, so that instant is written back as a date. */

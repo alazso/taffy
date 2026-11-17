@@ -28,7 +28,8 @@ public enum ComfiConfState {
     /**
      * The bridge plugin is enabled and holds the ComfiConf API, but this plugin cannot see its classes: its
      * {@code paper-plugin.yml} does not list {@code ComfiConf} under {@code dependencies.server} with
-     * {@code join-classpath: true}.
+     * {@code join-classpath: true}, or the plugin's jar holds its own copy of {@code com.comficonf.api}, whose
+     * classes are not the bridge's.
      */
     NOT_VISIBLE,
     /**

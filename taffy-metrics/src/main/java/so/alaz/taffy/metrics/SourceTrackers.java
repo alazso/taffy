@@ -25,8 +25,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Two reports are of one kind when every throwable of their cause chains has the same class, the same message
  * once the {@link Anonymizers} rules hide it, and the same stack frames. A report of a kind already seen is tracked
  * as the first report of that kind, so messages that differ only in what the rules hide merge. Each source, and the
- * sources past {@value #MAX_SOURCES} together, keep at most {@value #MAX_KINDS} kinds for the life of this instance;
- * a report of any further kind is dropped. This bounds what the trackers hold while submissions fail.
+ * sources past {@value #MAX_SOURCES} together, keep at most {@value #MAX_KINDS} kinds for the life of this instance,
+ * which is the life of the {@link Metrics} handle that holds it; a report of any further kind from that source is
+ * dropped. This bounds what the trackers hold while submissions fail.
  *
  * <p>Once a tracker is registered, every scheduled error submission and the send inside the context's shutdown
  * post an {@code errors} array, even when it is empty.

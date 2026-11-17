@@ -1,5 +1,7 @@
 package so.alaz.taffy.storage;
 
+import io.papermc.paper.plugin.configuration.PluginMeta;
+import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -14,6 +16,7 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -112,55 +115,89 @@ final class StorageTest {
 
     @Test
     void aMissingArgumentIsRefusedBeforeAnyThreadStarts() {
-        assertThatThrownBy(() -> Storage.start(null, folder, "nulls", "9.9.9", List.of(), path -> null, log.logger,
-            errors, StorageContract.CLOCK)).isInstanceOf(NullPointerException.class).hasMessage("settings");
-        assertThatThrownBy(() -> Storage.start(sqlite(), null, "nulls", "9.9.9", List.of(), path -> null, log.logger,
-            errors, StorageContract.CLOCK)).isInstanceOf(NullPointerException.class).hasMessage("dataFolder");
-        assertThatThrownBy(() -> Storage.start(sqlite(), folder, "nulls", null, List.of(), path -> null, log.logger,
-            errors, StorageContract.CLOCK)).isInstanceOf(NullPointerException.class).hasMessage("pluginVersion");
-        assertThatThrownBy(() -> Storage.start(sqlite(), folder, "nulls", "9.9.9", null, path -> null, log.logger,
-            errors, StorageContract.CLOCK)).isInstanceOf(NullPointerException.class).hasMessage("migrations");
-        assertThatThrownBy(() -> Storage.start(sqlite(), folder, "nulls", "9.9.9", List.of(), null, log.logger,
-            errors, StorageContract.CLOCK)).isInstanceOf(NullPointerException.class).hasMessage("scripts");
-        assertThatThrownBy(() -> Storage.start(sqlite(), folder, "nulls", "9.9.9", List.of(), path -> null, null,
-            errors, StorageContract.CLOCK)).isInstanceOf(NullPointerException.class).hasMessage("logger");
-        assertThatThrownBy(() -> Storage.start(sqlite(), folder, "nulls", "9.9.9", List.of(), path -> null,
-            log.logger, null, StorageContract.CLOCK)).isInstanceOf(NullPointerException.class).hasMessage("errors");
-        assertThatThrownBy(() -> Storage.start(sqlite(), folder, "nulls", "9.9.9", List.of(), path -> null,
-            log.logger, errors, null)).isInstanceOf(NullPointerException.class).hasMessage("clock");
-        assertThatThrownBy(() -> Storage.over(Dialect.POSTGRES, source, "p_", "nulls", log.logger, null,
-            StorageContract.CLOCK)).isInstanceOf(NullPointerException.class).hasMessage("errors");
+        Plugin plugin = TestPlugins.plugin("nulls", folder, log.logger);
+
+        assertThatThrownBy(() -> Storage.start(null, errors, sqlite(), List.of(), StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class).hasMessage("plugin");
+        assertThatThrownBy(() -> Storage.start(plugin, null, sqlite(), List.of(), StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class).hasMessage("errors");
+        assertThatThrownBy(() -> Storage.start(plugin, errors, null, List.of(), StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class).hasMessage("settings");
+        assertThatThrownBy(() -> Storage.start(plugin, errors, sqlite(), null, StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class).hasMessage("migrations");
+        assertThatThrownBy(() -> Storage.start(plugin, errors, sqlite(), List.of(), null))
+            .isInstanceOf(NullPointerException.class).hasMessage("clock");
+        assertThatThrownBy(() -> Storage.over(null, errors, Dialect.POSTGRES, source, "p_", StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class).hasMessage("plugin");
+        assertThatThrownBy(() -> Storage.over(plugin, null, Dialect.POSTGRES, source, "p_", StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class).hasMessage("errors");
+        assertThatThrownBy(() -> Storage.over(plugin, errors, null, source, "p_", StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class).hasMessage("dialect");
+        assertThatThrownBy(() -> Storage.over(plugin, errors, Dialect.POSTGRES, null, "p_", StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class).hasMessage("source");
+        assertThatThrownBy(() -> Storage.over(plugin, errors, Dialect.POSTGRES, source, null, StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> Storage.over(plugin, errors, Dialect.POSTGRES, source, "p_", null))
+            .isInstanceOf(NullPointerException.class).hasMessage("clock");
         assertThat(Thread.getAllStackTraces().keySet()).noneMatch(thread -> thread.getName().startsWith("nulls-db-"));
         assertThat(folder.resolve("data.db")).doesNotExist();
+    }
+
+    @Test
+    void aPluginThatGivesNoVersionDataPathOrLoggerIsRefusedBeforeAnyThreadStarts() {
+        Plugin noVersion = TestPlugins.plugin("absent", folder, log.logger);
+        PluginMeta blankMeta = mock(PluginMeta.class);
+        when(noVersion.getPluginMeta()).thenReturn(blankMeta);
+        Plugin noDataPath = TestPlugins.plugin("absent", folder, log.logger);
+        when(noDataPath.getDataPath()).thenReturn(null);
+        Plugin noLogger = TestPlugins.plugin("absent", folder, log.logger);
+        when(noLogger.getLogger()).thenReturn(null);
+
+        assertThatThrownBy(() -> Storage.start(noVersion, errors, sqlite(), List.of(), StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class).hasMessage("version");
+        assertThatThrownBy(() -> Storage.start(noDataPath, errors, sqlite(), List.of(), StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class).hasMessage("dataPath");
+        assertThatThrownBy(() -> Storage.start(noLogger, errors, sqlite(), List.of(), StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class).hasMessage("logger");
+        assertThatThrownBy(() -> Storage.over(noLogger, errors, Dialect.POSTGRES, source, "p_",
+            StorageContract.CLOCK)).isInstanceOf(NullPointerException.class).hasMessage("logger");
+        assertThat(Thread.getAllStackTraces().keySet()).noneMatch(thread -> thread.getName().startsWith("absent-db-"));
+        assertThat(folder.resolve("data.db")).doesNotExist();
+    }
+
+    @Test
+    void aMissingNameIsRefused() {
+        Plugin plugin = TestPlugins.plugin("absent", folder, log.logger);
+        when(plugin.getName()).thenReturn(null);
+
+        assertThatThrownBy(() -> Storage.start(plugin, errors, sqlite(), List.of(), StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("name");
+        assertThatThrownBy(() -> Storage.over(plugin, errors, Dialect.POSTGRES, source, "p_", StorageContract.CLOCK))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("name");
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"", " ", "\t"})
     void aBlankNameIsRefusedBeforeAnyThreadStarts(String name) {
-        assertThatThrownBy(() -> Storage.start(sqlite(), folder, name, "9.9.9", List.of(), path -> null, log.logger,
-            errors, StorageContract.CLOCK))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessage("name is blank; it names the database threads and pools");
-        assertThatThrownBy(() -> Storage.over(Dialect.SQLITE, source, "", name, log.logger, errors,
-            StorageContract.CLOCK))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessage("name is blank; it names the database threads and pools");
-    }
+        Plugin plugin = TestPlugins.plugin(name, folder, log.logger);
 
-    @Test
-    void aMissingNameIsRefused() {
-        assertThatThrownBy(() -> Storage.start(sqlite(), folder, null, "9.9.9", List.of(), path -> null, log.logger,
-            errors, StorageContract.CLOCK))
-            .isInstanceOf(NullPointerException.class)
-            .hasMessage("name");
+        assertThatThrownBy(() -> Storage.start(plugin, errors, sqlite(), List.of(), StorageContract.CLOCK))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("name is blank; it names the database threads and pools");
+        assertThatThrownBy(() -> Storage.over(plugin, errors, Dialect.SQLITE, source, "", StorageContract.CLOCK))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("name is blank; it names the database threads and pools");
+        assertThat(folder.resolve("data.db")).doesNotExist();
     }
 
     @Test
     void migrationsOutOfOrderAreRefusedBeforeAnyThreadStarts() {
         List<Migration> unordered = List.of(new Migration(2, "second"), new Migration(1, "first"));
 
-        assertThatThrownBy(() -> Storage.start(sqlite(), folder, "unordered", "9.9.9", unordered, path -> null,
-            log.logger, errors, StorageContract.CLOCK))
+        assertThatThrownBy(() -> Storage.start(TestPlugins.plugin("unordered", folder, log.logger), errors, sqlite(),
+            unordered, StorageContract.CLOCK))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("migration versions must be strictly increasing, but V1__first follows V2__second");
         assertThat(Thread.getAllStackTraces().keySet())
@@ -169,10 +206,33 @@ final class StorageTest {
 
     @Test
     void storageOverASourceRefusesAPrefixThatIsNotSafeInSql() {
-        assertThatThrownBy(() -> Storage.over(Dialect.MARIADB, source, "p; DROP", "over", log.logger, errors,
-            StorageContract.CLOCK))
+        assertThatThrownBy(() -> Storage.over(TestPlugins.plugin("over", log.logger), errors, Dialect.MARIADB, source,
+            "p; DROP", StorageContract.CLOCK))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageStartingWith("tablePrefix is \"p; DROP\"");
+    }
+
+    @Test
+    void storageOverASourceTakesItsThreadNameAndItsWarningsFromThePlugin() throws Exception {
+        CapturedLog own = new CapturedLog();
+        Storage storage = Storage.over(TestPlugins.plugin("owner-name", own.logger), errors, Dialect.POSTGRES,
+            source, "p_", StorageContract.CLOCK);
+        CountDownLatch inside = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        CompletableFuture<String> running = storage.async(tx -> {
+            inside.countDown();
+            SqliteStartTest.awaitThroughInterrupts(release);
+            return Thread.currentThread().getName();
+        });
+        assertThat(inside.await(10, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(storage.close(Duration.ofMillis(100))).isFalse();
+        release.countDown();
+
+        assertThat(running.get(10, TimeUnit.SECONDS)).isEqualTo("owner-name-db-1");
+        assertThat(own.lines()).containsExactly("WARNING Storage closed before its database work finished within"
+            + " 100 ms; 0 queued pieces of work did not run.");
+        assertThat(log.records).isEmpty();
     }
 
     @Test
@@ -283,8 +343,8 @@ final class StorageTest {
             public void close() {
             }
         });
-        Storage storage = Storage.over(Dialect.POSTGRES, source, "p_", "throwing-log", throwing, errors,
-            StorageContract.CLOCK);
+        Storage storage = Storage.over(TestPlugins.plugin("throwing-log", throwing), errors, Dialect.POSTGRES, source,
+            "p_", StorageContract.CLOCK);
 
         List<String> ran = new CopyOnWriteArrayList<>();
         CompletableFuture<Integer> written = storage.async(tx -> {
@@ -317,6 +377,45 @@ final class StorageTest {
         verify(source, never()).getConnection();
         assertThat(storage.async(tx -> 1).get(10, TimeUnit.SECONDS)).isEqualTo(1);
         assertThat(storage.close(Duration.ofSeconds(5))).isTrue();
+    }
+
+    @Test
+    void aDrainTooLongToCountInNanosecondsWaitsWithNoLimit() throws Exception {
+        Storage storage = over();
+        CountDownLatch inside = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        CompletableFuture<Integer> running = storage.async(tx -> {
+            inside.countDown();
+            SqliteStartTest.awaitThroughInterrupts(release);
+            return 1;
+        });
+        assertThat(inside.await(10, TimeUnit.SECONDS)).isTrue();
+        CompletableFuture.delayedExecutor(200, TimeUnit.MILLISECONDS).execute(release::countDown);
+
+        assertThat(storage.close(ChronoUnit.FOREVER.getDuration())).isTrue();
+
+        assertThat(running).isCompletedWithValue(1);
+        SqliteStartTest.awaitNoThreadNamed("over-probe-db-");
+    }
+
+    @Test
+    void aNegativeDrainWaitsNoTime() throws Exception {
+        Storage storage = over();
+        CountDownLatch inside = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        CompletableFuture<Integer> running = storage.async(tx -> {
+            inside.countDown();
+            SqliteStartTest.awaitThroughInterrupts(release);
+            return 1;
+        });
+        assertThat(inside.await(10, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(storage.close(Duration.ofSeconds(-5))).isFalse();
+        release.countDown();
+
+        assertThat(running.get(10, TimeUnit.SECONDS)).isEqualTo(1);
+        assertThat(log.lines()).containsExactly("WARNING Storage closed before its database work finished within"
+            + " 0 ms; 0 queued pieces of work did not run.");
     }
 
     @Test
@@ -421,8 +520,8 @@ final class StorageTest {
         StorageSettings settings = new StorageSettings(dialect, "data.db", closed, POOL, 2, 0);
         String name = "refused-" + dialect.id();
 
-        CompletableFuture<Storage> started = Storage.start(settings, folder, name, "9.9.9",
-            List.of(new Migration(1, "probe")), path -> null, log.logger, errors, StorageContract.CLOCK);
+        CompletableFuture<Storage> started = Storage.start(TestPlugins.plugin(name, folder, log.logger), errors,
+            settings, List.of(new Migration(1, "probe")), StorageContract.CLOCK);
 
         assertThatThrownBy(() -> started.get(30, TimeUnit.SECONDS))
             .cause().isInstanceOf(RuntimeException.class).hasMessageContaining("Failed to initialize pool");
@@ -431,7 +530,8 @@ final class StorageTest {
     }
 
     private Storage over() {
-        return Storage.over(Dialect.POSTGRES, source, "p_", "over-probe", log.logger, errors, StorageContract.CLOCK);
+        return Storage.over(TestPlugins.plugin("over-probe", log.logger), errors, Dialect.POSTGRES, source, "p_",
+            StorageContract.CLOCK);
     }
 
     private static StorageSettings sqlite() {
