@@ -11,8 +11,10 @@ Taffy is built out and made stable first. Plugins move onto it after that.
 - Extract code that already runs in a plugin. Do not invent.
 - Java 25 and Paper only. No Kotlin in a runtime module.
 - No third-party type in a public signature except Paper, Adventure and `org.jetbrains.annotations`.
-- Every runtime module depends only on `taffy-platform`, plus `taffy-test` for its tests. `taffy-test`
-  depends on no Taffy module.
+  `taffy-comficonf` may also name `com.comficonf.api` types: `ApiRules` allows them only when the scanned class
+  and the rules test's anchor are both in `so.alaz.taffy.comficonf`.
+- Every runtime module depends only on `taffy-platform`, plus `taffy-test` for its tests. `taffy-comficonf` also
+  depends on `taffy-config`, which it builds on. `taffy-test` depends on no Taffy module.
 - The library ships no resource files and holds no static plugin, logger, executor or thread. The owner
   passes them in. Two classes own threads on purpose: `Storage` (its database threads, which it drains
   at close) and `DiscordWebhook` (its HTTP client). A `taffy-test` helper may own a thread for the
@@ -38,7 +40,7 @@ root `check` fails when a module listed in `taffy.modules` has none.
 | `taffy-hooks` | 30 classes, 13 of them public, 313 tests. Not published. |
 | `taffy-gui` | 41 classes, 23 of them public, 650 tests. Not published. |
 | `taffy-metrics` | 10 classes, 3 of them public, 172 tests. Not published. |
-| `taffy-comficonf` | Not started. |
+| `taffy-comficonf` | 8 classes, 6 of them public, 119 tests. Not published. |
 
 ## What `taffy-platform` holds
 
@@ -58,7 +60,7 @@ Test helpers for Taffy's modules, published so plugin test suites can use them t
 
 | Helper | What it does |
 |---|---|
-| `ApiRules` | Checks a Taffy module's public signatures, static fields and jar contents. Taffy modules only. |
+| `ApiRules` | Checks a Taffy module's public signatures, static fields and jar contents. Taffy modules only. `com.comficonf.api` is allowed in `so.alaz.taffy.comficonf` alone. |
 | `CapturedLog` | A `java.util.logging.Logger` that records what it is given. |
 | `FakeItems` | Item stand-ins that stack and compare like Paper's. |
 | `FakeFolders` | A folder whose listing fails, to test unreadable directories. |
@@ -146,6 +148,20 @@ building, opening, prompting, reloading and disabling.
 No public signature names a bStats or FastStats type. The package Javadoc walks through enable, an enable that
 gives up early, handled errors, diagnostics and disable.
 
+## What `taffy-comficonf` holds
+
+| Area | Classes |
+|---|---|
+| Connect guard | `ComfiConfConnection.connect(Plugin, ErrorReports, boolean, Supplier<ComfiConfLink>)`: switched on, bridge installed, enabled and its API visible to this plugin, then the plugin's own registration runs. It never returns null. `status()`, `resourceId()`, `notifyChanged()`, `lockFor(Path)` and `close()` follow; none of them passes a bridge failure on. |
+| Status | `ComfiConfState` and `ComfiConfStatus` with `describe()` and a reason for the owner, read when asked. |
+| Registration | `ComfiConfRegistration.register(Plugin, id, displayName, description, ConfigProvider)` returns a `ComfiConfLink`. It is reached only from the plugin's own integration class. |
+| YAML file provider | `YamlFileProvider` over one YAML file: read from one byte array with its revision, the plugin's own `rules`, apply with the revision check, a merge into the current document, `SafeFileWriter`, the plugin's reload through `callSync`, restart-only fields against the startup values, and a truthful result. UTF-8 and line endings survive a round trip. |
+
+`ComfiConfState`, `ComfiConfStatus`, `ComfiConfLink` and `ComfiConfConnection` name no ComfiConf type, so a
+plugin's main class may hold them; `ComfiConfRegistration` and `YamlFileProvider` do. The plugin keeps its
+schema, its field mapping and its resource id. The package Javadoc walks through the integration class, enable,
+reloads and the plugin's own writes, the status line and disable.
+
 ## Design defaults
 
 These were open and are now fixed in code. Nothing is published, so each can still change.
@@ -162,7 +178,7 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 | Error sink | One `ErrorReports` instance the plugin creates and passes around, with one target. Reports made before the first install or clear are held, the first per source and at most 16, and the first install receives them. `taffy-metrics` installs the FastStats route at `start()`, so a plugin installs no target of its own before it. |
 | Testing Paper code | Mockito mocks of Paper interfaces, static and construction mocks where code touches a static or `new ItemStack`. No mock server library. |
 | Package layout | One flat package per module. `so.alaz.taffy.platform` is not split: growth goes into modules. |
-| Disable order | `PlaceholderRegistration.unregister`, `Menus.shutdown`, `Scheduler.close`, `TaskGate.close`, `PendingSettlements.settleAll`, storage close, `DiscordWebhook.close`, `Metrics.shutdown`. The package Javadoc states it. |
+| Disable order | `ComfiConfConnection.close`, `PlaceholderRegistration.unregister`, `Menus.shutdown`, `Scheduler.close`, `TaskGate.close`, `PendingSettlements.settleAll`, storage close, `DiscordWebhook.close`, `Metrics.shutdown`. The package Javadoc states it. |
 | Storage base | Tradefloor's storage package. The plugin passes its migrations and a function that opens their scripts, such as `plugin::getResource`. Config reading stays in the plugin, which builds `StorageSettings`. |
 | Rollback retry | Opt in, through `asyncRetrying` and `readRetrying`. Plain `async` and `read` never rerun work, because work may have effects outside the database. |
 | Config base | `ConfigLoader` and `ConfigReader` take a data folder `Path`, a supplier of the shipped file and a `Logger` or a line consumer. Nothing calls `JavaPlugin.getConfig` or `reloadConfig`. |
@@ -175,16 +191,14 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 | Menu layouts | Values the plugin builds in code or reads from its own files. Taffy reads no menu file and ships no lang file. |
 | Menu threads | A menu opens, draws and closes on the viewer's entity thread. Work from a click goes through `openLater`, `rerenderLater`, `closeLater` and `askLater`. |
 | Metrics SDKs | bStats and FastStats are runtime dependencies of `taffy-metrics`: a plugin compiles without them and shades them relocated. `so.alaz.paper-plugin` relocates both and keeps one `META-INF/faststats.properties`. Neither is ever a Paper runtime library. |
-| ComfiConf | Its own opt-in module, `taffy-comficonf`, so a plugin that does not use ComfiConf carries none of it. |
+| ComfiConf | Its own opt-in module, `taffy-comficonf`, so a plugin that does not use ComfiConf carries none of it. The API is `compileOnly` in Taffy and in the plugin, never bundled, never relocated and absent from the published metadata; the bridge provides it. |
+| ComfiConf activation | The plugin's own reload, passed as a `Callable<Boolean>` such as `holder::reload`, run through `callSync` after the write. Its loader must not write the file, its schema constraints are no looser than its `ConfigReader` calls, and `rules` refuses what the loader rejects. Restart-only consumers read `ConfigHolder.startup()`. |
+| ComfiConf and the plugin's own writes | A write of the exposed file outside ComfiConf holds `ComfiConfConnection.lockFor(file)` from reading the file to saving it, then reloads and calls `notifyChanged()`. |
 | Test conventions | `so.alaz.java` runs tests under the `tr-TR` locale and the `Pacific/Auckland` zone, passes the Mockito jar on each test task's classpath as a Java agent, and runs javadoc with `-Xdoclint:all,-missing` and `--no-fonts`. |
 
 ## Next modules
 
-In this order, each as its own module that depends only on `taffy-platform`:
-
-1. `taffy-comficonf`: the ComfiConf registration, connect guard and YAML file provider. It builds on
-   `StrictYaml`, `ConfigHolder` and `RestartKeys`, and is the one module allowed ComfiConf types in its
-   public signatures.
+Every planned module is built. What remains is the list below, the open questions and the server runs.
 
 ## Before the first publish
 
@@ -193,7 +207,7 @@ A `v*` tag publishes everything, runtime modules included, and makes these perma
 | Decision | Today |
 |---|---|
 | Plugin ids | `so.alaz.settings`, `so.alaz.repositories`, `so.alaz.java`, `so.alaz.coverage`, `so.alaz.paper-api`, `so.alaz.library`, `so.alaz.paper-plugin` |
-| Version model | One version for the plugins, the catalog and the runtime modules. The catalog has a `taffy` version and one library per module: `alaz.taffy.platform`, `alaz.taffy.test`, `alaz.taffy.config`, `alaz.taffy.storage`, `alaz.taffy.hooks`, `alaz.taffy.gui`, `alaz.taffy.metrics`. |
+| Version model | One version for the plugins, the catalog and the runtime modules. The catalog has a `taffy` version and one library per module: `alaz.taffy.platform`, `alaz.taffy.test`, `alaz.taffy.config`, `alaz.taffy.storage`, `alaz.taffy.hooks`, `alaz.taffy.gui`, `alaz.taffy.metrics`, `alaz.taffy.comficonf`. |
 | Repository name | `taffy-api` on GitHub, `taffy` everywhere else |
 
 Also unverified: the publish credentials for this repository, whether the token may write the plugin
@@ -218,6 +232,12 @@ servers. Only a server run and a real dashboard cover: real bStats and FastStats
 Taffy service id from many plugin jars, Paper's `ServerExceptionEvent` path into FastStats, the uncaught
 exception handler chain across several shaded copies, and how long the final send blocks the disabling thread
 on a stalled network.
+
+`taffy-comficonf` is tested with the real `comficonf-api` value types and no bridge. Only a server run with the
+bridge covers: `join-classpath` loading and the real `NOT_VISIBLE` path, registration and unregistration, the
+real `callSync` and its 10 second timeout, `notifyChanged` reaching an open editor, what the bridge does with a
+registration across its own disable and reload, the `FieldChange` paths it sends for list item moves, and
+that `lockFor` gives the same lock the bridge's own write takes.
 
 ## Differences from the plugin copies
 
@@ -312,15 +332,22 @@ None blocks the next module. Each is settled before the first publish.
 - After 32 kinds of error in one source, new kinds from that source are dropped for the life of the handle.
 - Skipping a send writes `SimpleContext.submissionActive`, a public FastStats field the SDK does not document.
   Re-check it, with the first-run and opt-out behaviour, at every FastStats version bump.
+- A restart-only field inside an object list is reported as waiting whenever it changes, even back to its
+  startup value. Comparing by item key needs each list's key field from the schema.
+- A plugin that bundles its own copy of `com.comficonf.api` registers nothing and reads `FAILED`; telling the
+  owner that the copy is the cause needs a check of which loader defined the API.
+- `NOT_REGISTERED` carries no reason, and the order for closing a connection and connecting again is not
+  documented.
+- `StrictYaml`'s parse error quotes the offending line, which can hold a secret, in the server log.
 
 ## Tooling notes
 
 - With the build cache on, `cleanTest` restores test results. A forced rerun needs `--no-build-cache`.
 - `--no-fonts` needs javadoc from JDK 23 or newer. `so.alaz.java` assumes the Java 25 toolchain.
 - A plugin can override the test locale and zone with `systemProperty` on its test task.
-- The tooling TestKit suite builds a plugin against copies of `taffy-platform` and `taffy-metrics`. Its first
-  run in a fresh TestKit Gradle home needs network access to the Paper repository, Maven Central and
-  repo.faststats.dev, and takes about half a minute.
+- The tooling TestKit suite builds plugins against copies of `taffy-platform`, `taffy-config`, `taffy-metrics`
+  and `taffy-comficonf`. Its first run in a fresh TestKit Gradle home needs network access to the Paper
+  repository, Maven Central and repo.faststats.dev, and takes about a minute.
 
 ## A usage graph for a shaded library
 

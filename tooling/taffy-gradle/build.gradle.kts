@@ -87,6 +87,10 @@ tasks.withType<Test>().configureEach {
         taffyRoot.dir("taffy-platform/src/main"),
         taffyRoot.file("taffy-metrics/build.gradle.kts"),
         taffyRoot.dir("taffy-metrics/src/main"),
+        taffyRoot.file("taffy-config/build.gradle.kts"),
+        taffyRoot.dir("taffy-config/src/main"),
+        taffyRoot.file("taffy-comficonf/build.gradle.kts"),
+        taffyRoot.dir("taffy-comficonf/src/main"),
     ).withPropertyName("shadedModules").withPathSensitivity(PathSensitivity.RELATIVE)
     val taffyRootPath = taffyRoot.asFile.canonicalPath
     jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dtaffy.sourceRoot=$taffyRootPath") })

@@ -116,6 +116,7 @@ class ConventionPluginsTest {
         write("src/test/java/so/alaz/demo/CoveredTest.java", coveredTest)
         write("src/main/java/dev/faststats/Fake.java", "package dev.faststats;\n\npublic interface Fake {\n}\n")
         write("src/main/java/so/alaz/taffy/Fake.java", "package so.alaz.taffy;\n\npublic interface Fake {\n}\n")
+        write("src/main/java/com/comficonf/api/Probe.java", "package com.comficonf.api;\n\npublic interface Probe {\n}\n")
 
         val first = run("build", "--configuration-cache")
 
@@ -136,6 +137,10 @@ class ConventionPluginsTest {
             assertThat(names).noneMatch {
                 it.startsWith("org/bstats/") || it.startsWith("dev/faststats/") || it.startsWith("so/alaz/taffy/")
             }
+            assertThat(names).`as`("no relocation pattern covers com.comficonf")
+                .contains("com/comficonf/api/Probe.class")
+                .noneMatch { it.startsWith("so/alaz/demo/libs/") && it.contains("comficonf") }
+                .noneMatch { it.startsWith("so/alaz/demo/libs/com/") }
             val descriptor = jar.getInputStream(jar.getEntry("paper-plugin.yml")).reader().readText()
             assertThat(descriptor).contains("version: \"1.2.3\"")
         }
@@ -284,6 +289,153 @@ class ConventionPluginsTest {
             }
             assertThat(names.filter { it == "META-INF/faststats.properties" }).hasSize(1)
             assertThat(names).noneMatch { it.contains("gson", ignoreCase = true) }
+        }
+    }
+
+    @Test
+    fun aPluginShadesTaffyComfiConfWithTheApiLeftToTheBridge() {
+        val sourceRoot = File(System.getProperty("taffy.sourceRoot"))
+        val library = projectDirectory.resolve("taffy")
+        val modules = projectDirectory.resolve("modules")
+        val modulesUri = modules.toURI().toString()
+        for (module in listOf("taffy-platform", "taffy-config", "taffy-comficonf")) {
+            sourceRoot.resolve("$module/build.gradle.kts").copyTo(library.resolve("$module/build.gradle.kts"))
+            sourceRoot.resolve("$module/src/main").copyRecursively(library.resolve("$module/src/main"))
+        }
+        sourceRoot.resolve("gradle/libs.versions.toml").copyTo(library.resolve("gradle/libs.versions.toml"))
+        write("taffy/LICENSE", "MIT License\n")
+        write("taffy/gradle.properties", "group=so.alaz.taffy\nversion=${TaffyBuild.VERSION}\n")
+        write(
+            "taffy/settings.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.repositories")
+            }
+            rootProject.name = "taffy"
+            include(":taffy-platform", ":taffy-test", ":taffy-config", ":taffy-comficonf")
+            """,
+        )
+        write("taffy/taffy-test/build.gradle.kts", "plugins {\n    id(\"java-library\")\n}")
+        write(
+            "taffy/build.gradle.kts",
+            """
+            subprojects {
+                plugins.withId("maven-publish") {
+                    configure<PublishingExtension> {
+                        repositories {
+                            maven("$modulesUri") { name = "modules" }
+                        }
+                    }
+                }
+            }
+            """,
+        )
+
+        val published = runner(
+            library,
+            ":taffy-platform:publishLibraryPublicationToModulesRepository",
+            ":taffy-config:publishLibraryPublicationToModulesRepository",
+            ":taffy-comficonf:publishLibraryPublicationToModulesRepository",
+        ).build()
+
+        assertThat(published.task(":taffy-comficonf:publishLibraryPublicationToModulesRepository")?.outcome)
+            .isEqualTo(TaskOutcome.SUCCESS)
+        val pom = modules.walk().single { it.name.startsWith("taffy-comficonf-") && it.name.endsWith(".pom") }
+            .readText()
+        val scope = "</artifactId>\\s*<version>[^<]+</version>\\s*<scope>"
+        assertThat(pom)
+            .containsPattern("<groupId>so\\.alaz\\.taffy</groupId>\\s*<artifactId>taffy-platform${scope}compile<")
+            .containsPattern("<groupId>so\\.alaz\\.taffy</groupId>\\s*<artifactId>taffy-config${scope}compile<")
+            .doesNotContain("comficonf-api", "com.comficonf")
+        val metadata = modules.walk()
+            .single { it.name.startsWith("taffy-comficonf-") && it.name.endsWith(".module") }
+            .readText()
+        assertThat(metadata).contains("\"module\": \"taffy-config\"")
+            .doesNotContain("comficonf-api", "com.comficonf")
+
+        project()
+        write(
+            "settings.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.settings")
+            }
+            rootProject.name = "demo"
+            dependencyResolutionManagement {
+                repositories {
+                    exclusiveContent {
+                        forRepositories(
+                            maven("$testRepository") { name = "test" },
+                            maven("$modulesUri") { name = "modules" },
+                        )
+                        filter {
+                            includeGroup("so.alaz.taffy")
+                        }
+                    }
+                }
+            }
+            """,
+        )
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.paper-plugin")
+            }
+            dependencies {
+                compileOnly(alaz.paper.api)
+                compileOnly(alaz.comficonf.api)
+                implementation(alaz.taffy.comficonf)
+            }
+            """,
+        )
+        write(
+            "src/main/java/so/alaz/demo/Settings.java",
+            """
+            package so.alaz.demo;
+
+            import com.comficonf.api.ConfigProvider;
+            import org.bukkit.plugin.Plugin;
+            import so.alaz.taffy.comficonf.ComfiConfLink;
+            import so.alaz.taffy.comficonf.ComfiConfRegistration;
+
+            final class Settings {
+                static ComfiConfLink register(Plugin owner, ConfigProvider provider) {
+                    return ComfiConfRegistration.register(owner, "demo:settings", "Demo", "Demo settings.", provider);
+                }
+            }
+            """,
+        )
+
+        run("shadowJar")
+
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            val names = jar.entries().asSequence().map { it.name }.toList()
+            assertThat(names).contains(
+                "so/alaz/demo/Settings.class",
+                "so/alaz/demo/libs/taffy/comficonf/ComfiConfConnection.class",
+                "so/alaz/demo/libs/taffy/comficonf/ComfiConfRegistration.class",
+                "so/alaz/demo/libs/taffy/comficonf/YamlFileProvider.class",
+                "so/alaz/demo/libs/taffy/config/StrictYaml.class",
+                "so/alaz/demo/libs/taffy/platform/ErrorReports.class",
+            )
+            assertThat(names).noneMatch { it.startsWith("com/comficonf/") || it.startsWith("so/alaz/taffy/") }
+            assertThat(names).noneMatch { it.startsWith("so/alaz/demo/libs/") && it.contains("comficonf/api") }
+
+            fun bytesOf(name: String): String =
+                String(jar.getInputStream(jar.getEntry(name)).readBytes(), Charsets.ISO_8859_1)
+
+            for (name in listOf("ComfiConfRegistration.class", "YamlFileProvider.class")) {
+                assertThat(bytesOf("so/alaz/demo/libs/taffy/comficonf/$name")).`as`(name)
+                    .contains("com/comficonf/api/")
+                    .doesNotContain("so/alaz/taffy/", "libs/com/comficonf")
+            }
+            assertThat(bytesOf("so/alaz/demo/libs/taffy/comficonf/ComfiConfRegistration.class"))
+                .contains("com/comficonf/api/ComfiConfApi", "so/alaz/demo/libs/taffy/comficonf/ComfiConfLink")
+            assertThat(bytesOf("so/alaz/demo/libs/taffy/comficonf/ComfiConfConnection.class"))
+                .contains("com.comficonf.api.ComfiConfApi")
+                .doesNotContain("com/comficonf/api")
+            assertThat(bytesOf("so/alaz/demo/Settings.class")).contains("com/comficonf/api/ConfigProvider")
         }
     }
 
@@ -590,6 +742,7 @@ class ConventionPluginsTest {
                 val hooks = alaz.taffy.hooks
                 val gui = alaz.taffy.gui
                 val metrics = alaz.taffy.metrics
+                val comficonf = alaz.taffy.comficonf
                 doLast {
                     println("paper=" + paper.get())
                     println("platform=" + platform.get())
@@ -599,6 +752,7 @@ class ConventionPluginsTest {
                     println("hooks=" + hooks.get())
                     println("gui=" + gui.get())
                     println("metrics=" + metrics.get())
+                    println("comficonf=" + comficonf.get())
                 }
             }
             """,
@@ -614,6 +768,7 @@ class ConventionPluginsTest {
         assertThat(result.output).containsPattern("hooks=so\\.alaz\\.taffy:taffy-hooks:\\d+\\.\\d+")
         assertThat(result.output).containsPattern("gui=so\\.alaz\\.taffy:taffy-gui:\\d+\\.\\d+")
         assertThat(result.output).containsPattern("metrics=so\\.alaz\\.taffy:taffy-metrics:\\d+\\.\\d+")
+        assertThat(result.output).containsPattern("comficonf=so\\.alaz\\.taffy:taffy-comficonf:\\d+\\.\\d+")
         val pom = projectDirectory.resolve("demo-api/build/publications/library/pom-default.xml").readText()
         assertThat(pom).contains(
             "<groupId>so.alaz.demo</groupId>",

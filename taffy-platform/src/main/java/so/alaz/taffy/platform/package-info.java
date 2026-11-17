@@ -5,6 +5,8 @@
  * <p>The shutdown classes assume one order while the owning plugin disables, with each step run through
  * {@link so.alaz.taffy.platform.Shutdown#closeQuietly} so that a failing step does not stop the next:
  * <ol>
+ *   <li>the close of the plugin's ComfiConf connection, {@code ComfiConfConnection.close} of
+ *       {@code taffy-comficonf}, which unregisters the plugin's settings from the bridge;</li>
  *   <li>the unregistering of the plugin's placeholders, {@code PlaceholderRegistration.unregister} of
  *       {@code taffy-hooks};</li>
  *   <li>the close of the plugin's menus, {@code Menus.shutdown} of {@code taffy-gui}, which ends every prompt and

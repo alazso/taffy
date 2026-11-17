@@ -38,13 +38,18 @@ class ApiRulesTest {
     private static final String EXPOSED = "so.alaz.taffy.sample.Exposed";
     private static final String ORPHAN = "so.alaz.taffy.sample.Orphan";
     private static final String UNREADABLE = BROKEN + " names a type that is not on the test classpath: ";
+    private static final String COMFICONF_API_TYPE = "com.comficonf.api.Thing";
+    private static final String COMFICONF_OTHER_TYPE = "com.comficonf.internal.Other";
+    private static final String COMFICONF_EXPOSED = "so.alaz.taffy.comficonf.Exposed";
+    private static final String COMFICONF_SUB_EXPOSED = "so.alaz.taffy.comficonf.sub.Exposed";
+    private static final String OTHER_EXPOSED = "so.alaz.taffy.other.Exposed";
 
     @Test
     void reportsADisallowedTypeInEachSignaturePosition() {
         String leaky = Leaky.class.getName();
         String testInfo = TestInfo.class.getName();
         String testReporter = TestReporter.class.getName();
-        assertThat(ApiRules.signatureViolationsOf(Leaky.class)).containsExactlyInAnyOrder(
+        assertThat(ApiRules.signatureViolationsOf(Leaky.class, Leaky.class)).containsExactlyInAnyOrder(
             leaky + " type parameter names " + testInfo,
             leaky + " supertype names " + SoftAssertions.class.getName(),
             leaky + " supertype names " + testReporter,
@@ -57,7 +62,7 @@ class ApiRulesTest {
             leaky + ".nests() names " + testInfo);
 
         String leakyRecord = LeakyRecord.class.getName();
-        assertThat(ApiRules.signatureViolationsOf(LeakyRecord.class)).containsExactlyInAnyOrder(
+        assertThat(ApiRules.signatureViolationsOf(LeakyRecord.class, LeakyRecord.class)).containsExactlyInAnyOrder(
             leakyRecord + ".info names " + testInfo,
             leakyRecord + ".<init>() names " + testInfo,
             leakyRecord + ".info() names " + testInfo);
@@ -223,6 +228,58 @@ class ApiRulesTest {
         }
     }
 
+    @Test
+    void onlyTheComficonfPackageMayNameComficonfApiTypesAndOnlyWhenTheAnchorIsInIt(@TempDir Path temp)
+        throws Exception {
+        Path classes = temp.resolve("build/classes/java/main");
+        comficonfSample(classes);
+
+        try (URLClassLoader loader = loaderOf(classes)) {
+            Class<?> comficonf = Class.forName(COMFICONF_EXPOSED, false, loader);
+            Class<?> sub = Class.forName(COMFICONF_SUB_EXPOSED, false, loader);
+            Class<?> other = Class.forName(OTHER_EXPOSED, false, loader);
+
+            assertThat(ApiRules.signatureViolationsOf(comficonf, comficonf))
+                .containsExactly(COMFICONF_EXPOSED + ".other() names " + COMFICONF_OTHER_TYPE);
+            assertThat(ApiRules.signatureViolationsOf(comficonf, sub)).containsExactlyInAnyOrder(
+                COMFICONF_SUB_EXPOSED + ".thing() names " + COMFICONF_API_TYPE,
+                COMFICONF_SUB_EXPOSED + ".other() names " + COMFICONF_OTHER_TYPE);
+            assertThat(ApiRules.signatureViolationsOf(comficonf, other)).containsExactlyInAnyOrder(
+                OTHER_EXPOSED + ".thing() names " + COMFICONF_API_TYPE,
+                OTHER_EXPOSED + ".other() names " + COMFICONF_OTHER_TYPE);
+            assertThat(ApiRules.signatureViolationsOf(other, comficonf)).containsExactlyInAnyOrder(
+                COMFICONF_EXPOSED + ".thing() names " + COMFICONF_API_TYPE,
+                COMFICONF_EXPOSED + ".other() names " + COMFICONF_OTHER_TYPE);
+            assertThat(ApiRules.signatureViolationsOf(sub, comficonf)).containsExactlyInAnyOrder(
+                COMFICONF_EXPOSED + ".thing() names " + COMFICONF_API_TYPE,
+                COMFICONF_EXPOSED + ".other() names " + COMFICONF_OTHER_TYPE);
+        }
+    }
+
+    @Test
+    void theComficonfAllowanceFollowsTheAnchorThroughAWholeOutput(@TempDir Path temp) throws Exception {
+        Path classes = temp.resolve("build/classes/java/main");
+        comficonfSample(classes);
+
+        try (URLClassLoader loader = loaderOf(classes)) {
+            assertThat(ApiRules.signatureViolations(Class.forName(COMFICONF_EXPOSED, false, loader)))
+                .containsExactlyInAnyOrder(
+                    COMFICONF_EXPOSED + ".other() names " + COMFICONF_OTHER_TYPE,
+                    COMFICONF_SUB_EXPOSED + ".thing() names " + COMFICONF_API_TYPE,
+                    COMFICONF_SUB_EXPOSED + ".other() names " + COMFICONF_OTHER_TYPE,
+                    OTHER_EXPOSED + ".thing() names " + COMFICONF_API_TYPE,
+                    OTHER_EXPOSED + ".other() names " + COMFICONF_OTHER_TYPE);
+            assertThat(ApiRules.signatureViolations(Class.forName(OTHER_EXPOSED, false, loader)))
+                .containsExactlyInAnyOrder(
+                    COMFICONF_EXPOSED + ".thing() names " + COMFICONF_API_TYPE,
+                    COMFICONF_EXPOSED + ".other() names " + COMFICONF_OTHER_TYPE,
+                    COMFICONF_SUB_EXPOSED + ".thing() names " + COMFICONF_API_TYPE,
+                    COMFICONF_SUB_EXPOSED + ".other() names " + COMFICONF_OTHER_TYPE,
+                    OTHER_EXPOSED + ".thing() names " + COMFICONF_API_TYPE,
+                    OTHER_EXPOSED + ".other() names " + COMFICONF_OTHER_TYPE);
+        }
+    }
+
     private static void fill(Path root) throws IOException {
         Files.createDirectories(root.resolve("so/alaz/taffy/platform/lang"));
         Files.createFile(root.resolve("so/alaz/taffy/platform/Some.class"));
@@ -257,6 +314,26 @@ class ApiRulesTest {
             .withField("gone", ClassDesc.of("missing.library.Gone"), ClassFile.ACC_PUBLIC));
         writeClass(root, "other.library.Other", type -> {
         });
+    }
+
+    /**
+     * Writes {@code com.comficonf.api.Thing}, {@code com.comficonf.internal.Other}, and three public classes, one in
+     * {@code so.alaz.taffy.comficonf}, one in a subpackage of it and one in {@code so.alaz.taffy.other}, each with a
+     * public method {@code thing()} returning {@code Thing} and a public method {@code other()} returning
+     * {@code Other}.
+     */
+    private static void comficonfSample(Path root) throws IOException {
+        writeClass(root, COMFICONF_API_TYPE, type -> {
+        });
+        writeClass(root, COMFICONF_OTHER_TYPE, type -> {
+        });
+        for (String exposed : List.of(COMFICONF_EXPOSED, COMFICONF_SUB_EXPOSED, OTHER_EXPOSED)) {
+            writeClass(root, exposed, type -> type
+                .withMethodBody("thing", MethodTypeDesc.of(ClassDesc.of(COMFICONF_API_TYPE)), ClassFile.ACC_PUBLIC,
+                    code -> code.aconst_null().areturn())
+                .withMethodBody("other", MethodTypeDesc.of(ClassDesc.of(COMFICONF_OTHER_TYPE)), ClassFile.ACC_PUBLIC,
+                    code -> code.aconst_null().areturn()));
+        }
     }
 
     private static void writeClass(Path root, String name, Consumer<ClassBuilder> body) throws IOException {

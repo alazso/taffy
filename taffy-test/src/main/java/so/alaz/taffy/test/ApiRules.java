@@ -56,6 +56,13 @@ public final class ApiRules {
         "java.", "javax.", "org.bukkit.", "io.papermc.", "com.destroystokyo.paper.", "net.kyori.",
         "org.jetbrains.annotations.", MODULE_PACKAGE);
 
+    /** The package of the one module allowed to name {@link #COMFICONF_API} types. */
+    private static final String COMFICONF_PACKAGE = "so.alaz.taffy.comficonf";
+    private static final String COMFICONF_API = "com.comficonf.api.";
+
+    private static final List<String> COMFICONF_ALLOWED_PACKAGES =
+        Stream.concat(ALLOWED_PACKAGES.stream(), Stream.of(COMFICONF_API)).toList();
+
     /** The files the build's Jar task puts into every jar. */
     private static final Set<String> JAR_TASK_FILES = Set.of("META-INF/MANIFEST.MF", "META-INF/LICENSE");
 
@@ -91,7 +98,9 @@ public final class ApiRules {
      *
      * <p>The allowed packages are {@code java}, {@code javax}, {@code org.bukkit}, {@code io.papermc},
      * {@code com.destroystokyo.paper}, {@code net.kyori}, {@code org.jetbrains.annotations} and
-     * {@code so.alaz.taffy}, each with its subpackages. A class is checked when it and its enclosing classes are
+     * {@code so.alaz.taffy}, each with its subpackages. One exception: when the anchor and the checked class are both
+     * in the package {@code so.alaz.taffy.comficonf}, not a subpackage of it, {@code com.comficonf.api} and its
+     * subpackages are allowed too. A class is checked when it and its enclosing classes are
      * public or protected, together with the module superclasses it inherits members from. Its signatures are its
      * type parameters, its supertypes, its record components, its public and protected fields, and the type
      * parameters, parameters, exceptions and return types of its public and protected constructors and methods.
@@ -103,7 +112,7 @@ public final class ApiRules {
      * @throws ClassNotFoundException if the anchor's class loader does not find a class of the output
      */
     public static Set<String> signatureViolations(Class<?> anchor) throws IOException, ClassNotFoundException {
-        return violations(anchor, ApiRules::exposedSignatureViolations);
+        return violations(anchor, type -> exposedSignatureViolations(anchor, type));
     }
 
     /**
@@ -210,29 +219,34 @@ public final class ApiRules {
     }
 
     /** The signature violations of {@code type} and of the module superclasses it inherits members from, when it is exported. */
-    private static Set<String> exposedSignatureViolations(Class<?> type) {
+    private static Set<String> exposedSignatureViolations(Class<?> anchor, Class<?> type) {
         Set<String> violations = new LinkedHashSet<>();
         for (Class<?> c = type; exported(type) && c != null && c.getName().startsWith(MODULE_PACKAGE); c = c.getSuperclass()) {
-            violations.addAll(signatureViolationsOf(c));
+            violations.addAll(signatureViolationsOf(anchor, c));
         }
         return violations;
     }
 
-    /** One line per type from outside the allowed packages that a public or protected signature of {@code type} names. */
-    static Set<String> signatureViolationsOf(Class<?> type) {
+    /**
+     * One line per type from outside the allowed packages that a public or protected signature of {@code type}
+     * names, where the allowed packages are those {@link #signatureViolations} allows for this anchor and class.
+     */
+    static Set<String> signatureViolationsOf(Class<?> anchor, Class<?> type) {
+        List<String> allowed = anchor.getPackageName().equals(COMFICONF_PACKAGE)
+            && type.getPackageName().equals(COMFICONF_PACKAGE) ? COMFICONF_ALLOWED_PACKAGES : ALLOWED_PACKAGES;
         Set<String> violations = new LinkedHashSet<>();
         String owner = type.getName();
-        check(violations, owner + " type parameter", type.getTypeParameters());
-        check(violations, owner + " supertype", type.getGenericSuperclass());
-        check(violations, owner + " supertype", type.getGenericInterfaces());
+        check(violations, allowed, owner + " type parameter", type.getTypeParameters());
+        check(violations, allowed, owner + " supertype", type.getGenericSuperclass());
+        check(violations, allowed, owner + " supertype", type.getGenericInterfaces());
         if (type.isRecord()) {
             for (RecordComponent component : type.getRecordComponents()) {
-                check(violations, owner + "." + component.getName(), component.getGenericType());
+                check(violations, allowed, owner + "." + component.getName(), component.getGenericType());
             }
         }
         for (Field field : type.getDeclaredFields()) {
             if (visible(field.getModifiers())) {
-                check(violations, owner + "." + field.getName(), field.getGenericType());
+                check(violations, allowed, owner + "." + field.getName(), field.getGenericType());
             }
         }
         List<Executable> executables = new ArrayList<>(List.of(type.getDeclaredConstructors()));
@@ -242,11 +256,11 @@ public final class ApiRules {
                 continue;
             }
             String member = owner + "." + (executable instanceof Method ? executable.getName() : "<init>") + "()";
-            check(violations, member, executable.getTypeParameters());
-            check(violations, member, executable.getGenericParameterTypes());
-            check(violations, member, executable.getGenericExceptionTypes());
+            check(violations, allowed, member, executable.getTypeParameters());
+            check(violations, allowed, member, executable.getGenericParameterTypes());
+            check(violations, allowed, member, executable.getGenericExceptionTypes());
             if (executable instanceof Method method) {
-                check(violations, member, method.getGenericReturnType());
+                check(violations, allowed, member, method.getGenericReturnType());
             }
         }
         return violations;
@@ -270,10 +284,10 @@ public final class ApiRules {
         return violations;
     }
 
-    private static void check(Set<String> violations, String member, Type... signature) {
+    private static void check(Set<String> violations, List<String> allowed, String member, Type... signature) {
         for (Type type : signature) {
             for (Class<?> named : named(type)) {
-                if (!named.isPrimitive() && ALLOWED_PACKAGES.stream().noneMatch(named.getName()::startsWith)) {
+                if (!named.isPrimitive() && allowed.stream().noneMatch(named.getName()::startsWith)) {
                     violations.add(member + " names " + named.getName());
                 }
             }
