@@ -28,6 +28,15 @@ registries:
   enginehub:
     type: maven-repository
     url: https://maven.enginehub.org/repo
+  fancyinnovations:
+    type: maven-repository
+    url: https://maven.fancyspaces.net/fancyinnovations/releases
+  thenextlvl:
+    type: maven-repository
+    url: https://repo.thenextlvl.net/releases
+  packetevents:
+    type: maven-repository
+    url: https://repo.codemc.io/repository/maven-releases
 
 updates:
   - package-ecosystem: gradle
@@ -58,6 +67,11 @@ updates:
           - "com.github.Arcaniax-Development:*"
           - "com.sk89q.worldguard:*"
           - "com.sk89q.worldedit:*"
+          - "com.github.decentsoftware-eu:*"
+          - "de.oliver:*"
+          - "net.thenextlvl:*"
+          - "com.github.HologramLib:*"
+          - "com.github.retrooper:*"
       jdbc:
         patterns:
           - "com.zaxxer:*"

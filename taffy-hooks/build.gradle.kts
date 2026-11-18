@@ -2,7 +2,7 @@ plugins {
     id("so.alaz.taffy.library")
 }
 
-description = "Taffy hooks: custom items, economy, permissions, regions and placeholders behind Taffy interfaces"
+description = "Taffy hooks: custom items, economy, permissions, regions, placeholders and holograms behind Taffy interfaces"
 
 dependencies {
     api(project(":taffy-platform"))
@@ -19,6 +19,10 @@ dependencies {
     compileOnly(libs.worldedit.bukkit) { isTransitive = false }
     compileOnly(libs.placeholderapi) { isTransitive = false }
     compileOnly(libs.miniplaceholders.api) { isTransitive = false }
+    compileOnly(libs.decentholograms) { isTransitive = false }
+    compileOnly(libs.fancyholograms) { isTransitive = false }
+    compileOnly(libs.holograms) { isTransitive = false }
+    compileOnly(libs.hologramlib) { isTransitive = false }
 
     testImplementation(project(":taffy-test"))
     testImplementation(libs.paper.api)
@@ -37,6 +41,11 @@ dependencies {
     testImplementation(libs.worldedit.bukkit) { isTransitive = false }
     testImplementation(libs.placeholderapi) { isTransitive = false }
     testImplementation(libs.miniplaceholders.api) { isTransitive = false }
+    testImplementation(libs.decentholograms) { isTransitive = false }
+    testImplementation(libs.fancyholograms) { isTransitive = false }
+    testImplementation(libs.holograms) { isTransitive = false }
+    testImplementation(libs.hologramlib) { isTransitive = false }
+    testImplementation(libs.packetevents.api) { isTransitive = false }
     testRuntimeOnly(libs.junit.platform.launcher)
 }
 

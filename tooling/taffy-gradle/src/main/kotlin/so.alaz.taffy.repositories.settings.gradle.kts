@@ -25,5 +25,11 @@ dependencyResolutionManagement {
         maven("https://repo.oraxen.com/releases")                   { name = "oraxen" }
         maven("https://repo.nexomc.com/releases")                   { name = "nexo" }
         maven("https://maven.enginehub.org/repo/")                  { name = "enginehub" }
+        maven("https://maven.fancyspaces.net/fancyinnovations/releases") { name = "fancyinnovations" }
+        maven("https://repo.thenextlvl.net/releases")               { name = "thenextlvl" }
+        maven("https://repo.codemc.io/repository/maven-releases/") {
+            name = "packetevents"
+            content { includeGroup("com.github.retrooper") }
+        }
     }
 }

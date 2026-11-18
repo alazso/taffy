@@ -1,6 +1,7 @@
 /**
  * Integrations with other Paper plugins: custom item plugins, a Vault economy, LuckPerms permissions, WorldGuard
- * regions, and placeholder expansions for PlaceholderAPI and MiniPlaceholders.
+ * regions, placeholder expansions for PlaceholderAPI and MiniPlaceholders, and text holograms through DecentHolograms,
+ * FancyHolograms, Holograms and HologramLib.
  *
  * <p>The module compiles against each integration's API but ships none of them, and its published metadata names
  * none of them. No public signature names an integration type: each integration sits behind an interface of this
@@ -26,7 +27,8 @@
  * }</pre>
  *
  * <p>The names are {@code ItemsAdder}, {@code Nexo}, {@code Oraxen}, {@code HeadDatabase}, {@code Vault},
- * {@code LuckPerms}, {@code WorldGuard}, {@code PlaceholderAPI} and {@code MiniPlaceholders}. An integration that is
+ * {@code LuckPerms}, {@code WorldGuard}, {@code PlaceholderAPI}, {@code MiniPlaceholders}, {@code DecentHolograms},
+ * {@code FancyHolograms}, {@code Holograms} and {@code HologramLib}. An integration that is
  * installed but not listed is {@link so.alaz.taffy.hooks.HookState#NOT_VISIBLE}, and its warning names the missing
  * entry.
  *
@@ -43,8 +45,9 @@
  * <ol>
  *   <li>detects the custom item plugins with {@link so.alaz.taffy.hooks.CustomItems#detect}, which logs one line
  *     naming the state of each;</li>
- *   <li>detects LuckPerms with {@link so.alaz.taffy.hooks.PermissionProvider#luckPerms} and WorldGuard with
- *     {@link so.alaz.taffy.hooks.RegionProvider#worldGuard}, and keeps each {@link so.alaz.taffy.hooks.Detected};</li>
+ *   <li>detects LuckPerms with {@link so.alaz.taffy.hooks.PermissionProvider#luckPerms}, WorldGuard with
+ *     {@link so.alaz.taffy.hooks.RegionProvider#worldGuard} and a hologram plugin with
+ *     {@link so.alaz.taffy.hooks.HologramProvider#detect}, and keeps each {@link so.alaz.taffy.hooks.Detected};</li>
  *   <li>looks up the economy with {@link so.alaz.taffy.hooks.EconomyProvider#vault}, keeps the result in a
  *     {@code volatile} field, and, while the economy is switched on, registers an
  *     {@link so.alaz.taffy.hooks.EconomyWatcher} that looks it up again and looks it up once more on the first tick.
@@ -160,9 +163,10 @@
  *
  * <p>A failure inside a later call is logged as a warning, at most once a minute for each kind of call with its stack
  * the first time. A failure that loses a write or a lookup is also reported under {@code hook.<name>}:
- * {@code hook.<key>} when a custom item cannot be built, such as {@code hook.nexo}, and {@code hook.luckperms} and
- * {@code hook.worldguard} for every failed call. Reading an item's id and resolving a placeholder log a failure and do
- * not report it.
+ * {@code hook.<key>} when a custom item cannot be built, such as {@code hook.nexo}; {@code hook.luckperms} and
+ * {@code hook.worldguard} for every failed call; and {@code hook.decentholograms}, {@code hook.fancyholograms},
+ * {@code hook.holograms} or {@code hook.hologramlib} for every failed hologram call. Reading an item's id and
+ * resolving a placeholder log a failure and do not report it.
  *
  * <p>A {@code null} argument throws {@link java.lang.NullPointerException}, except where a parameter is marked
  * {@code @Nullable}, and except a reference given to {@link so.alaz.taffy.hooks.CustomItemRef#parse} or

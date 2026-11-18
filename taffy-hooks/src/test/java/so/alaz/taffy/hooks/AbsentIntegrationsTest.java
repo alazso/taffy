@@ -58,7 +58,9 @@ final class AbsentIntegrationsTest {
 
     private static final String[] HIDDEN = {
         "dev.lone.itemsadder.", "com.nexomc.", "io.th0rgal.oraxen.", "me.arcaniax.hdb.", "net.milkbowl.vault.",
-        "net.luckperms.api.", "com.sk89q.", "me.clip.placeholderapi.", "io.github.miniplaceholders."};
+        "net.luckperms.api.", "com.sk89q.", "me.clip.placeholderapi.", "io.github.miniplaceholders.",
+        "eu.decentsoftware.holograms.", "de.oliver.fancyholograms.", "net.thenextlvl.hologram.",
+        "com.maximde.hologramlib."};
 
     private static final String VAULT_ECONOMY = "net.milkbowl.vault.economy.Economy";
 
@@ -149,6 +151,9 @@ final class AbsentIntegrationsTest {
         probes.add(WORLDGUARD);
         probes.add(PLACEHOLDERAPI);
         probes.add(MINIPLACEHOLDERS);
+        for (HologramPlugin plugin : HologramPlugin.values()) {
+            probes.add(plugin.probe());
+        }
         ClassLoader loader = hidden();
 
         assertThat(Class.forName(ApiLink.class.getName(), false, loader).getClassLoader()).isSameAs(loader);
@@ -195,7 +200,7 @@ final class AbsentIntegrationsTest {
             CustomItemPlugin.class, CustomItemRef.class, CustomItems.class, CustomItems.Resolution.class,
             EconomyResult.class, EconomyResult.Status.class, EconomyProvider.class, EconomyWatcher.class,
             PermissionProvider.class, RegionProvider.class, PlaceholderExpansionBuilder.class,
-            PlaceholderRegistration.class);
+            PlaceholderRegistration.class, HologramPlugin.class, HologramProvider.class);
         assertThat(exported).doesNotContain(EconomyLookup.class, Detection.class);
 
         for (Class<?> type : exported) {
@@ -717,6 +722,44 @@ final class AbsentIntegrationsTest {
     }
 
     @Test
+    void hologramDetectionOnTheHiddenCopyFindsEveryHologramPluginWithoutItsApi() throws Throwable {
+        ClassLoader loader = hidden();
+        List<String> names = new ArrayList<>();
+        for (HologramPlugin plugin : HologramPlugin.values()) {
+            names.add(plugin.plugin());
+        }
+        PluginManager plugins = installed(pluginOn(loader, "2.0"), names.toArray(String[]::new));
+        CapturedLog log = new CapturedLog();
+        List<String> reported = new ArrayList<>();
+        ErrorReports errors = new ErrorReports();
+        errors.install((source, error) -> reported.add(source));
+        Class<?> hologramPlugin = Class.forName(HologramPlugin.class.getName(), true, loader);
+        Class<?> detectedType = Class.forName(Detected.class.getName(), true, loader);
+        Class<?> statusType = Class.forName(HookStatus.class.getName(), true, loader);
+        MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+        MethodHandle detect = lookup.findStatic(Class.forName(HologramProvider.class.getName(), true, loader),
+            "detect", MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class,
+                hologramPlugin));
+        MethodHandle status = lookup.findVirtual(detectedType, "status", MethodType.methodType(statusType));
+        MethodHandle provider = lookup.findVirtual(detectedType, "provider", MethodType.methodType(Object.class));
+
+        List<String> states = new ArrayList<>();
+        for (Object plugin : hologramPlugin.getEnumConstants()) {
+            Object detected = detect.invoke(owner(plugins, log), errors, true, plugin);
+            states.add(stateOf(loader, status.invoke(detected)));
+            assertThat(provider.invoke(detected)).isNull();
+        }
+
+        assertThat(states).hasSize(4).containsOnly(HookState.API_MISSING.name());
+        assertThat(log.lines()).containsExactly(
+            "WARNING DecentHolograms 2.0 lacks the API that is read, so it stays off.",
+            "WARNING FancyHolograms 2.0 lacks the API that is read, so it stays off.",
+            "WARNING Holograms 2.0 lacks the API that is read, so it stays off.",
+            "WARNING HologramLib 2.0 lacks the API that is read, so it stays off.");
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
     void everyEntryPointOnTheHiddenCopySwitchedOffLooksAtNothing() throws Throwable {
         ClassLoader loader = hidden();
         PluginManager plugins = mock(PluginManager.class);
@@ -735,6 +778,10 @@ final class AbsentIntegrationsTest {
         MethodHandle detect = lookup.findStatic(items, "detect",
             MethodType.methodType(items, Plugin.class, ErrorReports.class, Set.class));
         MethodHandle statuses = lookup.findVirtual(items, "statuses", MethodType.methodType(List.class));
+        Class<?> hologramPlugin = Class.forName(HologramPlugin.class.getName(), true, loader);
+        MethodHandle holograms = lookup.findStatic(Class.forName(HologramProvider.class.getName(), true, loader),
+            "detect", MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class,
+                hologramPlugin));
 
         List<String> states = new ArrayList<>();
         states.add(stateOf(loader, status.invoke(luckPerms.invoke(owner, errors, false))));
@@ -744,8 +791,11 @@ final class AbsentIntegrationsTest {
         for (Object each : (List<?>) statuses.invoke(detect.invoke(owner, errors, Set.of()))) {
             states.add(stateOf(loader, each));
         }
+        for (Object plugin : hologramPlugin.getEnumConstants()) {
+            states.add(stateOf(loader, status.invoke(holograms.invoke(owner, errors, false, plugin))));
+        }
 
-        assertThat(states).hasSize(9).containsOnly(HookState.SWITCHED_OFF.name());
+        assertThat(states).hasSize(13).containsOnly(HookState.SWITCHED_OFF.name());
         verifyNoInteractions(plugins);
         assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder switched off; Nexo switched off;"
             + " Oraxen switched off; HeadDatabase switched off.");
