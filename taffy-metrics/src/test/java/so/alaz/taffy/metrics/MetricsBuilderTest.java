@@ -20,6 +20,7 @@ import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -69,9 +70,6 @@ class MetricsBuilderTest {
     void tearDown() {
         for (Metrics metrics : started) {
             metrics.shutdown();
-            if (metrics.globalTracker != null) {
-                metrics.globalTracker.detachErrorContext();
-            }
         }
         contexts.forEach(BukkitContext::shutdown);
         sink.close();
@@ -394,7 +392,7 @@ class MetricsBuilderTest {
 
         assertThat(metrics.bStatsStarted()).isTrue();
         assertThat(metrics.fastStatsSdk()).isNull();
-        assertThat(metrics.globalTracker).isNull();
+        assertThat(metrics.sources).isNull();
         assertThat(fixture.log.lines()).containsExactly(
             "WARNING FastStats metrics failed to start: Invalid token 'Not-A-Token', must match '[a-z0-9]{32}'");
         assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(savedHandler);
@@ -466,7 +464,7 @@ class MetricsBuilderTest {
     }
 
     @Test
-    void anOptedOutServerGivesAContextWithNoServicesAndRestoresTheHandler() throws IOException {
+    void anOptedOutServerGivesAContextWithNoServicesAndLeavesTheHandlerAlone() throws IOException {
         fixture.writeFastStatsConfig(false, true, true);
 
         Metrics metrics = start(new MetricsBuilder(fixture.plugin, errors, true)
@@ -476,7 +474,7 @@ class MetricsBuilderTest {
         assertThat(metrics.fastStats).isNotNull();
         assertThat(metrics.fastStats.metrics()).isEmpty();
         assertThat(metrics.fastStats.errorTrackerService()).isEmpty();
-        assertThat(metrics.globalTracker).isNull();
+        assertThat(metrics.sources).isNull();
         assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(savedHandler);
         metrics.shutdown();
         assertThat(sink.requests).isEmpty();
@@ -484,7 +482,7 @@ class MetricsBuilderTest {
     }
 
     @Test
-    void aFirstRunGivesAContextWithNoServicesAndRestoresTheHandler() {
+    void aFirstRunGivesAContextWithNoServicesAndLeavesTheHandlerAlone() {
         Metrics metrics = start(new MetricsBuilder(fixture.plugin, errors, true)
             .fastStats(MetricsFixture.FASTSTATS_TOKEN)
             .addChart(MetricChart.number("item_count", () -> 1)));
@@ -492,7 +490,7 @@ class MetricsBuilderTest {
         assertThat(metrics.fastStats).isNotNull();
         assertThat(metrics.fastStats.metrics()).isEmpty();
         assertThat(metrics.fastStats.errorTrackerService()).isEmpty();
-        assertThat(metrics.globalTracker).isNull();
+        assertThat(metrics.sources).isNull();
         assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(savedHandler);
         assertThat(fixture.fastStatsConfig).isRegularFile();
         assertThat(System.getProperty("faststats.first-run")).isEqualTo("true");
@@ -511,11 +509,10 @@ class MetricsBuilderTest {
         assertThat(metrics.fastStats).isNotNull();
         assertThat(metrics.fastStats.metrics()).isPresent();
         assertThat(metrics.fastStats.errorTrackerService()).isPresent();
-        assertThat(metrics.globalTracker).isNotNull();
-        assertThat(metrics.globalTracker.isContextAttached()).isTrue();
-        assertThat(metrics.fastStats.errorTrackerService().orElseThrow().globalErrorTracker())
-            .isSameAs(metrics.globalTracker);
-        assertThat(Thread.getDefaultUncaughtExceptionHandler().getClass().getName()).startsWith("dev.faststats.");
+        assertThat(metrics.sources).isNotNull();
+        assertThat(metrics.fastStats.errorTrackerService().orElseThrow().globalErrorTracker().isContextAttached())
+            .isFalse();
+        assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(savedHandler);
         verify(fixture.asyncScheduler, times(3))
             .runAtFixedRate(any(Plugin.class), any(), anyLong(), anyLong(), any(TimeUnit.class));
         verify(fixture.pluginManager, times(2)).registerEvents(any(Listener.class), any(Plugin.class));
@@ -548,7 +545,7 @@ class MetricsBuilderTest {
     }
 
     @Test
-    void aContextWhoseReadyFailsIsShutDownAndItsHandlerDetached() throws IOException {
+    void aContextWhoseReadyFailsIsShutDownAndLeavesTheHandlerAlone() throws IOException {
         fixture.writeFastStatsConfig(true, true, true);
         for (Throwable failure : List.of(new IllegalStateException("listener refused"),
             new NoClassDefFoundError("listener refused"))) {
@@ -560,7 +557,7 @@ class MetricsBuilderTest {
                 .fastStats(MetricsFixture.FASTSTATS_TOKEN));
 
             assertThat(metrics.fastStats).isNull();
-            assertThat(metrics.globalTracker).isNull();
+            assertThat(metrics.sources).isNull();
             assertThat(fixture.log.lines())
                 .containsExactly("WARNING FastStats metrics failed to start: listener refused");
             assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(savedHandler);
@@ -570,7 +567,7 @@ class MetricsBuilderTest {
     }
 
     @Test
-    void aFailedStartWhoseShutdownAlsoFailsStillDetachesTheHandler() throws IOException {
+    void aFailedStartWhoseShutdownAlsoFailsLeavesTheHandlerAlone() throws IOException {
         fixture.writeFastStatsConfig(true, true, true);
         doThrow(new IllegalStateException("listener refused"))
             .when(fixture.pluginManager).registerEvents(any(Listener.class), any(Plugin.class));
@@ -586,7 +583,7 @@ class MetricsBuilderTest {
     }
 
     @Test
-    void aConfigThatCannotBeWrittenLogsOneWarningAndRestoresTheHandler() throws IOException {
+    void aConfigThatCannotBeWrittenLogsOneWarningAndLeavesTheHandlerAlone() throws IOException {
         Files.writeString(plugins.resolve("faststats"), "not a folder");
 
         Metrics metrics = start(new MetricsBuilder(fixture.plugin, errors, true)
@@ -611,6 +608,26 @@ class MetricsBuilderTest {
         assertThat(context.metrics()).isPresent();
         assertThat(context.errorTrackerService()).isEmpty();
         assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(savedHandler);
+        assertThat(fixture.log.lines()).isEmpty();
+    }
+
+    @Test
+    void startFastStatsWithErrorTrackingLeavesTheDefaultHandlerAsItFoundIt() throws IOException {
+        fixture.writeFastStatsConfig(true, true, true);
+        Thread.UncaughtExceptionHandler installed = (thread, error) -> {
+        };
+        for (Thread.UncaughtExceptionHandler before : Arrays.asList(null, installed)) {
+            Thread.setDefaultUncaughtExceptionHandler(before);
+
+            BukkitContext context = MetricsBuilder.startFastStats(fixture.plugin, MetricsFixture.FASTSTATS_TOKEN,
+                List.of(), true, fixture.log.logger, MetricsBuilder.FASTSTATS_FAILED);
+
+            assertThat(context).isNotNull();
+            contexts.add(context);
+            assertThat(context.errorTrackerService().orElseThrow().globalErrorTracker().isContextAttached())
+                .isFalse();
+            assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(before);
+        }
         assertThat(fixture.log.lines()).isEmpty();
     }
 

@@ -19,8 +19,8 @@ Taffy is built out and made stable first. Plugins move onto it after that.
   passes them in. Two classes own threads on purpose: `Storage` (its database threads, which it drains
   at close) and `DiscordWebhook` (its HTTP client). A `taffy-test` helper may own a thread for the
   length of one call. The SDKs behind `taffy-metrics` own threads of their own: a bStats-Metrics thread per
-  started bStats instance, and FastStats' HTTP client with its tasks on Paper's async scheduler. FastStats
-  error tracking installs the JVM default uncaught exception handler, which `Metrics.shutdown` detaches.
+  started bStats instance, and FastStats' HTTP client with its tasks on Paper's async scheduler. Taffy never
+  installs, replaces or restores the JVM default uncaught exception handler.
 - A class arrives together with its tests. Each module holds 80 percent instruction coverage with no
   exclusions, and each class at least 50 percent.
 - Code under a copyleft license is read for ideas only and never copied in.
@@ -35,13 +35,13 @@ listed in `taffy.modules` has no `PublicApiRulesTest`; it does not read the test
 | Part | State |
 |---|---|
 | Build tooling (`tooling/taffy-gradle`, `tooling/taffy-catalog`) | Built and tested. Not published. |
-| `taffy-platform` | Complete for the planned list: 26 classes, 374 tests. Not published. |
+| `taffy-platform` | Complete for the planned list: 26 classes, 409 tests. Not published. |
 | `taffy-test` | 8 helpers, 98 tests. Not published. |
 | `taffy-config` | 7 classes, 188 tests. Not published. |
 | `taffy-storage` | 16 classes, 413 tests, 83 of them against MySQL, MariaDB and PostgreSQL in Docker, 15 of those over TLS. Not published. |
 | `taffy-hooks` | 30 classes, 13 of them public, 316 tests. Not published. |
 | `taffy-gui` | 41 classes, 23 of them public, 657 tests. Not published. |
-| `taffy-metrics` | 10 classes, 3 of them public, 178 tests. Not published. |
+| `taffy-metrics` | 10 classes, 3 of them public, 180 tests. Not published. |
 | `taffy-comficonf` | 8 classes, 6 of them public, 132 tests. Not published. |
 
 ## What `taffy-platform` holds
@@ -183,6 +183,7 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 | Message prefix | Shown only where a template writes `<prefix>`. Never prepended. |
 | Missing message key | Renders as red `missing:key`. Never throws. A menu button whose name key is missing shows the marker of its last key. |
 | Scheduler at disable | It never waits and never runs leftover work. Every method reports refusal: `false`, a failed future, the `retired` callback, or `RejectedExecutionException` from `asyncExecutor()`. Work that must settle is tracked in `PendingSettlements`. `close()` completes no `dispatch` future: one whose task Paper accepted and then dropped stays incomplete, and the caller bounds it or tracks the work in `PendingSettlements`. |
+| Uncaught exceptions | Taffy leaves the JVM default uncaught exception handler alone: it never installs, replaces or restores it, so several plugins shading Taffy cannot leave one plugin's handler behind. FastStats error tracking receives, among others, the `ErrorReports` reports, a chart supplier that throws and the plugin's own `ServerExceptionEvent` exceptions. Paper's region, async and entity schedulers fire no `ServerExceptionEvent`, so `Scheduler` reports a task Paper runs that throws to `ErrorReports` itself. An uncaught exception on a thread the plugin starts itself is not sent and the JVM prints it as usual; a plugin that wants it tracked catches it and reports it through `ErrorReports`. |
 | Error sink | One `ErrorReports` instance the plugin creates and passes around, with one target. Reports made before the first install or clear are held, the first per source and at most 16, and the first install receives them. `taffy-metrics` installs the FastStats route at `start()`, so a plugin installs no target of its own before it. |
 | Handled failures | Two shapes, by who acts on them. A failure the server owner fixes (a bad webhook URL, Discord or the network down) is a one-line `String` reason for the plugin's log: `DiscordWebhook` passes it to its callback and reports nothing. A failure in code (Taffy, the plugin or an integration) is a source and a `Throwable` for `ErrorReports`, and a class that also logs it uses `ThrowLog`. A third-party pass that can fail on every call, such as a PlaceholderAPI expansion inside `Text` or a placeholder request in `taffy-hooks`, is logged through `ThrowLog` and not reported. |
 | Testing Paper code | Mockito mocks of Paper interfaces, static and construction mocks where code touches a static or `new ItemStack`. No mock server library. |
@@ -248,9 +249,10 @@ only a disable while the server runs with menus open.
 
 `taffy-metrics` is tested against the real SDK classes with a loopback HTTP sink in place of the metrics
 servers. Only a server run and a real dashboard cover: real bStats and FastStats submissions, bStats and
-FastStats each taking one Taffy credential from many plugin jars on one server, and how they count that server, Paper's `ServerExceptionEvent` path into FastStats, the uncaught
-exception handler chain across several shaded copies, and how long the final send blocks the disabling thread
-on a stalled network.
+FastStats each taking one Taffy credential from many plugin jars on one server, and how they count that server,
+Paper firing the real `ServerExceptionEvent` into FastStats (a unit test calls the SDK's listener with a mocked
+event), and how long the final send blocks the disabling thread on a stalled network. Several shaded copies leave
+no handler chain to cover: Taffy installs no JVM default uncaught exception handler.
 
 `taffy-comficonf` is tested with the real `comficonf-api` value types and no bridge. Only a server run with the
 bridge covers: `join-classpath` loading and the real `NOT_VISIBLE` path, registration and unregistration, the
@@ -305,7 +307,7 @@ plugin copy did.
 | `ItemBuilder` | Glow uses the enchantment glint override, with no enchantment and no item flag. A glowing item built this way does not stack with one built by the enchantment form. |
 | `ErrorReports` | An instance, not static methods. `install` takes a `BiConsumer<String, Throwable>`. `report` discards anything the target throws. Reports made before the first install are held, the first per source and at most 16, and delivered on that install; `clear()` or `install(null)` first discards them. |
 | `Shutdown` | `closeQuietly` is static and takes the logger and the `ErrorReports`. It logs plain text. |
-| `Scheduler` | `new Scheduler(plugin)`. `global`, `async`, `delayedAsync` and `repeatingAsync` return `boolean` and never throw at disable. Delays are `Duration`. `repeatingAsync` returns no task handle: `close()` cancels the repeating tasks. No database tag or executor. A failed Folia lookup logs the `Classes.present` warning. |
+| `Scheduler` | `new Scheduler(plugin, errors)`. A task or `retired` callback Paper runs that throws anything is reported once to the `ErrorReports` under `scheduler.global`, `scheduler.async` or `scheduler.entity` and rethrown unchanged; a run on the calling thread and `dispatch` report nothing. `global`, `async`, `delayedAsync` and `repeatingAsync` return `boolean` and never throw at disable. Delays are `Duration`. `repeatingAsync` returns no task handle: `close()` cancels the repeating tasks. No database tag or executor. A failed Folia lookup logs the `Classes.present` warning. |
 | `SkullBuilder` | `fromName` and `fromUuid` are instance methods on `new SkullBuilder(executor)`. No thread pool of its own; the cache belongs to the instance. A rejected lookup gives a blank head. `fromUrl` rejects a quote or backslash. |
 | `Text` | `new Text(logger)`. Values go in as `TagResolver` after parsing. The viewer is the parse target, so audience placeholders resolve. A supplied `{name}` inside a click or insertion value is not filled in. A section-sign code in the template, in PlaceholderAPI output or in a `Placeholder.parsed` value is converted instead of throwing, and a PlaceholderAPI or MiniPlaceholders pass that throws is logged through `ThrowLog`, not reported. |
 | `Messages` | Takes the data folder, the bundled English file as a supplier and a logger. Prefix is opt-in. A missing key renders a marker. Every non-section YAML value is kept as text, and a list as its lines (a bare `-` is an empty line). New `has` and `lines`. `renderTemplate` replaces `format`; `fill` has no equivalent. Locale codes match in lower case with `-` read as `_`. A default locale with no file is warned about. A language file that is not valid UTF-8 is skipped with a warning. |
@@ -323,8 +325,8 @@ plugin copy did.
 | `Prompts` | Chat and anvil only: the sign prompt stays in Tradefloor. Built from the menus, the mode, the Bedrock check and the timer; one listener holds the chat and anvil handlers. A second `Prompts` over one `Menus`, or over menus that were shut down, is refused. `askLater` asks from a button. Taffy `Messages` adds no prefix, so prompt and error lines show one only where the lang text writes `<prefix>`. |
 | `IconStacks` | Hides an item's details through `ItemMeta` and `ItemFlag` instead of data components, so it runs off a server. |
 | `MetricChart` | Ids are checked against `^[a-z0-9_]+$` and the FastStats built-in field names when the chart is declared, and nulls are refused. The string, number and bool suppliers may return null, which leaves the value out. On FastStats a supplier that throws is also reported to error tracking on every read. |
-| `MetricsBuilder` | Takes a `Plugin`, the `ErrorReports` and the switch. `bStats(int)` and `fastStats(String)` replace `enable(MetricProvider, String)`; error tracking is always on with FastStats. A second `start()`, or a chart added after it, throws. A token that is not 32 lowercase letters and digits is refused before FastStats writes its shared config. A failed FastStats start is shut down without a send, and the JVM uncaught exception handler is detached when no error service exists. A jar without `META-INF/faststats.properties` is refused the same way, before the shared config is written. |
-| `Metrics` | Readers read false or null once shut down, and `bStatsStarted` reads false when the server owner turned bStats off. New `fastStatsCharts`. `report` is public. `shutdown` clears the error sink, stops the Taffy usage metrics, then bStats, then makes the FastStats final send, and detaches the handler only while it is this copy's. Handled errors go to one tracker per source instead of one attribute per report, so identical reports merge. |
+| `MetricsBuilder` | Takes a `Plugin`, the `ErrorReports` and the switch. `bStats(int)` and `fastStats(String)` replace `enable(MetricProvider, String)`; error tracking is always on with FastStats. A second `start()`, or a chart added after it, throws. A token that is not 32 lowercase letters and digits is refused before FastStats writes its shared config. A failed FastStats start is shut down without a send. The global error tracker is context-unaware, so no JVM uncaught exception handler is installed. A jar without `META-INF/faststats.properties` is refused the same way, before the shared config is written. |
+| `Metrics` | Readers read false or null once shut down, and `bStatsStarted` reads false when the server owner turned bStats off. New `fastStatsCharts`. `report` is public. `shutdown` clears the error sink, stops the Taffy usage metrics, then bStats, then makes the FastStats final send. It leaves the JVM uncaught exception handler alone. Handled errors go to one tracker per source instead of one attribute per report, so identical reports merge. |
 | `CounterMark` | After a total goes down, the FastStats mark follows it as the bStats mark does. |
 | `Migrator` | Creates its own version table, refuses migrations that are not strictly increasing, reads and splits every pending script before the backup, names the failing migration and statement, runs SQLite migrations with foreign keys off and checks them before commit, and locks the database on the server dialects. Can take over the version table of the plugin's own runner through `Baseline`. |
 
@@ -338,9 +340,9 @@ Every question is settled.
   response it blocks for as long as the network stalls: the SDK's 3 second timeouts cover neither. Bounding
   it needs a thread that outlives the call, which the thread rule forbids. An opt-in bounded shutdown would
   be a new method.
-- FastStats 0.32.2 clears every error tracker after an accepted error send, so a handled or uncaught report
-  made while that send is in flight is lost. Only the SDK can fix it; it is on the FastStats version-bump
-  checklist under Tooling notes.
+- FastStats 0.32.2 clears every error tracker after an accepted error send, so a handled report or a
+  `ServerExceptionEvent` exception made while that send is in flight is lost. Only the SDK can fix it; it is on
+  the FastStats version-bump checklist under Tooling notes.
 - Each source sends at most 32 kinds of handled error for the life of a `Metrics` handle; further kinds from
   that source are dropped until the next `start()`. Taffy cannot see when FastStats accepts a send, which is
   the only point where a reset would keep the bound.
@@ -391,8 +393,9 @@ Every question is settled.
 - At every FastStats version bump, re-check: whether an accepted error send still clears reports made during
   the send; that `SimpleContext.submissionActive` still gates every send (`TaffyUsageTest`, `MetricsTest` and
   `MetricsBuilderTest` assert that a suppressed shutdown sends nothing); the first-run notice, the
-  `faststats.first-run` property and the opt-out keys; and that `META-INF/faststats.properties` is still read
-  when a context is created.
+  `faststats.first-run` property and the opt-out keys; that `META-INF/faststats.properties` is still read
+  when a context is created; and that `ErrorTracker.contextUnaware()` and the context still install no JVM default
+  uncaught exception handler (`MetricsTest` and `MetricsBuilderTest` assert it).
 
 ## A usage graph for a shaded library
 

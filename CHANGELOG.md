@@ -108,6 +108,16 @@ All notable changes to Taffy are documented here. This project follows
 - Breaking: parse errors from `StrictYaml`, `ConfigLoader` and `YamlFileProvider` name the line and column
   where parsing failed ("<file> is not valid YAML: <problem> at line N, column M") instead of quoting the
   line, and the `ConfigLoadException` carries no cause.
+- Breaking: `Scheduler` takes the plugin's `ErrorReports`: `new Scheduler(plugin, errors)` replaces
+  `new Scheduler(plugin)`, and a `null` plugin or `ErrorReports` throws `NullPointerException`, as does a `null`
+  task or `retired` callback passed to `entity`, before anything is scheduled. A task Paper runs for `global`,
+  `async` (also through `asyncExecutor` and `asyncOrRun`), `delayedAsync`, `repeatingAsync` or `entity`, or a
+  `retired` callback Paper runs, that throws anything (an undeclared checked exception included) is reported to
+  it once under the source `scheduler.global`, `scheduler.async` or `scheduler.entity`, then rethrown unchanged,
+  so Paper still logs it. Paper's region, async and entity schedulers fire no `ServerExceptionEvent`, so such a
+  throw reaches FastStats error tracking only through this report. A task or `retired` callback run on the
+  calling thread is not reported and its throw reaches the caller; `dispatch` reports nothing, and its future
+  carries what the task threw.
 - `DiscordWebhook` calls its failure callback at most once per post.
 - `Text` logs a PlaceholderAPI or MiniPlaceholders pass that throws, a `LinkageError` such as
   `NoSuchMethodError` included, through `ThrowLog` under the sources `placeholderapi` and
@@ -144,6 +154,13 @@ All notable changes to Taffy are documented here. This project follows
   before any backup or migration, and is left unchanged. Only a missing column counts as another layout; a
   version table that cannot be read for another reason, such as a denied read, a damaged file or a lost
   connection, fails the start with the database's own error.
+- `taffy-metrics` leaves the JVM default uncaught exception handler alone: `MetricsBuilder.start()` gives
+  FastStats a context-unaware global error tracker, and `Metrics.shutdown()` restores no handler. An uncaught
+  exception on a thread the plugin starts itself is printed by the JVM again instead of being taken by FastStats
+  and not printed when no other handler was set, and shutting down several plugins that shade Taffy in any order
+  no longer leaves a disabled plugin's handler installed. FastStats error tracking still receives the
+  `ErrorReports` reports and the plugin's own `ServerExceptionEvent` exceptions; a plugin that wants an error
+  from its own thread tracked catches it and reports it through `ErrorReports`.
 - A jar without `META-INF/faststats.properties` is refused at `MetricsBuilder.start()` with one warning,
   before FastStats writes `plugins/faststats/config.properties`, so the server keeps its first run.
 - A plugin jar that bundles its own copy of `com.comficonf.api` reads `NOT_VISIBLE` with a reason naming the

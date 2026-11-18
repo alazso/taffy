@@ -1,7 +1,6 @@
 package so.alaz.taffy.metrics;
 
 import dev.faststats.ErrorTracker;
-import dev.faststats.ErrorTrackerService;
 import dev.faststats.bukkit.BukkitContext;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.Plugin;
@@ -26,6 +25,11 @@ import java.util.regex.Pattern;
  * <p>A plugin passes {@code false} as the switch in its own unit tests: bStats refuses to start from classes
  * that were not relocated, which they are not in a plugin's test run, and FastStats writes
  * {@code plugins/faststats/config.properties} under whatever folder the mocked server gives.
+ *
+ * <p>Nothing here installs, replaces or restores the JVM default uncaught exception handler. FastStats error
+ * tracking receives, among others, the reports made through the error sink, a chart supplier that throws (see
+ * {@link MetricChart}) and the exceptions Paper reports for the owner in a {@code ServerExceptionEvent}; an uncaught
+ * exception on a thread the plugin starts itself is printed by the JVM as usual and is not sent.
  *
  * <p>A null owner, error sink or chart throws {@link NullPointerException}.
  *
@@ -86,6 +90,10 @@ public final class MetricsBuilder {
      * token that does not match {@code [a-z0-9]{32}}, such as a placeholder, or a jar without
      * {@code META-INF/faststats.properties}, is refused at {@link #start()} and logged as one warning, before
      * FastStats reads or writes any file.
+     *
+     * <p>Error tracking receives, among others, the reports made through the error sink, a chart supplier that
+     * throws (see {@link MetricChart}) and the exceptions Paper reports for the owner in a
+     * {@code ServerExceptionEvent}. It leaves the JVM default uncaught exception handler alone.
      *
      * <p>The server owner decides what FastStats sends in {@code plugins/faststats/config.properties}, which
      * every plugin on the server shares: {@code enabled}, {@code submitMetrics}, {@code submitErrors}, and
@@ -152,7 +160,7 @@ public final class MetricsBuilder {
         started = true;
         if (!enabled) {
             errors.clear();
-            return new Metrics(null, null, null, null, errors);
+            return new Metrics(null, null, null, errors);
         }
         Logger logger = owner.getLogger();
         org.bstats.bukkit.Metrics bStats = bStatsServiceId > 0
@@ -163,10 +171,8 @@ public final class MetricsBuilder {
         }
         BukkitContext fastStats = fastStatsToken != null
             ? startFastStats(owner, fastStatsToken, charts, true, logger, FASTSTATS_FAILED) : null;
-        ErrorTracker globalTracker = fastStats == null ? null
-            : fastStats.errorTrackerService().map(ErrorTrackerService::globalErrorTracker).orElse(null);
         TaffyUsage usage = TaffyUsage.start(owner, bStats != null, fastStats != null);
-        Metrics handle = new Metrics(bStats, fastStats, globalTracker, usage, errors);
+        Metrics handle = new Metrics(bStats, fastStats, usage, errors);
         if (handle.sources != null) {
             errors.install(handle::report);
         } else {
@@ -223,11 +229,10 @@ public final class MetricsBuilder {
      * not hold {@code META-INF/faststats.properties}, so a refused start leaves the server's first run to the next
      * plugin that starts FastStats.
      *
-     * <p>With {@code errorTracking}, the context gets a context-aware global tracker carrying the
-     * {@link Anonymizers} rules, which attaches the JVM default uncaught exception handler as it is created. The
-     * handler is detached again when the context builds no error service (a first run, or the server owner opted out)
-     * and when the start fails. A start that fails after the context exists also shuts the context down, with
-     * submission turned off first so that the shutdown sends nothing.
+     * <p>With {@code errorTracking}, the context gets a context-unaware global tracker carrying the
+     * {@link Anonymizers} rules. It installs no JVM default uncaught exception handler, so this method leaves that
+     * handler as it found it. A start that fails after the context exists shuts the context down, with submission
+     * turned off first so that the shutdown sends nothing.
      */
     static @Nullable BukkitContext startFastStats(Plugin owner, String token, List<MetricChart> charts,
                                                   boolean errorTracking, Logger logger, String failure) {
@@ -250,22 +255,14 @@ public final class MetricsBuilder {
             logger.warning(failure + ": Resource '/" + SDK_PROPERTIES + "' not found");
             return null;
         }
-        ErrorTracker globalTracker = null;
         BukkitContext context = null;
         try {
-            if (errorTracking) {
-                globalTracker = ErrorTracker.contextAware();
-                Anonymizers.apply(globalTracker);
-            }
             BukkitContext.Factory factory = new BukkitContext.Factory(owner, token)
                 .metrics(metricsFactory -> FastStatsCharts.addTo(metricsFactory, charts).create());
-            if (globalTracker != null) {
-                factory = factory.errorTrackerService(globalTracker);
+            if (errorTracking) {
+                factory = factory.errorTrackerService(Anonymizers.apply(ErrorTracker.contextUnaware()));
             }
             context = factory.create();
-            if (globalTracker != null && context.errorTrackerService().isEmpty()) {
-                globalTracker.detachErrorContext();
-            }
             context.ready();
             return context;
         } catch (RuntimeException | LinkageError ex) {
@@ -275,9 +272,6 @@ public final class MetricsBuilder {
                 // shutdown() otherwise makes a final send.
                 quietly(() -> failed.submissionActive = false);
                 quietly(failed::shutdown);
-            }
-            if (globalTracker != null) {
-                quietly(globalTracker::detachErrorContext);
             }
             logger.warning(failure + ": " + ex.getMessage());
             return null;

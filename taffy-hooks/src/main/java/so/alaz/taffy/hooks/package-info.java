@@ -65,7 +65,7 @@
  * private PlaceholderRegistration placeholders;
  *
  * public void onEnable() {
- *     scheduler = new Scheduler(this);
+ *     scheduler = new Scheduler(this, errors);
  *     items = CustomItems.detect(this, errors, settings.itemPlugins());
  *     permissions = PermissionProvider.luckPerms(this, errors, settings.hook("luckperms"));
  *     regions = RegionProvider.worldGuard(this, errors, settings.hook("worldguard"));

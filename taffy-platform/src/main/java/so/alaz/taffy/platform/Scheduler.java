@@ -9,12 +9,14 @@ import org.bukkit.plugin.Plugin;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
@@ -34,6 +36,18 @@ import java.util.function.Supplier;
  * the plugin disables. {@link PendingSettlements#settleAll} does not see an entry tracked after it began, so a
  * caller whose scheduling call is refused starts the entry itself.
  *
+ * <p>Paper's region, async and entity schedulers fire no {@code ServerExceptionEvent} for a task that throws: they
+ * log it, and nothing that watches the plugin's errors sees it. So when a task Paper runs for {@link #global},
+ * {@link #async} (also through {@link #asyncExecutor} and {@link #asyncOrRun}), {@link #delayedAsync},
+ * {@link #repeatingAsync} or {@link #entity}, or a {@code retired} callback Paper runs, throws anything (a
+ * checked exception thrown without being declared included), the scheduler reports it to the {@link ErrorReports}
+ * it was built with, under the source {@code scheduler.global}, {@code scheduler.async} or
+ * {@code scheduler.entity}, and then rethrows it unchanged, so Paper logs and handles it as it would without the
+ * scheduler. Each throw is reported
+ * once: a repeating task that throws on several runs is reported for each of them. A task or {@code retired}
+ * callback run on the calling thread is not reported, and what it throws reaches the caller. {@link #dispatch}
+ * reports nothing: its future carries what the task threw.
+ *
  * <p>Every method may be called from any thread. {@link #dispatch} with an entity tag looks the player up on
  * the server from the calling thread.
  */
@@ -47,21 +61,32 @@ public final class Scheduler implements Dispatcher {
 
     static final String FOLIA_MARKER = "io.papermc.paper.threadedregions.RegionizedServer";
 
+    static final String GLOBAL_SOURCE = "scheduler.global";
+    static final String ASYNC_SOURCE = "scheduler.async";
+    static final String ENTITY_SOURCE = "scheduler.entity";
+
     private static final Runnable NOTHING = () -> {
     };
 
     private final Plugin plugin;
+    private final ErrorReports errors;
     private final Server server;
     private final Mode mode;
     private final List<ScheduledTask> repeating = new CopyOnWriteArrayList<>();
 
-    /** A scheduler whose tasks are owned by {@code plugin} and run on that plugin's server. */
-    public Scheduler(Plugin plugin) {
-        this(plugin, Scheduler.class.getClassLoader());
+    /**
+     * A scheduler whose tasks are owned by {@code plugin} and run on that plugin's server. A task Paper runs that
+     * throws is reported to {@code errors}, as the class description states.
+     *
+     * @throws NullPointerException when {@code plugin} or {@code errors} is {@code null}
+     */
+    public Scheduler(Plugin plugin, ErrorReports errors) {
+        this(plugin, errors, Scheduler.class.getClassLoader());
     }
 
-    Scheduler(Plugin plugin, ClassLoader loader) {
-        this.plugin = plugin;
+    Scheduler(Plugin plugin, ErrorReports errors, ClassLoader loader) {
+        this.plugin = Objects.requireNonNull(plugin, "plugin");
+        this.errors = Objects.requireNonNull(errors, "errors");
         this.server = plugin.getServer();
         this.mode = detect(plugin, loader);
     }
@@ -83,7 +108,7 @@ public final class Scheduler implements Dispatcher {
      * plugin is disabling: the task will never run.
      */
     public boolean global(Runnable task) {
-        return submit(() -> server.getGlobalRegionScheduler().run(plugin, scheduled -> task.run()));
+        return submit(() -> server.getGlobalRegionScheduler().run(plugin, reported(GLOBAL_SOURCE, task)));
     }
 
     /**
@@ -91,7 +116,7 @@ public final class Scheduler implements Dispatcher {
      * disabling: the task will never run.
      */
     public boolean async(Runnable task) {
-        return submit(() -> server.getAsyncScheduler().runNow(plugin, scheduled -> task.run()));
+        return submit(() -> server.getAsyncScheduler().runNow(plugin, reported(ASYNC_SOURCE, task)));
     }
 
     /**
@@ -126,7 +151,7 @@ public final class Scheduler implements Dispatcher {
      */
     public boolean delayedAsync(Runnable task, Duration delay) {
         return submit(() -> server.getAsyncScheduler().runDelayed(
-            plugin, scheduled -> task.run(), delay.toMillis(), TimeUnit.MILLISECONDS));
+            plugin, reported(ASYNC_SOURCE, task), delay.toMillis(), TimeUnit.MILLISECONDS));
     }
 
     /**
@@ -142,7 +167,8 @@ public final class Scheduler implements Dispatcher {
         ScheduledTask added;
         try {
             added = server.getAsyncScheduler().runAtFixedRate(
-                plugin, scheduled -> task.run(), initialDelay.toMillis(), period.toMillis(), TimeUnit.MILLISECONDS);
+                plugin, reported(ASYNC_SOURCE, task), initialDelay.toMillis(), period.toMillis(),
+                TimeUnit.MILLISECONDS);
         } catch (IllegalPluginAccessException disabling) {
             return false;
         }
@@ -190,12 +216,18 @@ public final class Scheduler implements Dispatcher {
      *
      * <p>At most one of the two runs. A task still scheduled when the owning plugin disables runs neither,
      * so work that must settle is also tracked by its caller in {@link PendingSettlements}.
+     *
+     * @throws NullPointerException when {@code task} or {@code retired} is {@code null}, before anything is
+     *     scheduled
      */
     public void entity(Entity entity, Runnable task, Runnable retired) {
+        Objects.requireNonNull(task, "task");
+        Objects.requireNonNull(retired, "retired");
         if (plugin.isEnabled()) {
             try {
+                Runnable retiredByPaper = reporting(ENTITY_SOURCE, retired);
                 // Paper returns null and runs neither callback when the entity is already removed.
-                if (entity.getScheduler().run(plugin, scheduled -> task.run(), retired) != null) {
+                if (entity.getScheduler().run(plugin, reported(ENTITY_SOURCE, task), retiredByPaper) != null) {
                     return;
                 }
             } catch (IllegalPluginAccessException disabling) {
@@ -246,6 +278,23 @@ public final class Scheduler implements Dispatcher {
             }
         }
         return result;
+    }
+
+    private Consumer<ScheduledTask> reported(String source, Runnable task) {
+        Runnable run = reporting(source, task);
+        return scheduled -> run.run();
+    }
+
+    /** {@code task} wrapped so that anything it throws is reported, then rethrown unchanged. */
+    private Runnable reporting(String source, Runnable task) {
+        return () -> {
+            try {
+                task.run();
+            } catch (Throwable failure) {
+                errors.report(source, failure);
+                throw failure;
+            }
+        };
     }
 
     private boolean submit(Runnable submission) {

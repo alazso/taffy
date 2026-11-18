@@ -7,11 +7,13 @@ import java.util.Map;
 import java.util.function.BiConsumer;
 
 /**
- * Where a plugin reports an error it caught and handled.
+ * Where a plugin reports an error that nothing else watching the plugin's errors sees.
  *
  * <p>An error handled inside the plugin never escapes to the server, so anything that watches for uncaught
- * errors does not see it, and it has to be reported here to be seen. The plugin creates one instance and
- * passes it to the classes that handle such errors (hooks, storage, {@link Shutdown}).
+ * errors does not see it, and it has to be reported here to be seen. The same holds for a task Paper's region,
+ * async or entity scheduler runs that throws: Paper logs it and fires no {@code ServerExceptionEvent}, so
+ * {@link Scheduler} reports it here before rethrowing it. The plugin creates one instance and passes it to the
+ * classes that report such errors (hooks, storage, {@link Scheduler}, {@link Shutdown}).
  *
  * <p>The sink has one target. Each {@link #install} replaces the target before it, which receives nothing
  * after that. To send each report to two places, install one target that passes it to both.

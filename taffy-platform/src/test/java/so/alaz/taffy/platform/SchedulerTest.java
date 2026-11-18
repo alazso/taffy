@@ -15,6 +15,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.invocation.InvocationOnMock;
 import so.alaz.taffy.test.SimulatedClasspath;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,6 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -37,6 +39,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ParameterizedClass
@@ -44,6 +47,9 @@ import static org.mockito.Mockito.when;
 final class SchedulerTest {
 
     private static final String PLUGIN_NAME = "Host";
+
+    private record Report(String source, Throwable error) {
+    }
 
     private final List<Runnable> queued = new ArrayList<>();
     private final Plugin plugin = mock(Plugin.class);
@@ -56,6 +62,8 @@ final class SchedulerTest {
     private final UUID playerId = UUID.randomUUID();
     private final AtomicInteger taskRuns = new AtomicInteger();
     private final AtomicInteger retiredRuns = new AtomicInteger();
+    private final ErrorReports errors = new ErrorReports();
+    private final List<Report> reports = new ArrayList<>();
     private final Scheduler scheduler;
 
     SchedulerTest(Scheduler.Mode mode) {
@@ -73,7 +81,8 @@ final class SchedulerTest {
         ClassLoader loader = mode == Scheduler.Mode.FOLIA
             ? SimulatedClasspath.with(Scheduler.FOLIA_MARKER)
             : SchedulerTest.class.getClassLoader();
-        scheduler = new Scheduler(plugin, loader);
+        errors.install((source, error) -> reports.add(new Report(source, error)));
+        scheduler = new Scheduler(plugin, errors, loader);
         assertThat(scheduler.mode()).isEqualTo(mode);
     }
 
@@ -87,6 +96,30 @@ final class SchedulerTest {
         List<Runnable> tasks = List.copyOf(queued);
         queued.clear();
         tasks.forEach(Runnable::run);
+    }
+
+    /** The one task Paper received, as Paper runs it. */
+    private Runnable onlyQueued() {
+        assertThat(queued).hasSize(1);
+        Runnable task = queued.getFirst();
+        queued.clear();
+        return task;
+    }
+
+    private static Runnable throwing(Throwable failure) {
+        return () -> SchedulerTest.<RuntimeException>sneakyThrow(failure);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void sneakyThrow(Throwable failure) throws T {
+        throw (T) failure;
+    }
+
+    private void assertReportedOnce(String source, Throwable failure) {
+        assertThat(reports).singleElement().satisfies(report -> {
+            assertThat(report.source()).isEqualTo(source);
+            assertThat(report.error()).isSameAs(failure);
+        });
     }
 
     @Test
@@ -121,14 +154,15 @@ final class SchedulerTest {
 
     @Test
     void entityHandsRetiredToPaperForAnEntityThatRetiresLater() {
-        Runnable retired = retiredRuns::incrementAndGet;
         ArgumentCaptor<Runnable> passed = ArgumentCaptor.forClass(Runnable.class);
 
-        scheduler.entity(player, taskRuns::incrementAndGet, retired);
+        scheduler.entity(player, taskRuns::incrementAndGet, retiredRuns::incrementAndGet);
 
         verify(entityScheduler).run(eq(plugin), any(), passed.capture());
-        assertThat(passed.getValue()).isSameAs(retired);
         assertThat(retiredRuns).hasValue(0);
+        passed.getValue().run();
+        assertThat(retiredRuns).hasValue(1);
+        assertThat(taskRuns).hasValue(0);
     }
 
     @Test
@@ -542,5 +576,223 @@ final class SchedulerTest {
         retired.getValue().run();
 
         assertThat(result.exceptionNow()).isInstanceOf(EntityUnavailableException.class);
+    }
+
+    @Test
+    void constructorRefusesANullPluginOrErrorReports() {
+        assertThatNullPointerException().isThrownBy(() -> new Scheduler(null, errors)).withMessage("plugin");
+        assertThatNullPointerException().isThrownBy(() -> new Scheduler(plugin, null)).withMessage("errors");
+    }
+
+    @Test
+    void globalReportsAThrowingTaskOnceAndRethrowsIt() {
+        IllegalStateException failure = new IllegalStateException("global failed");
+
+        assertThat(scheduler.global(throwing(failure))).isTrue();
+        assertThat(reports).isEmpty();
+
+        assertThatThrownBy(onlyQueued()::run).isSameAs(failure);
+        assertReportedOnce(Scheduler.GLOBAL_SOURCE, failure);
+    }
+
+    @Test
+    void asyncReportsAThrowingTaskOnceAndRethrowsIt() {
+        IllegalStateException failure = new IllegalStateException("async failed");
+
+        assertThat(scheduler.async(throwing(failure))).isTrue();
+
+        assertThatThrownBy(onlyQueued()::run).isSameAs(failure);
+        assertReportedOnce(Scheduler.ASYNC_SOURCE, failure);
+    }
+
+    @Test
+    void asyncReportsAThrownErrorOnceAndRethrowsIt() {
+        StackOverflowError failure = new StackOverflowError("deep");
+
+        scheduler.async(throwing(failure));
+
+        assertThatThrownBy(onlyQueued()::run).isSameAs(failure);
+        assertReportedOnce(Scheduler.ASYNC_SOURCE, failure);
+    }
+
+    @Test
+    void asyncExecutorReportsAThrowingTaskOnceAndRethrowsIt() {
+        IllegalStateException failure = new IllegalStateException("executor task failed");
+
+        scheduler.asyncExecutor().execute(throwing(failure));
+
+        assertThatThrownBy(onlyQueued()::run).isSameAs(failure);
+        assertReportedOnce(Scheduler.ASYNC_SOURCE, failure);
+    }
+
+    @Test
+    void asyncOrRunReportsAThrowingTaskPaperRunsOnceAndRethrowsIt() {
+        IllegalStateException failure = new IllegalStateException("scheduled failed");
+
+        scheduler.asyncOrRun(throwing(failure));
+
+        assertThatThrownBy(onlyQueued()::run).isSameAs(failure);
+        assertReportedOnce(Scheduler.ASYNC_SOURCE, failure);
+    }
+
+    @Test
+    void delayedAsyncReportsAThrowingTaskOnceAndRethrowsIt() {
+        when(asyncScheduler.runDelayed(eq(plugin), any(), anyLong(), any())).thenAnswer(this::enqueue);
+        IllegalStateException failure = new IllegalStateException("delayed failed");
+
+        assertThat(scheduler.delayedAsync(throwing(failure), Duration.ofSeconds(1))).isTrue();
+
+        assertThatThrownBy(onlyQueued()::run).isSameAs(failure);
+        assertReportedOnce(Scheduler.ASYNC_SOURCE, failure);
+    }
+
+    @Test
+    void repeatingAsyncReportsEachThrowingRunOnceAndRethrowsIt() {
+        AtomicReference<Consumer<ScheduledTask>> received = new AtomicReference<>();
+        when(asyncScheduler.runAtFixedRate(eq(plugin), any(), anyLong(), anyLong(), any())).thenAnswer(call -> {
+            received.set(call.getArgument(1));
+            return scheduled;
+        });
+        IllegalStateException failure = new IllegalStateException("repeating failed");
+
+        assertThat(scheduler.repeatingAsync(throwing(failure), Duration.ZERO, Duration.ofSeconds(1))).isTrue();
+
+        assertThatThrownBy(() -> received.get().accept(scheduled)).isSameAs(failure);
+        assertReportedOnce(Scheduler.ASYNC_SOURCE, failure);
+        assertThatThrownBy(() -> received.get().accept(scheduled)).isSameAs(failure);
+        assertThat(reports).hasSize(2).allSatisfy(report -> {
+            assertThat(report.source()).isEqualTo(Scheduler.ASYNC_SOURCE);
+            assertThat(report.error()).isSameAs(failure);
+        });
+    }
+
+    @Test
+    void entityReportsAThrowingTaskOnceAndRethrowsIt() {
+        IllegalStateException failure = new IllegalStateException("entity failed");
+
+        scheduler.entity(player, throwing(failure), retiredRuns::incrementAndGet);
+
+        assertThatThrownBy(onlyQueued()::run).isSameAs(failure);
+        assertReportedOnce(Scheduler.ENTITY_SOURCE, failure);
+        assertThat(retiredRuns).hasValue(0);
+    }
+
+    @Test
+    void entityReportsAThrowingRetiredCallbackPaperRunsOnceAndRethrowsIt() {
+        IllegalStateException failure = new IllegalStateException("retired failed");
+        ArgumentCaptor<Runnable> passed = ArgumentCaptor.forClass(Runnable.class);
+
+        scheduler.entity(player, taskRuns::incrementAndGet, throwing(failure));
+        verify(entityScheduler).run(eq(plugin), any(), passed.capture());
+
+        assertThatThrownBy(passed.getValue()::run).isSameAs(failure);
+        assertReportedOnce(Scheduler.ENTITY_SOURCE, failure);
+        assertThat(taskRuns).hasValue(0);
+    }
+
+    @Test
+    void aTaskThrowingAnUndeclaredCheckedExceptionIsReportedOnceAndRethrown() {
+        Exception failure = new IOException("checked");
+
+        scheduler.global(throwing(failure));
+
+        assertThatThrownBy(onlyQueued()::run).isSameAs(failure);
+        assertReportedOnce(Scheduler.GLOBAL_SOURCE, failure);
+    }
+
+    @Test
+    void entityRefusesANullTaskOrRetiredBeforeSchedulingAnything() {
+        assertThatNullPointerException()
+            .isThrownBy(() -> scheduler.entity(player, null, retiredRuns::incrementAndGet))
+            .withMessage("task");
+        assertThatNullPointerException()
+            .isThrownBy(() -> scheduler.entity(player, taskRuns::incrementAndGet, null))
+            .withMessage("retired");
+        assertThatNullPointerException()
+            .isThrownBy(() -> scheduler.entity(player, null))
+            .withMessage("task");
+
+        verifyNoInteractions(entityScheduler);
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
+    void tasksThatDoNotThrowReportNothing() {
+        when(asyncScheduler.runDelayed(eq(plugin), any(), anyLong(), any())).thenAnswer(this::enqueue);
+        when(asyncScheduler.runAtFixedRate(eq(plugin), any(), anyLong(), anyLong(), any())).thenAnswer(this::enqueue);
+        ArgumentCaptor<Runnable> retired = ArgumentCaptor.forClass(Runnable.class);
+
+        scheduler.global(taskRuns::incrementAndGet);
+        scheduler.async(taskRuns::incrementAndGet);
+        scheduler.asyncExecutor().execute(taskRuns::incrementAndGet);
+        scheduler.asyncOrRun(taskRuns::incrementAndGet);
+        scheduler.delayedAsync(taskRuns::incrementAndGet, Duration.ofSeconds(1));
+        scheduler.repeatingAsync(taskRuns::incrementAndGet, Duration.ZERO, Duration.ofSeconds(1));
+        scheduler.entity(player, taskRuns::incrementAndGet, retiredRuns::incrementAndGet);
+        runQueued();
+        verify(entityScheduler).run(eq(plugin), any(), retired.capture());
+        retired.getValue().run();
+
+        assertThat(taskRuns).hasValue(7);
+        assertThat(retiredRuns).hasValue(1);
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
+    void asyncOrRunOnTheCallingThreadPassesAThrowToTheCallerWithoutAReport() {
+        when(plugin.isEnabled()).thenReturn(false);
+        IllegalStateException failure = new IllegalStateException("inline failed");
+
+        assertThatThrownBy(() -> scheduler.asyncOrRun(throwing(failure))).isSameAs(failure);
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
+    void retiredOnTheCallingThreadPassesAThrowToTheCallerWithoutAReport() {
+        IllegalStateException failure = new IllegalStateException("inline retired failed");
+        when(entityScheduler.run(eq(plugin), any(), any())).thenReturn(null);
+
+        assertThatThrownBy(() -> scheduler.entity(player, taskRuns::incrementAndGet, throwing(failure)))
+            .isSameAs(failure);
+        when(plugin.isEnabled()).thenReturn(false);
+        assertThatThrownBy(() -> scheduler.entity(player, taskRuns::incrementAndGet, throwing(failure)))
+            .isSameAs(failure);
+
+        assertThat(reports).isEmpty();
+        assertThat(taskRuns).hasValue(0);
+    }
+
+    @Test
+    void dispatchCarriesAThrowInTheFutureWithoutAReport() {
+        IllegalStateException failure = new IllegalStateException("dispatched failed");
+        StackOverflowError error = new StackOverflowError("dispatched error");
+
+        CompletableFuture<String> global = scheduler.dispatch(ThreadTag.GLOBAL, () -> {
+            throw failure;
+        });
+        CompletableFuture<String> async = scheduler.dispatch(ThreadTag.ASYNC, () -> {
+            throw error;
+        });
+        CompletableFuture<String> entity = scheduler.dispatch(ThreadTag.entity(playerId), () -> {
+            throw failure;
+        });
+        runQueued();
+
+        assertThat(global.exceptionNow()).isSameAs(failure);
+        assertThat(async.exceptionNow()).isSameAs(error);
+        assertThat(entity.exceptionNow()).isSameAs(failure);
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
+    void dispatchToARetiringPlayerReportsNothing() {
+        ArgumentCaptor<Runnable> retired = ArgumentCaptor.forClass(Runnable.class);
+
+        CompletableFuture<String> result = scheduler.dispatch(ThreadTag.entity(playerId), () -> "entity");
+        verify(entityScheduler).run(eq(plugin), any(), retired.capture());
+        retired.getValue().run();
+
+        assertThat(result.exceptionNow()).isInstanceOf(EntityUnavailableException.class);
+        assertThat(reports).isEmpty();
     }
 }

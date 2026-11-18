@@ -87,6 +87,19 @@
  * clears the sink, which holds nothing after its first install or clear: a plugin that restarts its metrics on
  * reload with the same sink loses the reports raised between the shutdown and the next {@code start()}.
  *
+ * <h2>Uncaught exceptions</h2>
+ *
+ * <p>Taffy leaves the JVM default uncaught exception handler alone: it never installs, replaces or restores it.
+ * FastStats error tracking receives, among others, the reports made through
+ * {@link so.alaz.taffy.platform.ErrorReports}, a chart supplier that throws (see
+ * {@link so.alaz.taffy.metrics.MetricChart}) and the exceptions Paper reports for the plugin itself in a
+ * {@code ServerExceptionEvent}, such as one thrown from one of its event handlers. Paper's region, async and entity
+ * schedulers fire no {@code ServerExceptionEvent}, so {@link so.alaz.taffy.platform.Scheduler} reports a task Paper
+ * runs for it that throws through {@link so.alaz.taffy.platform.ErrorReports}, and FastStats receives it as a
+ * handled report. An uncaught exception on a thread the plugin starts itself is not sent to FastStats, and the JVM
+ * prints it as usual. A plugin that wants such errors tracked catches them and reports them through
+ * {@link so.alaz.taffy.platform.ErrorReports#report}.
+ *
  * <h2>Diagnostics</h2>
  *
  * <p>A diagnostics or test-error command reads {@link so.alaz.taffy.metrics.Metrics#bStatsStarted()},

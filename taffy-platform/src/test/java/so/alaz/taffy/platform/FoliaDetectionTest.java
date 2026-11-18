@@ -22,7 +22,7 @@ final class FoliaDetectionTest {
 
     @Test
     void readsPaperWhenTheFoliaServerClassIsAbsent() {
-        Scheduler scheduler = new Scheduler(plugin);
+        Scheduler scheduler = new Scheduler(plugin, new ErrorReports());
 
         assertThat(scheduler.mode()).isEqualTo(Scheduler.Mode.PAPER);
         assertThat(log.records).isEmpty();
@@ -32,7 +32,7 @@ final class FoliaDetectionTest {
     void readsFoliaOnASimulatedFoliaClasspath() {
         ClassLoader loader = SimulatedClasspath.with(Scheduler.FOLIA_MARKER);
 
-        Scheduler scheduler = new Scheduler(plugin, loader);
+        Scheduler scheduler = new Scheduler(plugin, new ErrorReports(), loader);
 
         assertThat(scheduler.mode()).isEqualTo(Scheduler.Mode.FOLIA);
         assertThat(log.records).isEmpty();
@@ -47,7 +47,7 @@ final class FoliaDetectionTest {
             }
         };
 
-        Scheduler scheduler = new Scheduler(plugin, broken);
+        Scheduler scheduler = new Scheduler(plugin, new ErrorReports(), broken);
 
         assertThat(scheduler.mode()).isEqualTo(Scheduler.Mode.PAPER);
         assertThat(log.lines()).singleElement().asString()

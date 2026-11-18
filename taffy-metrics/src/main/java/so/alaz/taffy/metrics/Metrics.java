@@ -1,6 +1,5 @@
 package so.alaz.taffy.metrics;
 
-import dev.faststats.ErrorTracker;
 import dev.faststats.SdkInfo;
 import dev.faststats.bukkit.BukkitContext;
 import org.jetbrains.annotations.Nullable;
@@ -28,6 +27,11 @@ import java.util.function.Predicate;
  * that send is in flight is lost. A later report of the same kind is sent as usual, with its count starting again.
  * The final send in {@link #shutdown()} has no such window, because the error sink is cleared before it.
  *
+ * <p>FastStats error tracking also receives each exception Paper reports for the plugin in a
+ * {@code ServerExceptionEvent}, without a source. No JVM default uncaught exception handler is installed, replaced or
+ * restored: an uncaught exception on a thread the plugin starts itself is printed by the JVM as usual and is not
+ * sent. A plugin that wants such an error tracked catches it and reports it through its {@link ErrorReports}.
+ *
  * <p>The error sink has one target. A target the plugin installs into it after {@link MetricsBuilder#start()}
  * replaces this handle, and FastStats receives no further report through the sink. A plugin that also wants its
  * reports elsewhere installs one target that passes each report to {@link #report} and to its own handler.
@@ -40,17 +44,15 @@ public final class Metrics {
 
     private final org.bstats.bukkit.@Nullable Metrics bStats;
     final @Nullable BukkitContext fastStats;
-    final @Nullable ErrorTracker globalTracker;
     final @Nullable SourceTrackers sources;
     final @Nullable TaffyUsage usage;
     private final ErrorReports errors;
     private final AtomicBoolean shutDown = new AtomicBoolean();
 
     Metrics(org.bstats.bukkit.@Nullable Metrics bStats, @Nullable BukkitContext fastStats,
-            @Nullable ErrorTracker globalTracker, @Nullable TaffyUsage usage, ErrorReports errors) {
+            @Nullable TaffyUsage usage, ErrorReports errors) {
         this.bStats = bStats;
         this.fastStats = fastStats;
-        this.globalTracker = globalTracker;
         this.usage = usage;
         this.sources = fastStats == null ? null
             : fastStats.errorTrackerService().map(SourceTrackers::new).orElse(null);
@@ -153,18 +155,14 @@ public final class Metrics {
 
     /**
      * Stops submission for every provider that started. In order: the error sink is cleared, the Taffy usage chart
-     * stops without a final send, bStats stops, FastStats sends its last errors and metrics on the calling thread
-     * and stops, and the JVM default uncaught exception handler FastStats attached is detached, unless another
-     * handler has replaced it since. A step that fails does not stop the next. Idempotent, and never throws.
+     * stops without a final send, bStats stops, and FastStats sends its last errors and metrics on the calling thread
+     * and stops. A step that fails does not stop the next. Idempotent, and never throws. The JVM default uncaught
+     * exception handler is left as it is.
      *
      * <p>The final send makes one request for errors and one for metrics, on the calling thread. Each has 3 second
      * connect and request timeouts, which do not cover a stalled name lookup or a response that never finishes, so on
      * a stalled network this call can block the disabling thread for tens of seconds. No thread is started to bound
      * it, since such a thread would outlive the plugin's class loader.
-     *
-     * <p>When another handler has replaced the one FastStats attached, such as the handler of another plugin's copy
-     * of FastStats, this copy stays in the JVM's handler chain until that handler is removed or the JVM exits. It
-     * passes every uncaught exception on down the chain and records none of them.
      */
     public void shutdown() {
         if (!shutDown.compareAndSet(false, true)) {
@@ -180,15 +178,6 @@ public final class Metrics {
         if (fastStats != null) {
             quietly(fastStats::shutdown);
         }
-        if (globalTracker != null) {
-            quietly(() -> {
-                if (defaultHandlerIsFastStats()) {
-                    globalTracker.detachErrorContext();
-                } else {
-                    globalTracker.addExclusionRule((thread, error) -> true);
-                }
-            });
-        }
     }
 
     /** Reads one fact from the FastStats context, or {@code false} when it cannot be read. */
@@ -201,18 +190,6 @@ public final class Metrics {
         } catch (RuntimeException | LinkageError ex) {
             return false;
         }
-    }
-
-    /**
-     * Whether the JVM default uncaught exception handler belongs to this copy of the FastStats SDK: its class is in
-     * this copy's package and was defined by this copy's class loader, since another plugin may carry a copy under
-     * the same package name.
-     */
-    private static boolean defaultHandlerIsFastStats() {
-        Thread.UncaughtExceptionHandler handler = Thread.getDefaultUncaughtExceptionHandler();
-        return handler != null
-            && handler.getClass().getClassLoader() == ErrorTracker.class.getClassLoader()
-            && handler.getClass().getName().startsWith(ErrorTracker.class.getPackageName() + ".");
     }
 
     private static void quietly(Runnable step) {

@@ -1,8 +1,11 @@
 package so.alaz.taffy.metrics;
 
+import com.destroystokyo.paper.event.server.ServerExceptionEvent;
+import com.destroystokyo.paper.exception.ServerPluginException;
 import dev.faststats.ErrorTracker;
 import dev.faststats.bukkit.BukkitContext;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import org.bukkit.event.Listener;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
@@ -14,11 +17,11 @@ import so.alaz.taffy.platform.ErrorReports;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
@@ -27,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -43,7 +47,7 @@ class MetricsTest {
     private final List<String> delivered = new ArrayList<>();
     private final List<Metrics> started = new ArrayList<>();
 
-    private final Metrics neither = new Metrics(null, null, null, null, errors);
+    private final Metrics neither = new Metrics(null, null, null, errors);
 
     @BeforeEach
     void setUp() throws IOException {
@@ -58,9 +62,6 @@ class MetricsTest {
     void tearDown() {
         for (Metrics metrics : started) {
             metrics.shutdown();
-            if (metrics.globalTracker != null) {
-                metrics.globalTracker.detachErrorContext();
-            }
         }
         sink.close();
         System.clearProperty("faststats.first-run");
@@ -112,7 +113,7 @@ class MetricsTest {
         org.bstats.bukkit.Metrics bStats = MetricsBuilder.startBStats(fixture.plugin,
             MetricsFixture.BSTATS_SERVICE_ID, List.of(), fixture.log.logger, MetricsBuilder.BSTATS_FAILED);
         assertThat(bStats).isNotNull();
-        Metrics metrics = new Metrics(bStats, null, null, null, errors);
+        Metrics metrics = new Metrics(bStats, null, null, errors);
 
         assertThat(metrics.bStatsStarted()).isTrue();
         assertThatCode(metrics::shutdown).doesNotThrowAnyException();
@@ -124,7 +125,7 @@ class MetricsTest {
     @Test
     void shutdownStopsBStatsOnce() {
         RecordingBStats bStats = new RecordingBStats(fixture.plugin, null);
-        Metrics metrics = new Metrics(bStats, null, null, null, errors);
+        Metrics metrics = new Metrics(bStats, null, null, errors);
 
         metrics.shutdown();
         metrics.shutdown();
@@ -136,7 +137,7 @@ class MetricsTest {
     void aBStatsShutdownThatThrowsDoesNotEscape() {
         for (Throwable failure : List.of(new IllegalStateException("broken"), new NoClassDefFoundError("gone"))) {
             RecordingBStats bStats = new RecordingBStats(fixture.plugin, failure);
-            Metrics metrics = new Metrics(bStats, null, null, null, errors);
+            Metrics metrics = new Metrics(bStats, null, null, errors);
 
             assertThatCode(metrics::shutdown).doesNotThrowAnyException();
             assertThat(bStats.shutdowns).isEqualTo(1);
@@ -201,7 +202,7 @@ class MetricsTest {
         assertThat(metrics.fastStatsEnabled()).isTrue();
         assertThat(metrics.fastStatsSubmitting()).isTrue();
         assertThat(metrics.fastStatsErrorTracking()).isFalse();
-        assertThat(metrics.globalTracker).isNull();
+        assertThat(metrics.fastStats.errorTrackerService()).isEmpty();
         assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(savedHandler);
     }
 
@@ -261,81 +262,113 @@ class MetricsTest {
     }
 
     @Test
-    void shutdownDetachesTheGlobalTracker() throws IOException {
+    void startAndShutdownLeaveNoDefaultHandlerInPlaceWhenNoneIsSet() throws IOException {
+        Thread.setDefaultUncaughtExceptionHandler(null);
+
         Metrics metrics = startFastStats(true, true, true);
-        assertThat(metrics.globalTracker).isNotNull();
-        assertThat(Thread.getDefaultUncaughtExceptionHandler()).isNotSameAs(savedHandler);
 
+        assertThat(Thread.getDefaultUncaughtExceptionHandler()).isNull();
+        assertThat(globalTracker(metrics).isContextAttached()).isFalse();
         metrics.shutdown();
+        assertThat(Thread.getDefaultUncaughtExceptionHandler()).isNull();
+    }
 
-        assertThat(metrics.globalTracker.isContextAttached()).isFalse();
-        assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(savedHandler);
+    @Test
+    void startAndShutdownLeaveAnInstalledDefaultHandlerInPlace() throws IOException {
+        Thread.UncaughtExceptionHandler installed = (thread, error) -> {
+        };
+        Thread.setDefaultUncaughtExceptionHandler(installed);
+
+        Metrics metrics = startFastStats(true, true, true);
+
+        assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(installed);
+        assertThat(globalTracker(metrics).isContextAttached()).isFalse();
+        metrics.shutdown();
+        assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(installed);
     }
 
     @Test
     void shutdownLeavesAHandlerInstalledAfterStartInPlace() throws IOException {
-        Metrics metrics = startFastStats(true, true, true);
         Thread.UncaughtExceptionHandler later = (thread, error) -> {
         };
+        Metrics metrics = startFastStats(true, true, true);
         Thread.setDefaultUncaughtExceptionHandler(later);
 
         metrics.shutdown();
 
         assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(later);
-        assertThat(metrics.globalTracker.isContextAttached()).isTrue();
     }
 
     @Test
-    void aTrackerLeftInTheHandlerChainRecordsNothingAfterShutdown() throws Exception {
-        Metrics metrics = startFastStats(true, true, true);
-        Thread.UncaughtExceptionHandler fastStatsHandler = Thread.getDefaultUncaughtExceptionHandler();
-        Thread.setDefaultUncaughtExceptionHandler(null);
-        fastStatsHandler.uncaughtException(Thread.currentThread(), new IllegalStateException("before shutdown"));
-        assertThat(trackedErrors(metrics.globalTracker)).contains("before shutdown");
+    void twoHandlesShutDownInEitherOrderLeaveTheDefaultHandlerInPlace() throws IOException {
+        Thread.UncaughtExceptionHandler installed = (thread, error) -> {
+        };
+        fixture.writeFastStatsConfig(true, true, true);
+        for (Thread.UncaughtExceptionHandler before : Arrays.asList(null, installed)) {
+            for (boolean firstStartedStopsFirst : new boolean[] {true, false}) {
+                Thread.setDefaultUncaughtExceptionHandler(before);
+                Metrics first = startWithOwnSink();
+                Metrics second = startWithOwnSink();
+                assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(before);
 
-        metrics.shutdown();
-        fastStatsHandler.uncaughtException(Thread.currentThread(), new IllegalStateException("after shutdown"));
-
-        assertThat(metrics.globalTracker.isContextAttached()).isTrue();
-        assertThat(trackedErrors(metrics.globalTracker)).isEqualTo("[]");
-    }
-
-    @Test
-    void shutdownLeavesTheHandlerOfAnotherSdkCopyInPlace() throws Exception {
-        Metrics metrics = startFastStats(true, true, true);
-        URL[] jars = {
-            ErrorTracker.class.getProtectionDomain().getCodeSource().getLocation(),
-            Class.forName("com.google.gson.JsonArray").getProtectionDomain().getCodeSource().getLocation()};
-        try (URLClassLoader copy = new URLClassLoader(jars, ClassLoader.getPlatformClassLoader())) {
-            Class<?> copiedTracker = copy.loadClass(ErrorTracker.class.getName());
-            assertThat(copiedTracker).isNotSameAs(ErrorTracker.class);
-            Object other = copiedTracker.getMethod("contextAware").invoke(null);
-            Thread.UncaughtExceptionHandler otherHandler = Thread.getDefaultUncaughtExceptionHandler();
-            assertThat(otherHandler.getClass().getName()).startsWith(ErrorTracker.class.getPackageName() + ".");
-            try {
-                metrics.shutdown();
-
-                assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(otherHandler);
-                assertThat(metrics.globalTracker.isContextAttached()).isTrue();
-            } finally {
-                copiedTracker.getMethod("detachErrorContext").invoke(other);
+                (firstStartedStopsFirst ? first : second).shutdown();
+                assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(before);
+                Thread.UncaughtExceptionHandler between = (thread, error) -> {
+                };
+                Thread.setDefaultUncaughtExceptionHandler(between);
+                (firstStartedStopsFirst ? second : first).shutdown();
+                assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(between);
             }
         }
     }
 
     @Test
-    void shutdownLeavesNoHandlerInPlaceWhenNoneIsSet() throws IOException {
+    void anUncaughtExceptionOnAPluginThreadReachesTheDefaultHandlerAndIsNotSent() throws Exception {
+        List<Throwable> received = new CopyOnWriteArrayList<>();
+        Thread.setDefaultUncaughtExceptionHandler((thread, error) -> received.add(error));
         Metrics metrics = startFastStats(true, true, true);
-        Thread.setDefaultUncaughtExceptionHandler(null);
+        IllegalStateException uncaught = new IllegalStateException("worker broken");
 
+        Thread worker = new Thread(() -> {
+            throw uncaught;
+        });
+        worker.start();
+        worker.join(TimeUnit.SECONDS.toMillis(10));
+        errors.report("storage", new IllegalStateException("storage offline"));
         metrics.shutdown();
 
-        assertThat(Thread.getDefaultUncaughtExceptionHandler()).isNull();
-        assertThat(metrics.globalTracker.isContextAttached()).isTrue();
+        assertThat(received).containsExactly(uncaught);
+        assertThat(sink.requests).filteredOn(request -> request.path().equals("/v1/error")).singleElement()
+            .extracting(LoopbackSink.Request::body).asString()
+            .contains("storage offline")
+            .doesNotContain("worker broken");
     }
 
     @Test
-    void aFastStatsShutdownThatThrowsStillDetachesTheHandler() throws IOException {
+    void aServerExceptionOfThePluginReachesFastStatsAndOneOfAnotherPluginDoesNot() throws Exception {
+        Metrics metrics = startFastStats(true, true, true);
+        ArgumentCaptor<Listener> listeners = ArgumentCaptor.captor();
+        verify(fixture.pluginManager, times(2)).registerEvents(listeners.capture(), any(Plugin.class));
+        Plugin other = mock(Plugin.class);
+
+        for (Listener listener : listeners.getAllValues()) {
+            Method onServerException = listener.getClass()
+                .getMethod("onServerException", ServerExceptionEvent.class);
+            onServerException.setAccessible(true);
+            onServerException.invoke(listener, serverException(fixture.plugin, "listener broken"));
+            onServerException.invoke(listener, serverException(other, "other plugin broken"));
+        }
+        metrics.shutdown();
+
+        assertThat(sink.requests).filteredOn(request -> request.path().equals("/v1/error")).singleElement()
+            .extracting(LoopbackSink.Request::body).asString()
+            .contains("listener broken")
+            .contains("\"handled\":false")
+            .doesNotContain("other plugin broken");
+    }
+
+    @Test
+    void aFastStatsShutdownThatThrowsLeavesTheDefaultHandlerInPlace() throws IOException {
         Metrics metrics = startFastStats(true, true, true);
         when(fixture.task.cancel()).thenThrow(new IllegalStateException("cancel refused"));
 
@@ -468,7 +501,7 @@ class MetricsTest {
             MetricsBuilder.FASTSTATS_FAILED);
         assertThat(usage.fastStats).isNotNull();
         assertThat(owner).isNotNull();
-        Metrics metrics = new Metrics(null, owner, null, usage, errors);
+        Metrics metrics = new Metrics(null, owner, usage, errors);
         started.add(metrics);
 
         metrics.shutdown();
@@ -486,7 +519,7 @@ class MetricsTest {
         fixture.writeFastStatsConfig(true, true, true);
         TaffyUsage usage = TaffyUsage.start(fixture.plugin, MetricsFixture.BSTATS_SERVICE_ID,
             MetricsFixture.FASTSTATS_TOKEN);
-        Metrics metrics = new Metrics(null, null, null, usage, errors);
+        Metrics metrics = new Metrics(null, null, usage, errors);
 
         metrics.shutdown();
         metrics.shutdown();
@@ -495,11 +528,31 @@ class MetricsTest {
         assertThat(sink.requests).isEmpty();
     }
 
-    /** The errors {@code tracker} holds now, as the JSON array FastStats would send, read through the SDK. */
-    private static String trackedErrors(ErrorTracker tracker) throws ReflectiveOperationException {
-        Method data = tracker.getClass().getMethod("getFullData");
-        data.setAccessible(true);
-        return String.valueOf(data.invoke(tracker));
+    /** Starts FastStats over the fixture's current config with an error sink of its own. */
+    private Metrics startWithOwnSink() {
+        Metrics metrics = new MetricsBuilder(fixture.plugin, new ErrorReports(), true)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN)
+            .start();
+        started.add(metrics);
+        assertThat(metrics.sources).isNotNull();
+        return metrics;
+    }
+
+    /** The global tracker of the FastStats error service of {@code metrics}. */
+    private static ErrorTracker globalTracker(Metrics metrics) {
+        assertThat(metrics.fastStats).isNotNull();
+        return metrics.fastStats.errorTrackerService().orElseThrow().globalErrorTracker();
+    }
+
+    /**
+     * A server exception event, as Paper fires it, for an exception that {@code plugin} is responsible for, whose
+     * cause carries {@code message}.
+     */
+    private static ServerExceptionEvent serverException(Plugin plugin, String message) {
+        ServerExceptionEvent event = mock(ServerExceptionEvent.class);
+        when(event.getException())
+            .thenReturn(new ServerPluginException("plugin failed", new IllegalStateException(message), plugin));
+        return event;
     }
 
     /** A real bStats instance that counts its shutdowns and, when given one, throws {@code failure} from each. */
