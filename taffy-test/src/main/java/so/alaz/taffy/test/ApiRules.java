@@ -31,9 +31,9 @@ import java.util.stream.Stream;
 /**
  * Checks a Taffy module's design rules against every class and file of its compiled main output.
  *
- * <p>The checks serve Taffy modules only: an anchor whose package is not {@code so.alaz.taffy} or one of its
- * subpackages fails each check with an {@link IllegalArgumentException}, so a scan of other code cannot pass by
- * finding nothing.
+ * <p>The checks serve Taffy modules only: an anchor whose package is not a subpackage of {@code so.alaz.taffy}, such
+ * as {@code so.alaz.taffy.platform}, fails each check with an {@link IllegalArgumentException}, so a scan of other
+ * code cannot pass by finding nothing. A class in {@code so.alaz.taffy} itself is not in a module and fails too.
  *
  * <p>Each check takes an anchor, which is any class of the module's main source set. The output is found through
  * the anchor's code source: the jar the anchor was loaded from, or its classes directory. Beside a classes
