@@ -1,5 +1,5 @@
 plugins {
-    id("so.alaz.java")
+    id("so.alaz.taffy.java")
     `maven-publish`
 }
 

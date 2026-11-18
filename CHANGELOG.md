@@ -73,23 +73,23 @@ All notable changes to Taffy are documented here. This project follows
 - Catalog entries for Taffy's own modules: `alaz.taffy.platform`, `alaz.taffy.test` and
   `alaz.taffy.config`, `alaz.taffy.storage`, `alaz.taffy.hooks`, `alaz.taffy.gui`, `alaz.taffy.metrics` and `alaz.taffy.comficonf` resolve at the catalog's version. The module list is the Gradle property
   `taffy.modules`.
-- `so.alaz.java` passes the Mockito jar on each test task's classpath as a Java agent, runs tests
+- `so.alaz.taffy.java` passes the Mockito jar on each test task's classpath as a Java agent, runs tests
   under the `tr-TR` locale and the `Pacific/Auckland` zone, and runs javadoc with
   `-Xdoclint:all,-missing` and `--no-fonts`.
-- `so.alaz.coverage` gains `coverage.classMinimum`, a per-class floor. `so.alaz.library` sets it to
+- `so.alaz.taffy.coverage` gains `coverage.classMinimum`, a per-class floor. `so.alaz.taffy.library` sets it to
   0.50.
 - The root `check` fails when a module listed in `taffy.modules` has no `PublicApiRulesTest`.
-- `so.alaz.settings` settings plugin: applies `so.alaz.repositories` and exposes the shared version
+- `so.alaz.taffy.settings` settings plugin: applies `so.alaz.taffy.repositories` and exposes the shared version
   catalog as `alaz`.
-- `so.alaz.repositories` settings plugin: applies the Java toolchain resolver and declares every
+- `so.alaz.taffy.repositories` settings plugin: applies the Java toolchain resolver and declares every
   repository the so.alaz plugins resolve from.
-- `so.alaz.paper-plugin` convention plugin: one relocated shadow jar, `paper-plugin.yml` version
+- `so.alaz.taffy.paper-plugin` convention plugin: one relocated shadow jar, `paper-plugin.yml` version
   expansion, the coverage gate, and the generated `RuntimeLibraries` class.
-- `so.alaz.paper-api` convention plugin: sources and javadoc jars and the `library` publication to
+- `so.alaz.taffy.paper-api` convention plugin: sources and javadoc jars and the `library` publication to
   repo.alaz.so under the project group.
-- `so.alaz.library` convention plugin: `so.alaz.paper-api` with tests and the coverage gate, for a
+- `so.alaz.taffy.library` convention plugin: `so.alaz.taffy.paper-api` with tests and the coverage gate, for a
   published library module.
-- `so.alaz.coverage` and `so.alaz.java` convention plugins: the coverage gate (`coverage.minimum`,
+- `so.alaz.taffy.coverage` and `so.alaz.taffy.java` convention plugins: the coverage gate (`coverage.minimum`,
   `coverage.exclusions`) and the Java 25 toolchain, compiler flags and JUnit Platform on their own.
 - `so.alaz.taffy:taffy-catalog` version catalog with the dependency versions of the so.alaz stack.
 

@@ -4,7 +4,7 @@ import so.alaz.taffy.gradle.GenerateRuntimeLibraries
 import so.alaz.taffy.gradle.PaperPluginExtension
 
 plugins {
-    id("so.alaz.coverage")
+    id("so.alaz.taffy.coverage")
     id("com.gradleup.shadow")
 }
 
