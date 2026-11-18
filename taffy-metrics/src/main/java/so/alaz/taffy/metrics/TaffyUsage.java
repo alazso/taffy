@@ -75,7 +75,7 @@ final class TaffyUsage {
         }
         BukkitContext context = fastStats;
         if (context != null) {
-            // FastStats 0.31.0 skips every send while SimpleContext.submissionActive is false;
+            // FastStats 0.32.2 skips every send while SimpleContext.submissionActive is false;
             // shutdown() otherwise makes a final send.
             quietly(() -> context.submissionActive = false);
             quietly(context::shutdown);
