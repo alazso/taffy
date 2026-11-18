@@ -71,8 +71,9 @@ plugins {
 description = "MyPlugin public API"
 ```
 
-Gradle itself can run on Java 17 or newer. The Java 25 toolchain the plugins compile with is downloaded when
-it is not installed.
+Gradle itself must run on Java 25, because the plugins are Java 25 class files loaded into Gradle's own JVM. Add
+`gradle/gradle-daemon-jvm.properties` holding `toolchainVersion=25` so Gradle picks a Java 25 JVM whatever
+`JAVA_HOME` is.
 
 To try an unpublished build, run `./gradlew publishToMavenLocal` here and add `mavenLocal()` to both
 `pluginManagement.repositories` and `dependencyResolutionManagement.repositories` in the plugin's
