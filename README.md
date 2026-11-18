@@ -2,8 +2,8 @@
 
 # Taffy
 
-[![Build](https://img.shields.io/github/actions/workflow/status/alazso/taffy-api/ci.yml?branch=main&style=for-the-badge&label=build)](https://github.com/alazso/taffy-api/actions)
-[![License](https://img.shields.io/badge/license-MIT-2b2d31?style=for-the-badge)](https://github.com/alazso/taffy-api/blob/main/LICENSE)
+[![Build](https://img.shields.io/github/actions/workflow/status/alazso/taffy/ci.yml?branch=main&style=for-the-badge&label=build)](https://github.com/alazso/taffy/actions)
+[![License](https://img.shields.io/badge/license-MIT-2b2d31?style=for-the-badge)](https://github.com/alazso/taffy/blob/main/LICENSE)
 [![Support Discord](https://img.shields.io/discord/1510890328943628350?style=for-the-badge&logo=discord&logoColor=white&label=discord&color=5865F2)](https://discord.gg/m3AKQfrMS5)
 
 </div>
@@ -33,6 +33,9 @@ plugins {
 
 rootProject.name = "myplugin"
 ```
+
+Releases follow [Semantic Versioning](https://semver.org). Every push to `main` publishes the next version as a
+`-SNAPSHOT` to `https://repo.alaz.so/snapshots`; add that repository to `pluginManagement` to build against it.
 
 `build.gradle.kts`:
 
@@ -132,12 +135,12 @@ unless the Gradle property `alaz.repositoryUrl` is set.
 
 ## Found a bug? Have an idea?
 
-Open a [GitHub issue](https://github.com/alazso/taffy-api/issues) or join the [Discord](https://discord.gg/m3AKQfrMS5).
+Open a [GitHub issue](https://github.com/alazso/taffy/issues) or join the [Discord](https://discord.gg/m3AKQfrMS5).
 
 <br>
 
 <div align="center">
 
-Released under the [MIT License](https://github.com/alazso/taffy-api/blob/main/LICENSE).
+Released under the [MIT License](https://github.com/alazso/taffy/blob/main/LICENSE).
 
 </div>

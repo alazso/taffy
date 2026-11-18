@@ -219,7 +219,12 @@ A `v*` tag publishes everything, runtime modules included, and makes these perma
 |---|---|
 | Plugin ids | `so.alaz.settings`, `so.alaz.repositories`, `so.alaz.java`, `so.alaz.coverage`, `so.alaz.paper-api`, `so.alaz.library`, `so.alaz.paper-plugin` |
 | Version model | One version for the plugins, the catalog and the runtime modules. The catalog has a `taffy` version and one library per module: `alaz.taffy.platform`, `alaz.taffy.test`, `alaz.taffy.config`, `alaz.taffy.storage`, `alaz.taffy.hooks`, `alaz.taffy.gui`, `alaz.taffy.metrics`, `alaz.taffy.comficonf`. |
-| Repository name | `taffy-api` on GitHub, `taffy` everywhere else |
+| Version numbers | Semantic Versioning from `0.1.0`. Before `1.0.0`, a breaking change raises the minor version and an addition or a fix raises the patch version; from `1.0.0`, a breaking change raises the major version, an addition the minor version and a fix the patch version. A breaking change removes or changes, incompatibly, a public type or member, a plugin id, a catalog alias or documented behaviour. |
+| Removals | A public element is marked `@Deprecated(forRemoval = true)`, with Javadoc naming its replacement and a `### Deprecated` entry in the changelog, in a release before the one that removes it. |
+| Snapshots | `main` carries the next version with `-SNAPSHOT`, and every push to `main` that passes CI publishes it to `repo.alaz.so/snapshots`. A release commit drops the suffix and is tagged `v<version>`, which publishes to `repo.alaz.so/releases`; the commit after it sets the next `-SNAPSHOT`. |
+| Repository name | `taffy`, at `github.com/alazso/taffy` |
+
+The version model and the repository name are settled. The plugin ids are open.
 
 Also unverified: the publish credentials for this repository, whether the token may write the plugin
 marker paths outside `so/alaz/taffy`, and CI on Gradle running Java 17 and Java 25. The MySQL, MariaDB
