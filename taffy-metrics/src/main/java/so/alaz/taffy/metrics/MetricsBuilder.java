@@ -271,7 +271,7 @@ public final class MetricsBuilder {
         } catch (RuntimeException | LinkageError ex) {
             if (context != null) {
                 BukkitContext failed = context;
-                // FastStats 0.31.0 skips every send while SimpleContext.submissionActive is false;
+                // FastStats 0.32.2 skips every send while SimpleContext.submissionActive is false;
                 // shutdown() otherwise makes a final send.
                 quietly(() -> failed.submissionActive = false);
                 quietly(failed::shutdown);

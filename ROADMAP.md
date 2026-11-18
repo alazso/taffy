@@ -338,7 +338,7 @@ Every question is settled.
   response it blocks for as long as the network stalls: the SDK's 3 second timeouts cover neither. Bounding
   it needs a thread that outlives the call, which the thread rule forbids. An opt-in bounded shutdown would
   be a new method.
-- FastStats 0.31.0 clears every error tracker after an accepted error send, so a handled or uncaught report
+- FastStats 0.32.2 clears every error tracker after an accepted error send, so a handled or uncaught report
   made while that send is in flight is lost. Only the SDK can fix it; it is on the FastStats version-bump
   checklist under Tooling notes.
 - Each source sends at most 32 kinds of handled error for the life of a `Metrics` handle; further kinds from

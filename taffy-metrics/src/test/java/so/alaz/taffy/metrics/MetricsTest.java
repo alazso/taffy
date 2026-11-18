@@ -148,7 +148,7 @@ class MetricsTest {
     void anEnabledServerReadsEverythingOn() throws IOException {
         Metrics metrics = startFastStats(true, true, true);
 
-        assertThat(metrics.fastStatsSdk()).isEqualTo("bukkit 0.31.0");
+        assertThat(metrics.fastStatsSdk()).isEqualTo("bukkit 0.32.2");
         assertThat(metrics.fastStatsEnabled()).isTrue();
         assertThat(metrics.fastStatsSubmitting()).isTrue();
         assertThat(metrics.fastStatsCharts()).isTrue();
@@ -159,7 +159,7 @@ class MetricsTest {
     void anOptedOutServerReadsEverythingOffButTheSdk() throws IOException {
         Metrics metrics = startFastStats(false, true, true);
 
-        assertThat(metrics.fastStatsSdk()).isEqualTo("bukkit 0.31.0");
+        assertThat(metrics.fastStatsSdk()).isEqualTo("bukkit 0.32.2");
         assertThat(metrics.fastStatsEnabled()).isFalse();
         assertThat(metrics.fastStatsSubmitting()).isFalse();
         assertThat(metrics.fastStatsCharts()).isFalse();

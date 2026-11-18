@@ -68,7 +68,7 @@ public final class Metrics {
     }
 
     /**
-     * The FastStats SDK name and version, such as {@code bukkit 0.31.0}.
+     * The FastStats SDK name and version, such as {@code bukkit 0.32.2}.
      *
      * @return the name and version, or {@code null} when FastStats did not start or was shut down
      */
