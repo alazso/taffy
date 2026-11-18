@@ -1,5 +1,5 @@
 plugins {
-    id("so.alaz.library")
+    id("so.alaz.taffy.library")
 }
 
 description = "Taffy test: helpers for testing Paper plugin code without a server"

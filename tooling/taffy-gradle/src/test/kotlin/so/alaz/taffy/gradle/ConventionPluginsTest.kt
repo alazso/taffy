@@ -86,7 +86,7 @@ class ConventionPluginsTest {
             "build.gradle.kts",
             """
             plugins {
-                id("so.alaz.paper-plugin")
+                id("so.alaz.taffy.paper-plugin")
             }
             dependencies {
                 implementation("org.bstats:bstats-base:3.2.1")
@@ -170,7 +170,7 @@ class ConventionPluginsTest {
             "taffy/settings.gradle.kts",
             """
             plugins {
-                id("so.alaz.repositories")
+                id("so.alaz.taffy.repositories")
             }
             rootProject.name = "taffy"
             include(":taffy-platform", ":taffy-test", ":taffy-metrics")
@@ -212,7 +212,7 @@ class ConventionPluginsTest {
             "settings.gradle.kts",
             """
             plugins {
-                id("so.alaz.settings")
+                id("so.alaz.taffy.settings")
             }
             rootProject.name = "demo"
             dependencyResolutionManagement {
@@ -234,7 +234,7 @@ class ConventionPluginsTest {
             "build.gradle.kts",
             """
             plugins {
-                id("so.alaz.paper-plugin")
+                id("so.alaz.taffy.paper-plugin")
             }
             dependencies {
                 implementation(alaz.taffy.metrics)
@@ -309,7 +309,7 @@ class ConventionPluginsTest {
             "taffy/settings.gradle.kts",
             """
             plugins {
-                id("so.alaz.repositories")
+                id("so.alaz.taffy.repositories")
             }
             rootProject.name = "taffy"
             include(":taffy-platform", ":taffy-test", ":taffy-config", ":taffy-comficonf")
@@ -358,7 +358,7 @@ class ConventionPluginsTest {
             "settings.gradle.kts",
             """
             plugins {
-                id("so.alaz.settings")
+                id("so.alaz.taffy.settings")
             }
             rootProject.name = "demo"
             dependencyResolutionManagement {
@@ -380,7 +380,7 @@ class ConventionPluginsTest {
             "build.gradle.kts",
             """
             plugins {
-                id("so.alaz.paper-plugin")
+                id("so.alaz.taffy.paper-plugin")
             }
             dependencies {
                 compileOnly(alaz.paper.api)
@@ -443,7 +443,7 @@ class ConventionPluginsTest {
     fun coverageGateFailsBelowTheMinimum() {
         project()
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
-        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.paper-plugin\")\n}", junit)
+        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.taffy.paper-plugin\")\n}", junit)
         write("src/main/java/so/alaz/demo/Demo.java", uncovered)
         write("src/test/java/so/alaz/demo/UnrelatedTest.java", unrelatedTest)
 
@@ -460,7 +460,7 @@ class ConventionPluginsTest {
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
         write(
             "build.gradle.kts",
-            "plugins {\n    id(\"so.alaz.coverage\")\n}",
+            "plugins {\n    id(\"so.alaz.taffy.coverage\")\n}",
             junit,
             "coverage {\n    exclusions.add(\"**/Demo.class\")\n}",
         )
@@ -479,7 +479,7 @@ class ConventionPluginsTest {
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
         write(
             "build.gradle.kts",
-            "plugins {\n    id(\"so.alaz.coverage\")\n}",
+            "plugins {\n    id(\"so.alaz.taffy.coverage\")\n}",
             junit,
             "coverage {\n    minimum.set(\"0.0\".toBigDecimal())\n}",
         )
@@ -495,7 +495,7 @@ class ConventionPluginsTest {
     fun checkFailsWhenAModuleUnderTheGateHasNoTests() {
         project()
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
-        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.library\")\n}")
+        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.taffy.library\")\n}")
         write("src/main/java/so/alaz/demo/Demo.java", uncovered)
 
         val result = runner("check").buildAndFail()
@@ -508,7 +508,7 @@ class ConventionPluginsTest {
     fun aModuleWithoutTestsPassesCheckOnlyWithBothCoverageMinimumsAtZero() {
         project()
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
-        val libraryPlugin = "plugins {\n    id(\"so.alaz.library\")\n}"
+        val libraryPlugin = "plugins {\n    id(\"so.alaz.taffy.library\")\n}"
         write("build.gradle.kts", libraryPlugin, "coverage {\n    minimum.set(\"0.0\".toBigDecimal())\n}")
         write("src/main/java/so/alaz/demo/Demo.java", uncovered)
 
@@ -541,7 +541,7 @@ class ConventionPluginsTest {
             "demo-core/build.gradle.kts",
             """
             plugins {
-                id("so.alaz.library")
+                id("so.alaz.taffy.library")
             }
             description = "Demo core"
             publishing {
@@ -593,7 +593,7 @@ class ConventionPluginsTest {
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
         write(
             "build.gradle.kts",
-            "plugins {\n    id(\"so.alaz.library\")\n}",
+            "plugins {\n    id(\"so.alaz.taffy.library\")\n}",
             junit,
             "coverage {\n    minimum.set(\"0.0\".toBigDecimal())\n}",
         )
@@ -615,7 +615,7 @@ class ConventionPluginsTest {
     fun aBuildCanSetTheClassFloorAndExcludedClassesAreOutsideIt() {
         project()
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
-        val coveragePlugin = "plugins {\n    id(\"so.alaz.coverage\")\n}"
+        val coveragePlugin = "plugins {\n    id(\"so.alaz.taffy.coverage\")\n}"
         val classFloor = "coverage {\n    classMinimum.set(\"0.50\".toBigDecimal())\n}"
         val exclusion = "coverage {\n    exclusions.add(\"**/Demo.class\")\n}"
         write("build.gradle.kts", coveragePlugin, junit, classFloor, exclusion)
@@ -643,7 +643,7 @@ class ConventionPluginsTest {
     fun javadocFailsOnATagThatNamesNoParameter() {
         project()
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
-        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.java\")\n}")
+        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.taffy.java\")\n}")
         write(
             "src/main/java/so/alaz/demo/Documented.java",
             """
@@ -677,7 +677,7 @@ class ConventionPluginsTest {
     fun aJarBuildsWithoutALicenseWhenTheRootHasNone() {
         write("gradle.properties", "group=so.alaz.demo\nversion=1.2.3\n")
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
-        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.java\")\n}")
+        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.taffy.java\")\n}")
         write("src/main/java/so/alaz/demo/Covered.java", covered)
 
         val result = run("jar")
@@ -700,7 +700,7 @@ class ConventionPluginsTest {
             "build.gradle.kts",
             """
             plugins {
-                id("so.alaz.paper-api")
+                id("so.alaz.taffy.paper-api")
             }
             version = "1.2.3-SNAPSHOT"
             tasks.register("showRepository") {
@@ -726,7 +726,7 @@ class ConventionPluginsTest {
             "settings.gradle.kts",
             """
             plugins {
-                id("so.alaz.settings")
+                id("so.alaz.taffy.settings")
             }
             rootProject.name = "demo"
             dependencyResolutionManagement {
@@ -748,7 +748,7 @@ class ConventionPluginsTest {
             "demo-api/build.gradle.kts",
             """
             plugins {
-                id("so.alaz.paper-api")
+                id("so.alaz.taffy.paper-api")
             }
             description = "Demo public API"
             tasks.register("showPaper") {
@@ -804,7 +804,7 @@ class ConventionPluginsTest {
             "settings.gradle.kts",
             """
             plugins {
-                id("so.alaz.settings")
+                id("so.alaz.taffy.settings")
             }
             rootProject.name = "demo"
             dependencyResolutionManagement {
@@ -825,7 +825,7 @@ class ConventionPluginsTest {
             "build.gradle.kts",
             """
             plugins {
-                id("so.alaz.paper-plugin")
+                id("so.alaz.taffy.paper-plugin")
             }
             paperPlugin {
                 runtimeLibrary(alaz.hikari)
@@ -857,7 +857,7 @@ class ConventionPluginsTest {
             "settings.gradle.kts",
             """
             plugins {
-                id("so.alaz.repositories")
+                id("so.alaz.taffy.repositories")
             }
             rootProject.name = "demo"
             println("catalogs=" + dependencyResolutionManagement.versionCatalogs.names)
@@ -883,7 +883,7 @@ class ConventionPluginsTest {
             "build.gradle.kts",
             """
             plugins {
-                id("so.alaz.java")
+                id("so.alaz.taffy.java")
             }
             dependencies {
                 testImplementation("org.mockito:mockito-core:5.24.0")
@@ -960,7 +960,7 @@ class ConventionPluginsTest {
             "helper/build.gradle.kts",
             """
             plugins {
-                id("so.alaz.java")
+                id("so.alaz.taffy.java")
             }
             dependencies {
                 implementation("org.mockito:mockito-core:5.24.0")
@@ -969,7 +969,7 @@ class ConventionPluginsTest {
         )
         write(
             "app/build.gradle.kts",
-            "plugins {\n    id(\"so.alaz.coverage\")\n}",
+            "plugins {\n    id(\"so.alaz.taffy.coverage\")\n}",
             junit,
             "dependencies {\n    testImplementation(project(\":helper\"))\n}",
         )
@@ -1008,7 +1008,7 @@ class ConventionPluginsTest {
     fun aModuleWithoutMockitoGetsNoAgent() {
         project()
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
-        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.java\")\n}", junit)
+        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.taffy.java\")\n}", junit)
         write(
             "src/test/java/so/alaz/demo/NoAgentTest.java",
             """
@@ -1045,7 +1045,7 @@ class ConventionPluginsTest {
             "build.gradle.kts",
             """
             plugins {
-                id("so.alaz.java")
+                id("so.alaz.taffy.java")
             }
             val mocked = sourceSets.create("mocked")
             dependencies {
@@ -1082,7 +1082,7 @@ class ConventionPluginsTest {
     fun testsRunUnderATurkishLocaleAndANonUtcZone() {
         project()
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
-        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.java\")\n}", junit)
+        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.taffy.java\")\n}", junit)
         write("src/test/java/so/alaz/demo/JvmDefaultsTest.java", jvmDefaultsTest("tr-TR"))
 
         val result = run("test")
@@ -1097,7 +1097,7 @@ class ConventionPluginsTest {
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
         write(
             "build.gradle.kts",
-            "plugins {\n    id(\"so.alaz.java\")\n}",
+            "plugins {\n    id(\"so.alaz.taffy.java\")\n}",
             junit,
             "tasks.test {\n    systemProperty(\"user.language\", \"en\")\n}",
         )

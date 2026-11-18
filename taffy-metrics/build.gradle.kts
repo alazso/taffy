@@ -1,5 +1,5 @@
 plugins {
-    id("so.alaz.library")
+    id("so.alaz.taffy.library")
 }
 
 description = "Taffy metrics: bStats and FastStats charts from one definition, with handled errors from ErrorReports"
