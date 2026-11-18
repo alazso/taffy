@@ -55,6 +55,12 @@
  *     {@link so.alaz.taffy.hooks.PlaceholderRegistration}.</li>
  * </ol>
  *
+ * <p>PlaceholderAPI may call a handler from any thread, and each {@link so.alaz.taffy.hooks.EconomyProvider} call
+ * runs on the thread {@link so.alaz.taffy.hooks.EconomyProvider#thread} names. So {@code balanceText} below returns
+ * a cached balance and asks for a fresh one on that thread through
+ * {@link so.alaz.taffy.platform.Scheduler#dispatch}, with at most one refresh per player in flight. The first request
+ * for a player returns no value.
+ *
  * <pre>{@code
  * private final ErrorReports errors = new ErrorReports();
  * private Scheduler scheduler;
@@ -63,6 +69,8 @@
  * private Detected<RegionProvider> regions;
  * private volatile Detected<EconomyProvider> economy;
  * private PlaceholderRegistration placeholders;
+ * private final Map<UUID, String> balances = new ConcurrentHashMap<>();
+ * private final Set<UUID> refreshing = ConcurrentHashMap.newKeySet();
  *
  * public void onEnable() {
  *     scheduler = new Scheduler(this, errors);
@@ -87,7 +95,20 @@
  *
  * private @Nullable String balanceText(Player player) {
  *     EconomyProvider money = economy.provider();
- *     return money == null ? null : money.balance(player.getUniqueId()).toPlainString();
+ *     if (money == null) {
+ *         return null;
+ *     }
+ *     UUID id = player.getUniqueId();
+ *     if (refreshing.add(id)) {
+ *         scheduler.dispatch(money.thread(id), () -> money.balance(id).toPlainString())
+ *             .whenComplete((text, failure) -> {
+ *                 if (text != null) {
+ *                     balances.put(id, text);
+ *                 }
+ *                 refreshing.remove(id);
+ *             });
+ *     }
+ *     return balances.get(id);
  * }
  *
  * void showHooks(CommandSender sender) {
