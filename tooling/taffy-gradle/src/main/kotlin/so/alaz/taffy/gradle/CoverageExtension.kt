@@ -4,7 +4,7 @@ import java.math.BigDecimal
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 
-/** Settings of the `so.alaz.coverage` convention, exposed as `coverage`. */
+/** Settings of the `so.alaz.taffy.coverage` convention, exposed as `coverage`. */
 abstract class CoverageExtension {
 
     /** Minimum instruction coverage the `check` task requires. Defaults to 0.80. */
@@ -12,7 +12,7 @@ abstract class CoverageExtension {
 
     /**
      * Minimum instruction coverage the `check` task requires of each class under the gate. Zero turns the
-     * per-class check off. Defaults to 0, and to 0.50 under `so.alaz.library`.
+     * per-class check off. Defaults to 0, and to 0.50 under `so.alaz.taffy.library`.
      */
     abstract val classMinimum: Property<BigDecimal>
 

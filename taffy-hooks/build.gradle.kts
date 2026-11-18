@@ -1,5 +1,5 @@
 plugins {
-    id("so.alaz.library")
+    id("so.alaz.taffy.library")
 }
 
 description = "Taffy hooks: custom items, economy, permissions, regions and placeholders behind Taffy interfaces"

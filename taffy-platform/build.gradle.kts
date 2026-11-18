@@ -1,5 +1,5 @@
 plugins {
-    id("so.alaz.library")
+    id("so.alaz.taffy.library")
 }
 
 description = "Taffy platform: the classes every other Taffy module builds on"

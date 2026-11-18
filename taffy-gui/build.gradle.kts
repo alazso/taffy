@@ -1,5 +1,5 @@
 plugins {
-    id("so.alaz.library")
+    id("so.alaz.taffy.library")
 }
 
 description = "Taffy gui: chest menus, pagination, click handling and text prompts"
