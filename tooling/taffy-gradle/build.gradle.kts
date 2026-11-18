@@ -7,17 +7,17 @@ plugins {
 
 description = "Gradle convention plugins shared by the so.alaz plugins"
 
-// Gradle loads these plugins into its own JVM, which may be older than the Java 25 toolchain the plugins configure.
+// Gradle loads these plugins into its own JVM, so a build that applies them runs Gradle on Java 25.
 kotlin {
     jvmToolchain(25)
     compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
-        freeCompilerArgs.add("-Xjdk-release=17")
+        jvmTarget.set(JvmTarget.JVM_25)
+        freeCompilerArgs.add("-Xjdk-release=25")
     }
 }
 
 tasks.withType<JavaCompile>().configureEach {
-    options.release.set(17)
+    options.release.set(25)
 }
 
 dependencies {

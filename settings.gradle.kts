@@ -3,7 +3,7 @@ pluginManagement {
 }
 
 plugins {
-    id("so.alaz.repositories")
+    id("so.alaz.taffy.repositories")
 }
 
 rootProject.name = "taffy"

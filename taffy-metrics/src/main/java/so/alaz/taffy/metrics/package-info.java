@@ -8,7 +8,7 @@
  *
  * <h2>Relocation</h2>
  *
- * <p>Each plugin carries its own relocated copy of both SDKs and of Taffy. A build on {@code so.alaz.paper-plugin}
+ * <p>Each plugin carries its own relocated copy of both SDKs and of Taffy. A build on {@code so.alaz.taffy.paper-plugin}
  * needs nothing more: it relocates {@code org.bstats}, {@code dev.faststats} and {@code so.alaz.taffy} under
  * {@code <group>.libs} and keeps one {@code META-INF/faststats.properties}. Any other build relocates the same three
  * packages and keeps that file in its shadow jar: bStats refuses to start from classes that were not relocated, and

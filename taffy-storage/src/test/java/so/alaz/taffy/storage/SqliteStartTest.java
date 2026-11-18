@@ -684,8 +684,9 @@ final class SqliteStartTest {
         CompletableFuture<String> stage = started.thenApply(ignored -> Thread.currentThread().getName());
         release.countDown();
 
-        storage = started.get(10, TimeUnit.SECONDS);
+        // A thread waiting in get on the start's own future may run its stages, so the stage is awaited first.
         assertThat(stage.get(10, TimeUnit.SECONDS)).matches(READ_THREAD);
+        storage = started.get(10, TimeUnit.SECONDS);
     }
 
     @Test

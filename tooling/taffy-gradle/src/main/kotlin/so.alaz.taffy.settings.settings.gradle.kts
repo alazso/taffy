@@ -1,7 +1,7 @@
 import so.alaz.taffy.gradle.TaffyBuild
 
 plugins {
-    id("so.alaz.repositories")
+    id("so.alaz.taffy.repositories")
 }
 
 dependencyResolutionManagement {
