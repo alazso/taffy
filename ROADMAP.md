@@ -38,7 +38,7 @@ listed in `taffy.modules` has no `PublicApiRulesTest`; it does not read the test
 | `taffy-platform` | Complete for the planned list: 26 classes, 374 tests. Not published. |
 | `taffy-test` | 8 helpers, 98 tests. Not published. |
 | `taffy-config` | 7 classes, 188 tests. Not published. |
-| `taffy-storage` | 16 classes, 398 tests, 68 of them against MySQL, MariaDB and PostgreSQL in Docker. Not published. |
+| `taffy-storage` | 16 classes, 413 tests, 83 of them against MySQL, MariaDB and PostgreSQL in Docker, 15 of those over TLS. Not published. |
 | `taffy-hooks` | 30 classes, 13 of them public, 316 tests. Not published. |
 | `taffy-gui` | 41 classes, 23 of them public, 657 tests. Not published. |
 | `taffy-metrics` | 10 classes, 3 of them public, 178 tests. Not published. |
@@ -201,11 +201,11 @@ These were open and are now fixed in code. Nothing is published, so each can sti
 | Hook failures | At detection, not visible and missing the API log one warning; could not be hooked logs one warning and is reported to `ErrorReports` under `hook.<name>`. Each economy lookup is a detection of its own, so it warns again. Later, a failure inside an integration is logged at most once a minute per kind of call; item builds and every LuckPerms and WorldGuard call are also reported, item id reads and placeholder requests are not. |
 | Menu layouts | Values the plugin builds in code or reads from its own files. Taffy reads no menu file and ships no lang file. |
 | Menu threads | A menu opens, draws and closes on the viewer's entity thread. Work from a click goes through `openLater`, `rerenderLater`, `closeLater` and `askLater`. |
-| Metrics SDKs | bStats and FastStats are runtime dependencies of `taffy-metrics`: a plugin compiles without them and shades them relocated. `so.alaz.paper-plugin` relocates both and keeps one `META-INF/faststats.properties`. Neither is ever a Paper runtime library. |
+| Metrics SDKs | bStats and FastStats are runtime dependencies of `taffy-metrics`: a plugin compiles without them and shades them relocated. `so.alaz.taffy.paper-plugin` relocates both and keeps one `META-INF/faststats.properties`. Neither is ever a Paper runtime library. |
 | ComfiConf | Its own opt-in module, `taffy-comficonf`, so a plugin that does not use ComfiConf carries none of it. The API is `compileOnly` in Taffy and in the plugin, never bundled, never relocated and absent from the published metadata; the bridge provides it. |
 | ComfiConf activation | The plugin's own reload, passed as a `Callable<Boolean>` such as `holder::reload`, run through `callSync` after the write. Its loader must not write the file, its schema constraints are no looser than its `ConfigReader` calls, and `rules` refuses what the loader rejects. Restart-only consumers read `ConfigHolder.startup()`. |
 | ComfiConf and the plugin's own writes | A write of the exposed file outside ComfiConf holds `ComfiConfConnection.lockFor(file)` from reading the file to saving it, then reloads and calls `notifyChanged()`. |
-| Test conventions | `so.alaz.java` runs tests under the `tr-TR` locale and the `Pacific/Auckland` zone, passes the Mockito jar on each test task's classpath as a Java agent, and runs javadoc with `-Xdoclint:all,-missing` and `--no-fonts`. |
+| Test conventions | `so.alaz.taffy.java` runs tests under the `tr-TR` locale and the `Pacific/Auckland` zone, passes the Mockito jar on each test task's classpath as a Java agent, and runs javadoc with `-Xdoclint:all,-missing` and `--no-fonts`. |
 
 ## Next modules
 
@@ -217,15 +217,21 @@ A `v*` tag publishes everything, runtime modules included, and makes these perma
 
 | Decision | Today |
 |---|---|
-| Plugin ids | `so.alaz.settings`, `so.alaz.repositories`, `so.alaz.java`, `so.alaz.coverage`, `so.alaz.paper-api`, `so.alaz.library`, `so.alaz.paper-plugin` |
+| Plugin ids | `so.alaz.taffy.settings`, `so.alaz.taffy.repositories`, `so.alaz.taffy.java`, `so.alaz.taffy.coverage`, `so.alaz.taffy.paper-api`, `so.alaz.taffy.library`, `so.alaz.taffy.paper-plugin` |
 | Version model | One version for the plugins, the catalog and the runtime modules. The catalog has a `taffy` version and one library per module: `alaz.taffy.platform`, `alaz.taffy.test`, `alaz.taffy.config`, `alaz.taffy.storage`, `alaz.taffy.hooks`, `alaz.taffy.gui`, `alaz.taffy.metrics`, `alaz.taffy.comficonf`. |
-| Repository name | `taffy-api` on GitHub, `taffy` everywhere else |
+| Version numbers | Semantic Versioning from `0.1.0`. Before `1.0.0`, a breaking change raises the minor version and an addition or a fix raises the patch version; from `1.0.0`, a breaking change raises the major version, an addition the minor version and a fix the patch version. A breaking change removes or changes, incompatibly, a public type or member, a plugin id, a catalog alias or documented behaviour. |
+| Removals | A public element is marked `@Deprecated(forRemoval = true)`, with Javadoc naming its replacement and a `### Deprecated` entry in the changelog, in a release before the one that removes it. |
+| Snapshots | `main` carries the next version with `-SNAPSHOT`, and every push to `main` that passes CI publishes it to `repo.alaz.so/snapshots`. A release commit drops the suffix and is tagged `v<version>`, which publishes to `repo.alaz.so/releases`; the commit after it sets the next `-SNAPSHOT`. |
+| Repository name | `taffy`, at `github.com/alazso/taffy` |
 
-Also unverified: the publish credentials for this repository, whether the token may write the plugin
-marker paths outside `so/alaz/taffy`, and CI on Gradle running Java 17 and Java 25. The MySQL, MariaDB
-and PostgreSQL suites of `taffy-storage` pass against MySQL 8.4, MariaDB 11.4 and PostgreSQL 17 in
-containers, including two starts migrating one shared database at once, but only over unencrypted
-connections: the `TRUST` and `VERIFY_FULL` SSL modes have not run against a real server.
+The plugin ids, the version model and the repository name are settled. Every plugin marker publishes under `so/alaz/taffy`.
+
+Also unverified: the publish credentials for this repository. The MySQL, MariaDB and PostgreSQL suites of
+`taffy-storage` pass against MySQL 8.4, MariaDB 11.4 and PostgreSQL 17 in containers, including two starts
+migrating one shared database at once. The `sslTest` task connects to the same three servers over TLS with
+a certificate for `localhost` from an authority in the JVM trust store: `DISABLE` connects unencrypted,
+`TRUST` connects encrypted under either host name, and `VERIFY_FULL` connects encrypted as `localhost` and is
+refused as `127.0.0.1`.
 
 `taffy-hooks` is tested against the integrations' API jars with Mockito. Only a server run covers: Paper's
 class loader isolation that gives `NOT_VISIBLE`, the Nexo, Oraxen and WorldGuard calls whose entry classes
@@ -358,7 +364,7 @@ Every question is settled.
   reach the log. A YAML parse error without a position falls back to the parser's own message, which can
   quote a scalar.
 - A shadow jar that relocates `com.comficonf.api` reads `FAILED`, not `NOT_VISIBLE` with the bundled-copy
-  reason. `so.alaz.paper-plugin` never relocates the API.
+  reason. `so.alaz.taffy.paper-plugin` never relocates the API.
 - `PlaceholderExpansionBuilder.identifier` accepts upper case and lower-cases it, while placeholder names
   must already be lower case.
 - An unquoted date and time whose offset brings it to midnight UTC, such as `2026-12-31T19:00:00-05:00`,
@@ -373,12 +379,12 @@ Every question is settled.
 ## Tooling notes
 
 - With the build cache on, `cleanTest` restores test results. A forced rerun needs `--no-build-cache`.
-- `--no-fonts` needs javadoc from JDK 23 or newer. `so.alaz.java` assumes the Java 25 toolchain.
+- `--no-fonts` needs javadoc from JDK 23 or newer. `so.alaz.taffy.java` assumes the Java 25 toolchain.
 - A plugin can override the test locale and zone with `systemProperty` on its test task.
 - The tooling TestKit suite builds plugins against copies of `taffy-platform`, `taffy-config`, `taffy-metrics`
   and `taffy-comficonf`. Its first run in a fresh TestKit Gradle home needs network access to the Paper
   repository, Maven Central and repo.faststats.dev, and takes about a minute.
-- `so.alaz.java` and the plugins built on it are published behaviour. Each convention they add (the test
+- `so.alaz.taffy.java` and the plugins built on it are published behaviour. Each convention they add (the test
   locale and zone and their override, the Mockito agent, the javadoc flags, `LICENSE` in `META-INF`) has a
   TestKit case in `ConventionPluginsTest`, and a change to one is listed in the changelog as a change to
   plugin builds. A plugin build meets it only when it moves to that Taffy version.

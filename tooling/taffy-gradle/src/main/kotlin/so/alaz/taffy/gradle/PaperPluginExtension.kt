@@ -4,7 +4,7 @@ import org.gradle.api.artifacts.MinimalExternalModuleDependency
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Provider
 
-/** Settings of the `so.alaz.paper-plugin` convention, exposed as `paperPlugin`. */
+/** Settings of the `so.alaz.taffy.paper-plugin` convention, exposed as `paperPlugin`. */
 abstract class PaperPluginExtension {
 
     /**

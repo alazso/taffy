@@ -2,7 +2,7 @@ import java.math.BigDecimal
 import so.alaz.taffy.gradle.CoverageExtension
 
 plugins {
-    id("so.alaz.java")
+    id("so.alaz.taffy.java")
     jacoco
 }
 

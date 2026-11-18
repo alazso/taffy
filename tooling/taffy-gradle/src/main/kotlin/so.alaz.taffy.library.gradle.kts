@@ -1,8 +1,8 @@
 import so.alaz.taffy.gradle.CoverageExtension
 
 plugins {
-    id("so.alaz.paper-api")
-    id("so.alaz.coverage")
+    id("so.alaz.taffy.paper-api")
+    id("so.alaz.taffy.coverage")
 }
 
 extensions.configure<CoverageExtension> {
