@@ -5,6 +5,8 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+Built against paper-api 26.1.2.build.66-stable and tested with FastStats 0.32.2 and bStats 3.2.1.
+
 ### Changed
 - Releases are built and tested in a job that holds no credentials, and only the publish job holds
   them.
