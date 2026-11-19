@@ -286,6 +286,29 @@ class TextTest {
     }
 
     @Test
+    void miniPlaceholdersTagThatFailsToLinkWhileParsingFallsBackToParsingWithoutIt() {
+        TagResolver unlinked = new TagResolver() {
+            @Override
+            public @Nullable Tag resolve(String name, ArgumentQueue arguments, Context context) {
+                throw new NoSuchMethodError("org.bukkit.OfflinePlayer.getName()");
+            }
+
+            @Override
+            public boolean has(String name) {
+                return name.equals("boom");
+            }
+        };
+        TagResolver expansions = TagResolver.resolver(unlinked, Placeholder.unparsed("server", "lobby"));
+        Text text = new Text(log.logger, null, () -> expansions);
+
+        assertThat(text.render("<red>Hi <boom> <server>", viewer))
+            .isEqualTo(Component.text("Hi <boom> <server>", NamedTextColor.RED));
+        assertThat(plain(text.render("<boom> {name}", null, Placeholder.unparsed("name", "Ann"))))
+            .isEqualTo("<boom> Ann");
+        assertOneWarning(MINI_PLACEHOLDERS_WARNING, NoSuchMethodError.class);
+    }
+
+    @Test
     void inputThatFailsWithAndWithoutMiniPlaceholdersThrowsAndLogsNothing() {
         Text text = new Text(log.logger, null, this::expansions);
 

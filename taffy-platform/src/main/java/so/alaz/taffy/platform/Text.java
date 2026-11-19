@@ -38,10 +38,12 @@ import java.util.regex.Pattern;
  * <p>An instance is thread-safe and may be shared. A PlaceholderAPI pass that throws, and a
  * MiniPlaceholders resolver that cannot be built or that throws while the text is parsed, is skipped and
  * logged as {@link ThrowLog} does, under the sources {@code placeholderapi} and {@code miniplaceholders};
- * nothing is reported to {@link ErrorReports}. A single MiniPlaceholders tag that throws while it resolves
- * is left as written by MiniMessage and is not logged. PlaceholderAPI expansions and MiniPlaceholders
- * audience tags run on the calling thread and read the viewer, so a call that passes a viewer belongs on
- * the thread that owns that player.
+ * nothing is reported to {@link ErrorReports}. A single MiniPlaceholders tag that throws an exception while
+ * it resolves is left as written by MiniMessage and is not logged. A tag that throws a {@link LinkageError}
+ * such as {@code NoSuchMethodError}, as an expansion built against another API does, skips the whole
+ * MiniPlaceholders pass and is logged. PlaceholderAPI expansions and MiniPlaceholders audience tags run on
+ * the calling thread and read the viewer, so a call that passes a viewer belongs on the thread that owns
+ * that player.
  */
 public final class Text {
 
@@ -196,7 +198,7 @@ public final class Text {
         try {
             // The later resolver answers first, so a supplied value wins a name both have.
             return parse(resolved, viewer, TagResolver.resolver(expansions, values));
-        } catch (RuntimeException ex) {
+        } catch (LinkageError | RuntimeException ex) {
             Component fallback = parse(resolved, viewer, values);
             failures.warn(MINI_PLACEHOLDERS, MINI_PLACEHOLDERS_FAILED, ex);
             return fallback;

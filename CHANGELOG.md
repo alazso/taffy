@@ -8,6 +8,9 @@ All notable changes to Taffy are documented here. This project follows
 ### Fixed
 - `Items.giveOrDrop` leaves the given `ItemStack` unchanged: it adds a copy, so the same stack can be given
   to several players without being reduced to what was left over.
+- `Text` handles a `LinkageError`, such as `NoSuchMethodError`, thrown by a MiniPlaceholders tag while the
+  text is parsed: the text renders without MiniPlaceholders and one warning is logged under
+  `miniplaceholders`, instead of the error reaching the caller of `render`, `plain` or `send`.
 
 ## [0.1.0] - 2026-11-18
 
