@@ -18,10 +18,11 @@ All notable changes to Taffy are documented here. This project follows
   reaches only a hologram the provider placed, and `create` refuses a name another hologram holds. A hologram is
   removed when its world unloads, and the provider removes every hologram it placed when its owner's
   `PluginDisableEvent` fires, before `onDisable`. A hologram the hologram plugin drops, such as on its reload,
-  makes `update` answer `false`. `close()` removes every hologram the provider placed and stops the provider; to
-  detect again, the owner closes the held provider first. `create`, `update`, `move`, `remove`, `exists`, `ids`
-  and `removeAll` answer `false` or nothing found while the provider is closed or the hologram plugin is disabled
-  or fails, and failures are reported under `hook.<plugin key>`, such as `hook.fancyholograms`.
+  makes `update` answer `false`. `close()` removes every hologram the provider placed and stops the provider. The
+  owner calls it in `onDisable`, after `PlaceholderRegistration.unregister` and `Menus.shutdown` and before
+  `Scheduler.close`, and before detecting again. `create`, `update`, `move`, `remove`, `exists`, `ids` and
+  `removeAll` answer `false` or nothing found while the provider is closed or the hologram plugin is disabled or
+  fails, and failures are reported under `hook.<plugin key>`, such as `hook.fancyholograms`.
   `HologramProvider.plugin()` is `null` for a provider bound to no hologram plugin, and a later version may add
   `HologramPlugin` constants.
 - Catalog entries `alaz.decentholograms`, `alaz.fancyholograms`, `alaz.holograms`, `alaz.hologramlib` and

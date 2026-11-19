@@ -176,8 +176,12 @@
  * <h2>At disable</h2>
  *
  * <p>At disable, a plugin calls {@link so.alaz.taffy.hooks.PlaceholderRegistration#unregister()} first, before
- * {@code Scheduler.close}, so that no placeholder request reaches the plugin while it shuts down. It then calls
- * {@link so.alaz.taffy.hooks.HologramProvider#close()} on each hologram provider it holds, also before
- * {@code Scheduler.close}.
+ * {@code Scheduler.close}, so that no placeholder request reaches the plugin while it shuts down.
+ *
+ * <p>The provider removes its holograms when the owner's {@code PluginDisableEvent} fires, before {@code onDisable}.
+ * In {@code onDisable}, after {@code Menus.shutdown} when the plugin uses {@code taffy-gui} and before
+ * {@code Scheduler.close}, the plugin calls {@link so.alaz.taffy.hooks.HologramProvider#close()} on each provider it
+ * holds, which removes any hologram placed since and stops the provider. Both run on the thread that disables the
+ * owner, which on Folia is the global region thread only when the owner disables itself from there.
  */
 package so.alaz.taffy.hooks;

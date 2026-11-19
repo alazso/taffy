@@ -42,8 +42,9 @@ import java.util.Set;
  * if it found nothing. An {@link Error} other than a {@link LinkageError} propagates.
  *
  * <p>Call every method on the server's global thread: the main thread on Paper and the global region thread on Folia.
- * The provider's own records are concurrent, but it calls the hologram plugin on the calling thread, and a hologram
- * plugin is to be called only from the global thread.
+ * {@link #close()} is the exception: it runs on the thread that disables the owner, from its {@code onDisable}. The
+ * provider calls the hologram plugin on the calling thread, so a hologram plugin is called from the global thread
+ * except while the owner disables. The provider's own records are concurrent, so the provider itself is thread-safe.
  */
 public interface HologramProvider {
 
@@ -199,8 +200,7 @@ public interface HologramProvider {
 
     /**
      * Removes every hologram this provider placed that still stands. The provider does this itself when the owner's
-     * {@code PluginDisableEvent} fires, before the owner's {@code onDisable}, so a call from {@code onDisable} removes
-     * only a hologram placed since.
+     * {@code PluginDisableEvent} fires, before the owner's {@code onDisable}.
      *
      * @return how many holograms were removed
      */
@@ -209,7 +209,10 @@ public interface HologramProvider {
     /**
      * Removes every hologram this provider placed and stops the provider: its listener is unregistered, and every
      * later call answers {@code false}, {@code 0} or an empty set. A second call does nothing. The owner calls it in
-     * {@code onDisable}, before {@code Scheduler.close}.
+     * {@code onDisable}, after {@code PlaceholderRegistration.unregister} and {@code Menus.shutdown} and before
+     * {@code Scheduler.close}, on the thread that disables it: on Folia the global region thread only when the owner
+     * disables itself from there, and Folia's shutdown thread while the server stops. A removal the hologram plugin
+     * refuses or fails is logged and reported like any failed call.
      */
     void close();
 }
