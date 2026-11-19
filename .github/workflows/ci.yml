@@ -58,6 +58,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Check version and credentials
         id: gate
@@ -84,13 +86,17 @@ jobs:
           distribution: temurin
           java-version: "25"
 
+      # No Gradle User Home cache and no build cache: entries restored from other jobs and workflows
+      # can hold outputs written while tests ran third-party code, and this job holds the publish secret.
       - name: Set up Gradle
         if: steps.gate.outputs.publish == 'true'
         uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-disabled: true
 
       - name: Publish to repo.alaz.so/snapshots
         if: steps.gate.outputs.publish == 'true'
         env:
           ALAZSO_REPO_USER: ${{ secrets.ALAZSO_REPO_USER }}
           ALAZSO_REPO_TOKEN: ${{ secrets.ALAZSO_REPO_TOKEN }}
-        run: ./gradlew publishAllPublicationsToAlazsoRepository --no-configuration-cache --stacktrace
+        run: ./gradlew publishAllPublicationsToAlazsoRepository --no-build-cache --no-configuration-cache --stacktrace

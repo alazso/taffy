@@ -5,6 +5,10 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Changed
+- Releases are built and tested in a job that holds no credentials, and only the publish job holds
+  them.
+
 ### Fixed
 - `Items.giveOrDrop` leaves the given `ItemStack` unchanged: it adds a copy, so the same stack can be given
   to several players without being reduced to what was left over.
