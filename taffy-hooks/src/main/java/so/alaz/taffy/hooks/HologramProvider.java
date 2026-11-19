@@ -37,14 +37,16 @@ import java.util.Set;
  * {@code new Location(event.getWorld(), x, y, z)}. A location kept from before the world unloaded may still point
  * at the unloaded world.
  *
- * <p>A failure inside the hologram plugin is logged as a warning, at most once a minute with its stack the first
- * time, and reported under {@code hook.<plugin key>}, such as {@code hook.decentholograms}; the call then answers as
- * if it found nothing. An {@link Error} other than a {@link LinkageError} propagates.
+ * <p>For a provider bound to a hologram plugin, a failure inside the hologram plugin is logged as a warning, at most
+ * once a minute with its stack the first time, and reported under {@code hook.<plugin key>}, such as
+ * {@code hook.decentholograms}; the call then answers as if it found nothing. An {@link Error} other than a
+ * {@link LinkageError} propagates.
  *
  * <p>Call every method on the server's global thread: the main thread on Paper and the global region thread on Folia.
- * {@link #close()} is the exception: it runs on the thread that disables the owner, from its {@code onDisable}. The
- * provider calls the hologram plugin on the calling thread, so a hologram plugin is called from the global thread
- * except while the owner disables. The provider's own records are concurrent, so the provider itself is thread-safe.
+ * {@link #close()} from the owner's {@code onDisable} is the exception: it runs on the thread that disables the owner.
+ * For a provider bound to a hologram plugin, the provider calls the hologram plugin on the calling thread, so the
+ * hologram plugin is called from the global thread except while the owner disables. The provider's own records are
+ * concurrent, so the provider itself is thread-safe.
  */
 public interface HologramProvider {
 
@@ -207,12 +209,15 @@ public interface HologramProvider {
     int removeAll();
 
     /**
-     * Removes every hologram this provider placed and stops the provider: its listener is unregistered, and every
-     * later call answers {@code false}, {@code 0} or an empty set. A second call does nothing. The owner calls it in
-     * {@code onDisable}, after {@code PlaceholderRegistration.unregister} and {@code Menus.shutdown} and before
-     * {@code Scheduler.close}, on the thread that disables it: on Folia the global region thread only when the owner
-     * disables itself from there, and Folia's shutdown thread while the server stops. A removal the hologram plugin
-     * refuses or fails is logged and reported like any failed call.
+     * Removes every hologram this provider placed and stops the provider: its listener is unregistered,
+     * {@link #available()} then answers {@code false}, and {@link #create}, {@link #update}, {@link #move},
+     * {@link #remove}, {@link #exists}, {@link #ids()} and {@link #removeAll()} answer {@code false}, {@code 0} or an
+     * empty set. A second call does nothing. The owner calls it in {@code onDisable}, after
+     * {@code PlaceholderRegistration.unregister} and {@code Menus.shutdown} and before {@code Scheduler.close}, on the
+     * thread that disables it: on Folia the global region thread only when the owner disables itself from there, and
+     * Folia's shutdown thread while the server stops. Before detecting again, such as when the owner reloads its
+     * settings, the owner calls it on the global thread like any other method. A removal the hologram plugin refuses
+     * or fails is logged and reported like any failed call.
      */
     void close();
 }
