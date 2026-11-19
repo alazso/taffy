@@ -20,11 +20,11 @@ import java.util.Set;
  * hologram this provider placed, and {@link #create} refuses a name another hologram holds, such as one a server
  * owner made with the hologram plugin's own commands or another plugin placed under the same prefix.
  *
- * <p>Every hologram is temporary: it is not saved, so it is gone after a restart and the owner places it again. A
- * hologram is also removed when its world unloads. A line is MiniMessage, as in {@code <gold>Daily crate}; the
- * provider converts it for a hologram plugin that reads legacy colour codes. A PlaceholderAPI placeholder in a line
- * is filled in for each viewer by the hologram plugins whose {@link HologramPlugin#placeholdersPerViewer()} is
- * {@code true}.
+ * <p>Every hologram is temporary: it is not saved, so it is gone after a restart and the owner places it again. The
+ * provider removes every hologram it placed when the owner disables. A hologram is also removed when its world
+ * unloads. A line is MiniMessage, as in {@code <gold>Daily crate}; the provider converts it for a hologram plugin
+ * that reads legacy colour codes. A PlaceholderAPI placeholder in a line is filled in for each viewer by the hologram
+ * plugins whose {@link HologramPlugin#placeholdersPerViewer()} is {@code true}.
  *
  * <p>A failure inside the hologram plugin is logged as a warning, at most once a minute with its stack the first
  * time, and reported under {@code hook.<plugin key>}, such as {@code hook.decentholograms}; the call then answers as
@@ -46,8 +46,9 @@ public interface HologramProvider {
      * could not be hooked is warned about and reported under {@code hook.<plugin key>}.
      *
      * <p>Call on the server thread while the owner is enabled, normally from its {@code onEnable}: the provider
-     * registers a listener for the owner that removes a hologram when its world unloads, so each call adds one more
-     * listener until the owner disables.
+     * registers a listener for the owner that removes a hologram when its world unloads and removes every hologram
+     * the provider placed when the owner's {@code PluginDisableEvent} fires, before the owner's {@code onDisable}. So
+     * each call adds one more listener until the owner disables.
      *
      * @param owner the plugin that places holograms: its server's plugin manager is searched, its logger receives
      *     every warning, its name prefixes every hologram it places, and the provider's listener is registered for it
@@ -165,7 +166,9 @@ public interface HologramProvider {
     Set<String> ids();
 
     /**
-     * Removes every hologram this provider placed that still stands, such as from the owner's {@code onDisable}.
+     * Removes every hologram this provider placed that still stands. The provider does this itself when the owner's
+     * {@code PluginDisableEvent} fires, before the owner's {@code onDisable}, so a call from {@code onDisable} removes
+     * only a hologram placed since.
      *
      * @return how many holograms were removed
      */

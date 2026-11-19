@@ -13,9 +13,10 @@ All notable changes to Taffy are documented here. This project follows
   upward from it. Lines are MiniMessage (converted to `&` colour codes for DecentHolograms). Taffy keeps
   DecentHolograms and FancyHolograms from reading a `&` in a line as a colour code, and DecentHolograms from
   reading a `#` as a hex colour. Every call but `create` reaches only a hologram the provider placed, and `create`
-  refuses a name another hologram holds. A hologram is removed when its world unloads. `create`, `update`, `move`,
-  `remove`, `exists`, `ids` and `removeAll` answer `false` or nothing found while the hologram plugin is disabled
-  or fails, and failures are reported under `hook.<plugin key>`, such as `hook.fancyholograms`.
+  refuses a name another hologram holds. A hologram is removed when its world unloads, and the provider removes
+  every hologram it placed when its owner's `PluginDisableEvent` fires, before `onDisable`. `create`, `update`,
+  `move`, `remove`, `exists`, `ids` and `removeAll` answer `false` or nothing found while the hologram plugin is
+  disabled or fails, and failures are reported under `hook.<plugin key>`, such as `hook.fancyholograms`.
   `HologramProvider.plugin()` is `null` for a provider bound to no hologram plugin, and a later version may add
   `HologramPlugin` constants.
 - Catalog entries `alaz.decentholograms`, `alaz.fancyholograms`, `alaz.holograms`, `alaz.hologramlib` and

@@ -5,6 +5,7 @@ import org.bukkit.World;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.server.PluginDisableEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
@@ -35,6 +36,7 @@ final class PluginHolograms implements HologramProvider, Listener {
 
     private final HologramPlugin plugin;
     private final Plugin bound;
+    private final Plugin owner;
     private final String prefix;
     private final HologramBackend backend;
     private final ThrowLog throwLog;
@@ -42,13 +44,13 @@ final class PluginHolograms implements HologramProvider, Listener {
     private final String source;
     private final Map<String, UUID> placed = new ConcurrentHashMap<>();
 
-    PluginHolograms(HologramPlugin plugin, Plugin bound, String owner, HologramBackend backend, Logger logger,
-                    ErrorReports errors) {
+    PluginHolograms(HologramPlugin plugin, Plugin bound, Plugin owner, HologramBackend backend, ErrorReports errors) {
         this.plugin = plugin;
         this.bound = bound;
-        this.prefix = prefix(owner);
+        this.owner = owner;
+        this.prefix = prefix(owner.getName());
         this.backend = backend;
-        this.throwLog = new ThrowLog(logger);
+        this.throwLog = new ThrowLog(owner.getLogger());
         this.errors = errors;
         this.source = Detection.source(plugin.plugin());
     }
@@ -59,8 +61,7 @@ final class PluginHolograms implements HologramProvider, Listener {
         Objects.requireNonNull(errors, "errors");
         Logger logger = owner.getLogger();
         return Detection.run(plugin.plugin(), plugin.probe(), switchedOn, presence, bound -> {
-            PluginHolograms holograms = new PluginHolograms(plugin, bound, owner.getName(), backends.apply(bound),
-                logger, errors);
+            PluginHolograms holograms = new PluginHolograms(plugin, bound, owner, backends.apply(bound), errors);
             owner.getServer().getPluginManager().registerEvents(holograms, owner);
             return holograms;
         }, logger, errors);
@@ -227,6 +228,18 @@ final class PluginHolograms implements HologramProvider, Listener {
             if (entry.getValue().equals(world)) {
                 remove(entry.getKey());
             }
+        }
+    }
+
+    // Paper fires a plugin's PluginDisableEvent before its onDisable and before its listeners are unregistered. The
+    // ids placed through the hologram plugin are forgotten when it disables, so none survives a reload of it.
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPluginDisable(PluginDisableEvent event) {
+        Plugin disabling = event.getPlugin();
+        if (disabling == owner) {
+            removeAll();
+        } else if (disabling == bound) {
+            placed.clear();
         }
     }
 

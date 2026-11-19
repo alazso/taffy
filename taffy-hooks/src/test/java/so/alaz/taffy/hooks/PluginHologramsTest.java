@@ -3,6 +3,7 @@ package so.alaz.taffy.hooks;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.Server;
+import org.bukkit.event.server.PluginDisableEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
@@ -31,6 +32,9 @@ import static org.mockito.Mockito.when;
 
 final class PluginHologramsTest {
 
+    private final PluginManager pluginManager = mock(PluginManager.class);
+    private final CapturedLog logged = new CapturedLog();
+    private final Plugin owner = owner();
     private final Plugin bound = mock(Plugin.class);
     private final World world = mock(World.class);
     private final Location here = new Location(world, 1.5, 64, -2);
@@ -40,7 +44,6 @@ final class PluginHologramsTest {
     private final List<String> reported = new ArrayList<>();
     private final List<Throwable> failures = new ArrayList<>();
     private final ErrorReports errors = new ErrorReports();
-    private final CapturedLog logged = new CapturedLog();
     private @Nullable Throwable failure;
     private boolean refuseRemoval;
     private final Set<String> foreign = new HashSet<>();
@@ -102,7 +105,13 @@ final class PluginHologramsTest {
     }
 
     private PluginHolograms holograms() {
-        return new PluginHolograms(HologramPlugin.DECENTHOLOGRAMS, bound, "Slate", backend, logged.logger, errors);
+        return new PluginHolograms(HologramPlugin.DECENTHOLOGRAMS, bound, owner, backend, errors);
+    }
+
+    private static PluginDisableEvent disabling(Plugin plugin) {
+        PluginDisableEvent event = mock(PluginDisableEvent.class);
+        when(event.getPlugin()).thenReturn(plugin);
+        return event;
     }
 
     @Test
@@ -293,6 +302,40 @@ final class PluginHologramsTest {
     }
 
     @Test
+    void theOwnersDisableRemovesTheHologramsItPlacedBeforeOnDisable() {
+        PluginHolograms holograms = holograms();
+        holograms.create("a", here, List.of());
+        holograms.create("b", here, List.of());
+        lines.put("slate_c", List.of());
+        lines.put("other_a", List.of());
+
+        holograms.onPluginDisable(disabling(mock(Plugin.class)));
+        assertThat(holograms.ids()).containsExactly("a", "b");
+
+        holograms.onPluginDisable(disabling(owner));
+
+        assertThat(lines).containsOnlyKeys("slate_c", "other_a");
+        assertThat(holograms.ids()).isEmpty();
+        assertThat(holograms.removeAll()).isZero();
+    }
+
+    @Test
+    void theHologramPluginsDisableForgetsTheHologramsPlacedThroughIt() {
+        PluginHolograms holograms = holograms();
+        holograms.create("a", here, List.of());
+        calls.clear();
+
+        holograms.onPluginDisable(disabling(bound));
+
+        assertThat(holograms.exists("a")).isFalse();
+        assertThat(holograms.update("a", List.of("again"))).isFalse();
+        assertThat(holograms.removeAll()).isZero();
+        assertThat(holograms.ids()).isEmpty();
+        assertThat(calls).isEmpty();
+        assertThat(lines).containsOnlyKeys("slate_a");
+    }
+
+    @Test
     void theIdsAreThosePlacedThatStillStandAndCannotBeChanged() {
         PluginHolograms holograms = holograms();
         holograms.create("b", here, List.of());
@@ -392,8 +435,6 @@ final class PluginHologramsTest {
         when(bound.isEnabled()).thenReturn(false);
         assertThat(holograms.available()).isFalse();
     }
-
-    private final PluginManager pluginManager = mock(PluginManager.class);
 
     private Plugin owner() {
         Plugin owner = mock(Plugin.class);
