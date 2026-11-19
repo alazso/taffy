@@ -6,6 +6,12 @@ plugins {
 // clean is not forwarded: Gradle cannot clean a plugin build in the invocation that loads plugins from it.
 val tooling: IncludedBuild = gradle.includedBuild("tooling")
 
+val skipPublishedReleases: File = layout.projectDirectory.file("gradle/skip-published-releases.gradle.kts").asFile
+
+subprojects {
+    apply(from = skipPublishedReleases)
+}
+
 tasks.named("assemble") {
     dependsOn(tooling.task(":taffy-gradle:assemble"), tooling.task(":taffy-catalog:generateCatalogAsToml"))
 }

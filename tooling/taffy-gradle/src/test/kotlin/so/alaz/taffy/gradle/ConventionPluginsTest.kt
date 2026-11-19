@@ -8,6 +8,8 @@ import org.gradle.testkit.runner.GradleRunner
 import org.gradle.testkit.runner.TaskOutcome
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 
 class ConventionPluginsTest {
 
@@ -717,6 +719,47 @@ class ConventionPluginsTest {
         assertThat(result.output).contains("alazso=https://repo.alaz.so/snapshots")
         val pom = projectDirectory.resolve("build/publications/library/pom-default.xml").readText()
         assertThat(pom).contains("<url>https://example.org/demo</url>")
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["so.alaz.taffy.paper-api", "so.alaz.taffy.library"])
+    fun aPublishingPluginPublishesAReleaseTheAlazsoRepositoryAlreadyHas(plugin: String) {
+        FakeMavenRepository().use { repository ->
+            repository.putRelease("so/alaz/demo", "demo", "1.2.3")
+            project()
+            write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+            write(
+                "build.gradle.kts",
+                """
+                plugins {
+                    id("$plugin")
+                }
+                publishing.repositories.named<MavenArtifactRepository>("alazso") {
+                    url = uri("${repository.url}")
+                    isAllowInsecureProtocol = true
+                }
+                """,
+            )
+            write("src/main/java/so/alaz/demo/Covered.java", covered)
+
+            val credentials = mapOf("ALAZSO_REPO_USER" to "demo", "ALAZSO_REPO_TOKEN" to "demo")
+            val result = runner("publishLibraryPublicationToAlazsoRepository")
+                .withEnvironment(System.getenv() + credentials)
+                .build()
+
+            assertThat(result.task(":publishLibraryPublicationToAlazsoRepository")?.outcome)
+                .isEqualTo(TaskOutcome.SUCCESS)
+            assertThat(result.output).doesNotContain("is already complete in the alazso repository")
+            val version = "so/alaz/demo/demo/1.2.3"
+            assertThat(repository.uploadedFiles()).containsExactlyInAnyOrder(
+                "$version/demo-1.2.3.jar",
+                "$version/demo-1.2.3.pom",
+                "$version/demo-1.2.3-sources.jar",
+                "$version/demo-1.2.3-javadoc.jar",
+                "$version/demo-1.2.3.module",
+                "so/alaz/demo/demo/maven-metadata.xml",
+            )
+        }
     }
 
     @Test

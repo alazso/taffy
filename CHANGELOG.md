@@ -17,6 +17,8 @@ All notable changes to Taffy are documented here. This project follows
   `miniplaceholders`, instead of the error reaching the caller of `render`, `plain` or `send`.
 - A manual Release run refuses a `-SNAPSHOT` version, except as a dry run, and a tag that does not exist
   or is not at the commit being built, so it no longer publishes a snapshot or creates a tag.
+- A release publish that failed part way can be run again and uploads only the modules that are
+  missing.
 
 ## [0.1.0] - 2026-11-18
 

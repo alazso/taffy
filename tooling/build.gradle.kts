@@ -13,7 +13,10 @@ allprojects {
     version = taffy.getProperty("version")
 }
 
+val skipPublishedReleases: File = layout.projectDirectory.file("../gradle/skip-published-releases.gradle.kts").asFile
+
 subprojects {
+    apply(from = skipPublishedReleases)
     plugins.withId("maven-publish") {
         configure<PublishingExtension> {
             repositories {
