@@ -18,6 +18,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 // FancyHolograms renders MiniMessage and PlaceholderAPI for each viewer, but renders placeholders again only on a text
 // update interval, which a hologram has none of by default. Its removeHologram also rewrites holograms.yml, so a
@@ -28,10 +29,10 @@ final class FancyHologramsBackend {
     static final int NO_REFRESH = -1;
 
     // FancyHolograms reads & colour codes and &#RRGGBB hex colours in a line before MiniMessage does, so a zero-width
-    // space after every literal & keeps it from reading one in the text.
+    // non-joiner after every literal & keeps it from reading one in the text.
     private static final TextReplacementConfig LITERAL_AMPERSANDS = TextReplacementConfig.builder()
         .matchLiteral("&")
-        .replacement(match -> match.content(match.content() + PluginHolograms.ZERO_WIDTH_SPACE))
+        .replacement(match -> match.content(match.content() + PluginHolograms.ZERO_WIDTH_NON_JOINER))
         .build();
 
     private FancyHologramsBackend() {
@@ -53,13 +54,17 @@ final class FancyHologramsBackend {
         ApiLink.instanceMethod(Hologram.class, "queueUpdate", void.class);
         ApiLink.instanceMethod(Hologram.class, "getViewers", Set.class);
         ApiLink.instanceMethod(Hologram.class, "forceHideHologram", void.class, Player.class);
-        Placements<Hologram> placements = new Placements<>(name -> manager().getHologram(name).orElse(null),
+        return create(() -> FancyHologramsPlugin.get().getHologramManager());
+    }
+
+    static HologramBackend create(Supplier<HologramManager> managers) {
+        Placements<Hologram> placements = new Placements<>(name -> managers.get().getHologram(name).orElse(null),
             FancyHologramsBackend::hide);
         return HologramBackend.of(
-            name -> manager().getHologram(name).isPresent(),
+            name -> managers.get().getHologram(name).isPresent(),
             name -> placements.standing(name) != null,
             (name, location, lines) -> {
-                HologramManager manager = manager();
+                HologramManager manager = managers.get();
                 TextHologramData data = new TextHologramData(name, location);
                 data.setPersistent(false);
                 write(data, lines);
@@ -85,15 +90,11 @@ final class FancyHologramsBackend {
                     return false;
                 }
                 if (!Bukkit.isStopping()) {
-                    manager().removeHologram(hologram);
+                    managers.get().removeHologram(hologram);
                 }
                 placements.forget(name, hologram);
                 return true;
             });
-    }
-
-    private static HologramManager manager() {
-        return FancyHologramsPlugin.get().getHologramManager();
     }
 
     // A hologram FancyHolograms no longer holds is no longer drawn by its visibility task, so its viewers keep it until
@@ -138,8 +139,10 @@ final class FancyHologramsBackend {
 
     static int refresh(List<String> lines) {
         for (String line : lines) {
-            if (line.indexOf('%') >= 0) {
-                return PLACEHOLDER_REFRESH_MILLIS;
+            for (int i = line.indexOf('%'); i >= 0; i = line.indexOf('%', i + 1)) {
+                if (!line.startsWith(PluginHolograms.ZERO_WIDTH_NON_JOINER, i + 1)) {
+                    return PLACEHOLDER_REFRESH_MILLIS;
+                }
             }
         }
         return NO_REFRESH;

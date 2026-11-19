@@ -7,6 +7,10 @@ import de.oliver.fancyholograms.api.data.TextHologramData;
 import eu.decentsoftware.holograms.api.DHAPI;
 import eu.decentsoftware.holograms.api.DecentHolograms;
 import eu.decentsoftware.holograms.api.DecentHologramsAPI;
+import net.kyori.adventure.text.minimessage.MiniMessage;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
+import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.thenextlvl.hologram.Hologram;
 import net.thenextlvl.hologram.line.TextHologramLine;
 import org.bukkit.Location;
@@ -23,6 +27,7 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -82,13 +87,14 @@ final class HologramBackendsTest {
     void decentHologramsShowsALiteralAmpersandOrHashAsWritten() {
         Pattern solid = Pattern.compile("[<{]#([A-Fa-f0-9]{6})[}>]|[&\u00a7]?#([A-Fa-f0-9]{6})");
         Pattern code = Pattern.compile("&[0-9a-fk-orxA-FK-ORX]");
-        String zws = PluginHolograms.ZERO_WIDTH_SPACE;
+        String zwnj = PluginHolograms.ZERO_WIDTH_NON_JOINER;
+        assertThat(zwnj.codePoints().toArray()).containsExactly(0x200C);
 
         List<String> lines = DecentHologramsBackend.legacy(List.of("Q&A board", "Ticket #abcdef", "R&D",
             "\\<#abcdef>x", "{#abcdef}", "&<bold>a</bold>", "#<hover:show_text:'x'>abcdef</hover>"));
 
-        assertThat(lines).containsExactly("Q&" + zws + "A board", "Ticket #" + zws + "abcdef", "R&" + zws + "D",
-            "<#" + zws + "abcdef>x", "{#" + zws + "abcdef}", "&" + zws + "&la", "#" + zws + "abcdef");
+        assertThat(lines).containsExactly("Q&" + zwnj + "A board", "Ticket #" + zwnj + "abcdef", "R&" + zwnj + "D",
+            "<#" + zwnj + "abcdef>x", "{#" + zwnj + "abcdef}", "&" + zwnj + "&la", "#" + zwnj + "abcdef");
         for (String line : lines) {
             assertThat(solid.matcher(line).find()).as(line).isFalse();
             assertThat(code.matcher(line.replace("&l", "")).find()).as(line).isFalse();
@@ -107,14 +113,48 @@ final class HologramBackendsTest {
     @Test
     void fancyHologramsShowsALiteralAmpersandAsWritten() {
         TextHologramData data = mock(TextHologramData.class);
-        String zws = PluginHolograms.ZERO_WIDTH_SPACE;
+        String zwnj = PluginHolograms.ZERO_WIDTH_NON_JOINER;
 
         FancyHologramsBackend.write(data, List.of("Fish&chips", "<gold>R&D", "&6Old &#abcdef", "<gold>Crate",
             "%slate_keys% & more", ""));
 
-        verify(data).setText(List.of("Fish&" + zws + "chips", "<gold>R&" + zws + "D",
-            "&" + zws + "6Old &" + zws + "#abcdef", "<gold>Crate", "%slate_keys% &" + zws + " more", ""));
+        verify(data).setText(List.of("Fish&" + zwnj + "chips", "<gold>R&" + zwnj + "D",
+            "&" + zwnj + "6Old &" + zwnj + "#abcdef", "<gold>Crate", "%slate_keys% &" + zwnj + " more", ""));
         verify(data).setTextUpdateInterval(FancyHologramsBackend.PLACEHOLDER_REFRESH_MILLIS);
+    }
+
+    @Test
+    void literalTextShowsAsWrittenWhateverItHolds() {
+        String zwnj = PluginHolograms.ZERO_WIDTH_NON_JOINER;
+        TagResolver resolver = TagResolver.resolver(TagResolver.standard(), Placeholder.unparsed("player_name", "x"));
+
+        for (String input : List.of("<red>x</red>", "<sound:entity.ender_dragon.death>", "<particle:FLAME>",
+            "&cR&D \u00a7c", "%player_name%", "{player}", "\\<b>\\", "<player_name>", "plain", "")) {
+            String literal = HologramProvider.literal(input);
+            String shown = PlainTextComponentSerializer.plainText()
+                .serialize(MiniMessage.miniMessage().deserialize(literal, resolver));
+
+            assertThat(shown.replace(zwnj, "")).as(input).isEqualTo(input);
+            for (int i = 0; i < literal.length(); i++) {
+                if ("<&%{\u00a7".indexOf(literal.charAt(i)) >= 0) {
+                    assertThat(literal.startsWith(zwnj, i + 1)).as(literal).isTrue();
+                }
+            }
+        }
+        assertThat(HologramProvider.literal("\\")).isEqualTo("\\\\");
+        assertThatThrownBy(() -> HologramProvider.literal(null)).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void literalTextReachesNoHologramPluginAsACodeOrAPlaceholder() {
+        String line = DecentHologramsBackend.legacy(List.of(HologramProvider.literal("%p_x% {player} <#abcdef>")))
+            .getFirst();
+
+        assertThat(line).doesNotContain("%p", "{p", "<#");
+        assertThat(FancyHologramsBackend.refresh(List.of(HologramProvider.literal("100%"))))
+            .isEqualTo(FancyHologramsBackend.NO_REFRESH);
+        assertThat(FancyHologramsBackend.refresh(List.of(HologramProvider.literal("100%") + " %player_name%")))
+            .isEqualTo(FancyHologramsBackend.PLACEHOLDER_REFRESH_MILLIS);
     }
 
     @Test
@@ -221,6 +261,16 @@ final class HologramBackendsTest {
     void hologramLibJoinsTheLinesIntoOneText() {
         assertThat(HologramLibBackend.text(List.of("<gold>Crate", "line two"))).isEqualTo("<gold>Crate\nline two");
         assertThat(HologramLibBackend.text(List.of())).isEmpty();
+    }
+
+    @Test
+    void hologramLibOptsEveryHologramIntoPlaceholderApi() {
+        TextHologram hologram = mock(TextHologram.class);
+
+        HologramLibBackend.prepare(hologram, "<gold>%player_name%");
+
+        verify(hologram).setPlaceholderApiEnabled(true);
+        verify(hologram).setMiniMessageText("<gold>%player_name%");
     }
 
     @Test

@@ -20,6 +20,9 @@ import java.util.function.Supplier;
 // done again two ticks later on the hologram object itself. Those tasks run for HologramLib's plugin, which stays
 // enabled while the owner disables. A TextHologram starts a timer when it is built, so text is parsed before one is,
 // and one that fails to spawn is killed. Its names are unique and never replaced.
+// Every hologram opts into PlaceholderAPI. HologramLib then fills its text for each viewer in a PacketEvents listener
+// as the text display's metadata is sent, which is when a player starts seeing it and after each update, and parses
+// the result as MiniMessage. HologramLib registers that listener only when PlaceholderAPI is enabled before it.
 final class HologramLibBackend {
 
     static final long AFTER_SPAWN_TICKS = 2;
@@ -36,6 +39,7 @@ final class HologramLibBackend {
         ApiLink.instanceMethod(HologramManager.class, "remove", boolean.class, Hologram.class);
         ApiLink.constructor(TextHologram.class, String.class);
         ApiLink.instanceMethod(TextHologram.class, "setMiniMessageText", TextHologram.class, String.class);
+        ApiLink.instanceMethod(TextHologram.class, "setPlaceholderApiEnabled", TextHologram.class, boolean.class);
         ApiLink.instanceMethod(Hologram.class, "update", Hologram.class);
         ApiLink.instanceMethod(Hologram.class, "teleport", Hologram.class, Location.class);
         ApiLink.instanceMethod(Hologram.class, "getLocation", Location.class);
@@ -79,7 +83,7 @@ final class HologramLibBackend {
     private static TextHologram spawn(HologramManager manager, String name, Location location, String text) {
         TextHologram hologram = new TextHologram(name);
         try {
-            hologram.setMiniMessageText(text);
+            prepare(hologram, text);
             return manager.spawn(hologram, location);
         } catch (RuntimeException | LinkageError failure) {
             try {
@@ -89,6 +93,11 @@ final class HologramLibBackend {
             }
             throw failure;
         }
+    }
+
+    static void prepare(TextHologram hologram, String text) {
+        hologram.setPlaceholderApiEnabled(true);
+        hologram.setMiniMessageText(text);
     }
 
     // Hologram.kill acts on the object, where HologramManager.remove(Hologram) removes whatever holds its name.

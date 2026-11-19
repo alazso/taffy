@@ -25,11 +25,11 @@ final class DecentHologramsBackend {
         .hexColors()
         .build();
 
-    // A zero-width space after every literal & and # keeps DecentHolograms from reading a colour code or a hex colour
-    // in the text, including one that continues in the next component.
+    // A zero-width non-joiner after every literal & and # keeps DecentHolograms from reading a colour code or a hex
+    // colour in the text, including one that continues in the next component.
     private static final TextReplacementConfig LITERAL_CODES = TextReplacementConfig.builder()
         .match("[&#]")
-        .replacement(match -> match.content(match.content() + PluginHolograms.ZERO_WIDTH_SPACE))
+        .replacement(match -> match.content(match.content() + PluginHolograms.ZERO_WIDTH_NON_JOINER))
         .build();
 
     private DecentHologramsBackend() {

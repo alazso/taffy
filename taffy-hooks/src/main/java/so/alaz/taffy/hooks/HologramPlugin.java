@@ -15,8 +15,11 @@ public enum HologramPlugin {
     FANCYHOLOGRAMS("FancyHolograms", "fancyholograms", "de.oliver.fancyholograms.api.FancyHologramsPlugin", true),
     /** Holograms by TheNextLvl, key {@code holograms}. */
     HOLOGRAMS("Holograms", "holograms", "net.thenextlvl.hologram.HologramProvider", true),
-    /** HologramLib, key {@code hologramlib}. It needs PacketEvents installed. */
-    HOLOGRAMLIB("HologramLib", "hologramlib", "com.maximde.hologramlib.HologramLib", false);
+    /**
+     * HologramLib, key {@code hologramlib}. It needs PacketEvents installed, and fills a placeholder when a player
+     * starts seeing the hologram and when its lines are replaced.
+     */
+    HOLOGRAMLIB("HologramLib", "hologramlib", "com.maximde.hologramlib.HologramLib", true);
 
     private final String plugin;
     private final String key;
@@ -49,10 +52,10 @@ public enum HologramPlugin {
     }
 
     /**
-     * Whether the plugin fills in PlaceholderAPI placeholders such as {@code %player_name%} for each viewer. Where it
-     * does not, a placeholder in a line shows as written.
+     * Whether the plugin fills in PlaceholderAPI placeholders such as {@code %player_name%} for each viewer when
+     * PlaceholderAPI is installed. Where it does not, a placeholder in a line shows as written.
      *
-     * @return {@code true} for DecentHolograms, FancyHolograms and Holograms; {@code false} for HologramLib
+     * @return {@code true} for every plugin in this version
      */
     public boolean placeholdersPerViewer() {
         return placeholdersPerViewer;

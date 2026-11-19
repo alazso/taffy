@@ -33,7 +33,8 @@ final class PluginHolograms implements HologramProvider, Listener {
 
     private static final Pattern ID = Pattern.compile("[a-z0-9_-]{1,48}");
     private static final Pattern OUTSIDE_OWNER = Pattern.compile("[^a-z0-9-]");
-    static final String ZERO_WIDTH_SPACE = Character.toString(0x200B);
+    // The vanilla client font gives U+200C no width and no glyph; U+200B falls through to Unifont, which draws a box.
+    static final String ZERO_WIDTH_NON_JOINER = Character.toString(0x200C);
 
     private final HologramPlugin plugin;
     private final Plugin bound;
@@ -71,6 +72,22 @@ final class PluginHolograms implements HologramProvider, Listener {
 
     static String prefix(String owner) {
         return OUTSIDE_OWNER.matcher(owner.toLowerCase(Locale.ROOT)).replaceAll("-") + "_";
+    }
+
+    // Each listed character starts a MiniMessage tag, a colour code or a placeholder in a supported hologram plugin,
+    // and a zero-width non-joiner after it stops that.
+    static String literal(String text) {
+        Objects.requireNonNull(text, "text");
+        StringBuilder out = new StringBuilder(text.length() + 16);
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            switch (c) {
+                case '\\' -> out.append("\\\\");
+                case '<', '&', '\u00a7', '%', '{' -> out.append(c).append(ZERO_WIDTH_NON_JOINER);
+                default -> out.append(c);
+            }
+        }
+        return out.toString();
     }
 
     @Override

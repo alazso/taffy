@@ -21,10 +21,21 @@ import java.util.Set;
  * owner made with the hologram plugin's own commands or another plugin placed under the same prefix.
  *
  * <p>Every hologram is temporary: it is not saved, so it is gone after a restart and the owner places it again. The
- * provider removes every hologram it placed when the owner disables. A hologram is also removed when its world
- * unloads. A line is MiniMessage, as in {@code <gold>Daily crate}; the provider converts it for a hologram plugin
- * that reads legacy colour codes. A PlaceholderAPI placeholder in a line is filled in for each viewer by the hologram
- * plugins whose {@link HologramPlugin#placeholdersPerViewer()} is {@code true}.
+ * provider removes every hologram it placed when the owner disables. A line is MiniMessage, as in
+ * {@code <gold>Daily crate}; the provider converts it for a hologram plugin that reads legacy colour codes. A
+ * PlaceholderAPI placeholder in a line is filled in for each viewer, when PlaceholderAPI is installed, by the hologram
+ * plugins whose {@link HologramPlugin#placeholdersPerViewer()} is {@code true}. A line is template text from the
+ * plugin or the server owner. Text a player or another untrusted source supplied goes into a line only through
+ * {@link #literal}.
+ *
+ * <p>Nothing tells the owner when a hologram goes. The provider removes a hologram when its world unloads, and the
+ * hologram plugin drops it on its own reload, such as DecentHolograms on {@code /dh reload}, or when it disables.
+ * {@link #update}, {@link #move} and {@link #exists} then answer {@code false}, and {@link #ids()} no longer lists
+ * it. To keep a hologram standing, the owner keeps its id, location and lines, calls {@link #create} when
+ * {@link #update} answers {@code false}, and places the holograms of a world again from its own
+ * {@code WorldLoadEvent} listener with a location built on the loaded world, as in
+ * {@code new Location(event.getWorld(), x, y, z)}. A location kept from before the world unloaded may still point
+ * at the unloaded world.
  *
  * <p>A failure inside the hologram plugin is logged as a warning, at most once a minute with its stack the first
  * time, and reported under {@code hook.<plugin key>}, such as {@code hook.decentholograms}; the call then answers as
@@ -75,6 +86,24 @@ public interface HologramProvider {
     }
 
     /**
+     * Writes text so that a line shows it as written. Text a player or another untrusted source supplied, such as a
+     * display name or an item name, goes through this before it is joined into a line, as in
+     * {@code "<gold>Opened by " + HologramProvider.literal(name)}: otherwise the hologram plugin reads MiniMessage tags
+     * and colour codes in it, and fills in PlaceholderAPI placeholders such as {@code %server_online%} for each viewer.
+     * The result is for the text of a line, not for an argument inside a tag.
+     *
+     * <p>The result doubles every backslash and puts a zero-width non-joiner (U+200C) after every {@code <},
+     * {@code &}, {@code %}, <code>&#123;</code> and section sign.
+     *
+     * @param text the text to show as written
+     * @return the text to join into a line
+     * @throws NullPointerException if {@code text} is {@code null}
+     */
+    static String literal(String text) {
+        return PluginHolograms.literal(text);
+    }
+
+    /**
      * The hologram plugin this provider places holograms through.
      *
      * @return the hologram plugin, or {@code null} for a provider bound to no hologram plugin
@@ -95,7 +124,8 @@ public interface HologramProvider {
      *
      * @param id the hologram's id
      * @param location where the hologram stands, at the bottom centre of its text; the provider keeps a copy
-     * @param lines the hologram's lines in MiniMessage, top first; may be empty
+     * @param lines the hologram's lines in MiniMessage, top first, with untrusted text put through {@link #literal};
+     *     may be empty
      * @return {@code true} if the hologram was placed, or the placement was accepted to be done on the location's
      *     region thread a little later; {@code false} if the provider is not {@linkplain #available() available}, the
      *     location has no world or its world has unloaded, any hologram already holds the prefixed name, or the
@@ -109,7 +139,8 @@ public interface HologramProvider {
      * Replaces every line of a hologram.
      *
      * @param id the hologram's id
-     * @param lines the new lines in MiniMessage, top first; may be empty
+     * @param lines the new lines in MiniMessage, top first, with untrusted text put through {@link #literal}; may be
+     *     empty
      * @return {@code true} if the lines were replaced, or the replacement was accepted to be done on the region
      *     thread of the hologram's location a little later; {@code false} if the provider is not
      *     {@linkplain #available() available}, no hologram this provider placed with this id stands, or the hologram

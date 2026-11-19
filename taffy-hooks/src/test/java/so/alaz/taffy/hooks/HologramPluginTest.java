@@ -20,9 +20,8 @@ final class HologramPluginTest {
     }
 
     @Test
-    void onlyHologramLibShowsPlaceholdersAsWritten() {
-        assertThat(HologramPlugin.values()).filteredOn(plugin -> !plugin.placeholdersPerViewer())
-            .containsExactly(HologramPlugin.HOLOGRAMLIB);
+    void everyPluginFillsPlaceholdersForEachViewer() {
+        assertThat(HologramPlugin.values()).allMatch(HologramPlugin::placeholdersPerViewer);
     }
 
     @Test
