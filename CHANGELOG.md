@@ -26,8 +26,8 @@ All notable changes to Taffy are documented here. This project follows
   `HologramProvider.plugin()` is `null` for a provider bound to no hologram plugin, and a later version may add
   `HologramPlugin` constants.
 - Catalog entries `alaz.decentholograms`, `alaz.fancyholograms`, `alaz.holograms`, `alaz.hologramlib` and
-  `alaz.packetevents.api`. `so.alaz.taffy.repositories` adds the FancyInnovations and TheNextLvl repositories and
-  CodeMC for `com.github.retrooper` only.
+  `alaz.packetevents.api`. `so.alaz.taffy.repositories` adds the FancyInnovations repository for `de.oliver` only,
+  the TheNextLvl repository for `net.thenextlvl` only, and CodeMC for `com.github.retrooper` only.
 
 ## [0.1.1] - 2026-11-19
 

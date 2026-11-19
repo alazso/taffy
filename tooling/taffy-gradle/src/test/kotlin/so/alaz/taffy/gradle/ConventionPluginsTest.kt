@@ -896,24 +896,54 @@ class ConventionPluginsTest {
     @Test
     fun repositoriesPluginDeclaresRepositoriesWithoutACatalog() {
         project()
+        // Gradle exposes a repository's content filter only through its internal API.
         write(
             "settings.gradle.kts",
             """
+            import org.gradle.api.internal.artifacts.DefaultModuleIdentifier
+            import org.gradle.api.internal.artifacts.repositories.ArtifactResolutionDetails
+            import org.gradle.api.internal.artifacts.repositories.ContentFilteringRepository
+            import org.gradle.internal.component.external.model.DefaultModuleComponentIdentifier
+
             plugins {
                 id("so.alaz.taffy.repositories")
             }
             rootProject.name = "demo"
             println("catalogs=" + dependencyResolutionManagement.versionCatalogs.names)
             println("repositories=" + dependencyResolutionManagement.repositories.joinToString(",") { it.name })
+            val groups = listOf("de.oliver", "net.thenextlvl", "com.github.retrooper")
+            for (name in listOf("fancyinnovations", "thenextlvl", "packetevents")) {
+                val repository = dependencyResolutionManagement.repositories.getByName(name)
+                val filter = (repository as ContentFilteringRepository).contentFilter
+                val accepted = groups.filter { group ->
+                    val module = DefaultModuleIdentifier.newId(group, "probe")
+                    var found = true
+                    filter.execute(object : ArtifactResolutionDetails {
+                        override fun getModuleId() = module
+                        override fun getComponentId() = DefaultModuleComponentIdentifier.newId(module, "1.0")
+                        override fun isVersionListing() = false
+                        override fun notFound() {
+                            found = false
+                        }
+                    })
+                    found
+                }
+                println("filter " + name + "=" + accepted)
+            }
             """,
         )
 
         val result = run("help")
 
         assertThat(result.output).contains("catalogs=[]")
-        assertThat(result.output).contains(
+        assertThat(result.output.lines()).contains(
             "repositories=MavenRepo,papermc,alazso,alazsoSnapshots,placeholderapi,faststats,jitpack," +
-                "vaultunlocked,playerpoints,oraxen,nexo,enginehub",
+                "vaultunlocked,playerpoints,oraxen,nexo,enginehub,fancyinnovations,thenextlvl,packetevents",
+        )
+        assertThat(result.output.lines()).contains(
+            "filter fancyinnovations=[de.oliver]",
+            "filter thenextlvl=[net.thenextlvl]",
+            "filter packetevents=[com.github.retrooper]",
         )
     }
 
