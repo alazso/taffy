@@ -124,6 +124,37 @@ final class HologramBackendsTest {
     }
 
     @Test
+    void fancyHologramsGetsTagsAndPlaceholdersAsWritten() {
+        TextHologramData data = mock(TextHologramData.class);
+        List<String> lines = List.of("<gradient:gold:red>%player_name%</gradient>", "<player_name>",
+            "<sound:entity.experience_orb.pickup>Crate", "<rainbow>Keys</rainbow>");
+
+        FancyHologramsBackend.write(data, lines);
+
+        verify(data).setText(lines);
+    }
+
+    @Test
+    void fancyHologramsShowsALiteralAmpersandInsideAGradientAsWritten() {
+        TextHologramData data = mock(TextHologramData.class);
+        String zwnj = PluginHolograms.ZERO_WIDTH_NON_JOINER;
+
+        FancyHologramsBackend.write(data, List.of("<gradient:gold:red>Fish&chips</gradient>"));
+
+        verify(data).setText(List.of("<gradient:gold:red>Fish&" + zwnj + "chips</gradient>"));
+    }
+
+    @Test
+    void fancyHologramsRefusesALineMiniMessageRefuses() {
+        TextHologramData data = mock(TextHologramData.class);
+
+        assertThatThrownBy(() -> FancyHologramsBackend.write(data, List.of("<gold>Crate", "§cCrate")))
+            .isInstanceOf(RuntimeException.class);
+
+        verify(data, never()).setText(anyList());
+    }
+
+    @Test
     void literalTextShowsAsWrittenWhateverItHolds() {
         String zwnj = PluginHolograms.ZERO_WIDTH_NON_JOINER;
         TagResolver resolver = TagResolver.resolver(TagResolver.standard(), Placeholder.unparsed("player_name", "x"));

@@ -5,7 +5,6 @@ import de.oliver.fancyholograms.api.HologramManager;
 import de.oliver.fancyholograms.api.data.HologramData;
 import de.oliver.fancyholograms.api.data.TextHologramData;
 import de.oliver.fancyholograms.api.hologram.Hologram;
-import net.kyori.adventure.text.TextReplacementConfig;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -27,13 +26,6 @@ final class FancyHologramsBackend {
 
     static final int PLACEHOLDER_REFRESH_MILLIS = 1000;
     static final int NO_REFRESH = -1;
-
-    // FancyHolograms reads & colour codes and &#RRGGBB hex colours in a line before MiniMessage does, so a zero-width
-    // non-joiner after every literal & keeps it from reading one in the text.
-    private static final TextReplacementConfig LITERAL_AMPERSANDS = TextReplacementConfig.builder()
-        .matchLiteral("&")
-        .replacement(match -> match.content(match.content() + PluginHolograms.ZERO_WIDTH_NON_JOINER))
-        .build();
 
     private FancyHologramsBackend() {
     }
@@ -130,11 +122,14 @@ final class FancyHologramsBackend {
         data.setTextUpdateInterval(refresh(lines));
     }
 
+    // FancyHolograms reads & colour codes and &#RRGGBB hex colours in the raw line before MiniMessage, so a zero-width
+    // non-joiner after every & keeps it from reading one. The line is otherwise passed unchanged, so FancyHolograms
+    // still reads every tag it knows, MiniPlaceholders tags included. A line MiniMessage refuses, such as one holding a
+    // section sign, fails here as it does on DecentHolograms and HologramLib.
     static List<String> literalAmpersands(List<String> lines) {
         MiniMessage miniMessage = MiniMessage.miniMessage();
-        return lines.stream()
-            .map(line -> miniMessage.serialize(miniMessage.deserialize(line).replaceText(LITERAL_AMPERSANDS)))
-            .toList();
+        lines.forEach(miniMessage::deserialize);
+        return lines.stream().map(line -> line.replace("&", "&" + PluginHolograms.ZERO_WIDTH_NON_JOINER)).toList();
     }
 
     static int refresh(List<String> lines) {
