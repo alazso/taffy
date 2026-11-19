@@ -4,7 +4,10 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Locale;
 
-/** The hologram plugins Taffy places text holograms through. */
+/**
+ * The hologram plugins Taffy places text holograms through. A later version may add constants, so a {@code switch}
+ * over this enum keeps a {@code default} branch.
+ */
 public enum HologramPlugin {
     /** DecentHolograms 2.10 or newer, key {@code decentholograms}. */
     DECENTHOLOGRAMS("DecentHolograms", "decentholograms", "eu.decentsoftware.holograms.api.DHAPI", true),
