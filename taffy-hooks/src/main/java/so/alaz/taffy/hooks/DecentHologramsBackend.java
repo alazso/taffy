@@ -50,12 +50,8 @@ final class DecentHologramsBackend {
         return HologramBackend.of(
             name -> DHAPI.getHologram(name) != null,
             name -> placements.standing(name) != null,
-            (name, location, lines) -> {
-                Hologram hologram = DHAPI.createHologram(name, location, false, legacy(lines));
-                hologram.setDownOrigin(true);
-                hologram.realignLines();
-                placements.add(name, hologram);
-            },
+            (name, location, lines) -> placements.add(name,
+                anchored(DHAPI.createHologram(name, location, false, legacy(lines)))),
             (name, lines) -> {
                 Hologram hologram = placements.standing(name);
                 if (hologram != null) {
@@ -77,6 +73,22 @@ final class DecentHologramsBackend {
                 placements.forget(name, hologram);
                 return true;
             });
+    }
+
+    // A hologram that fails to anchor is destroyed, since DecentHolograms already holds it under its name.
+    static Hologram anchored(Hologram hologram) {
+        try {
+            hologram.setDownOrigin(true);
+            hologram.realignLines();
+            return hologram;
+        } catch (RuntimeException | LinkageError failure) {
+            try {
+                hologram.destroy();
+            } catch (RuntimeException | LinkageError cleanup) {
+                failure.addSuppressed(cleanup);
+            }
+            throw failure;
+        }
     }
 
     static List<String> legacy(List<String> lines) {

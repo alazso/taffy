@@ -33,6 +33,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
@@ -80,6 +81,30 @@ final class HologramBackendsTest {
             order.verify(hologram).setDownOrigin(true);
             order.verify(hologram).realignLines();
             assertThat(backend.has("slate_a")).isTrue();
+        }
+    }
+
+    @Test
+    void decentHologramsDestroysANewHologramThatFailsToAnchor() {
+        try (MockedStatic<DecentHologramsAPI> running = mockStatic(DecentHologramsAPI.class);
+             MockedStatic<DHAPI> dhapi = mockStatic(DHAPI.class)) {
+            running.when(DecentHologramsAPI::get).thenReturn(mock(DecentHolograms.class));
+            eu.decentsoftware.holograms.api.holograms.Hologram hologram =
+                mock(eu.decentsoftware.holograms.api.holograms.Hologram.class);
+            IllegalStateException refused = new IllegalStateException("no realign");
+            IllegalStateException cleanup = new IllegalStateException("no destroy");
+            doThrow(refused).when(hologram).realignLines();
+            doThrow(cleanup).when(hologram).destroy();
+            dhapi.when(() -> DHAPI.createHologram(eq("slate_a"), same(here), eq(false), anyList()))
+                .thenReturn(hologram);
+            dhapi.when(() -> DHAPI.getHologram("slate_a")).thenReturn(hologram);
+            HologramBackend backend = DecentHologramsBackend.create();
+
+            assertThatThrownBy(() -> backend.create("slate_a", here, List.of("x"))).isSameAs(refused);
+
+            verify(hologram).destroy();
+            assertThat(refused.getSuppressed()).containsExactly(cleanup);
+            assertThat(backend.has("slate_a")).isFalse();
         }
     }
 
