@@ -4,12 +4,16 @@ import com.maximde.hologramlib.hologram.HologramManager;
 import com.maximde.hologramlib.hologram.TextHologram;
 import de.oliver.fancyholograms.api.data.HologramData;
 import de.oliver.fancyholograms.api.data.TextHologramData;
+import eu.decentsoftware.holograms.api.DHAPI;
+import eu.decentsoftware.holograms.api.DecentHolograms;
+import eu.decentsoftware.holograms.api.DecentHologramsAPI;
 import net.thenextlvl.hologram.Hologram;
 import net.thenextlvl.hologram.line.TextHologramLine;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.mockito.MockedStatic;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -21,9 +25,12 @@ import java.util.regex.Pattern;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -47,6 +54,28 @@ final class HologramBackendsTest {
         assertThat(DecentHologramsBackend.legacy(List.of("<gold>Daily crate", "<#ff8800>Hex", "%slate_keys% left",
             "<red><bold>Open", "plain", ""))).containsExactly("&6Daily crate", "&#ff8800Hex", "%slate_keys% left",
             "&c&lOpen", "plain", "");
+    }
+
+    @Test
+    void decentHologramsAnchorsANewHologramAtItsBottomLine() {
+        try (MockedStatic<DecentHologramsAPI> running = mockStatic(DecentHologramsAPI.class);
+             MockedStatic<DHAPI> dhapi = mockStatic(DHAPI.class)) {
+            running.when(DecentHologramsAPI::get).thenReturn(mock(DecentHolograms.class));
+            eu.decentsoftware.holograms.api.holograms.Hologram hologram =
+                mock(eu.decentsoftware.holograms.api.holograms.Hologram.class);
+            dhapi.when(() -> DHAPI.createHologram(eq("slate_a"), same(here), eq(false), anyList()))
+                .thenReturn(hologram);
+            dhapi.when(() -> DHAPI.getHologram("slate_a")).thenReturn(hologram);
+            HologramBackend backend = DecentHologramsBackend.create();
+
+            backend.create("slate_a", here, List.of("<gold>Crate"));
+
+            InOrder order = inOrder(DHAPI.class, hologram);
+            order.verify(dhapi, () -> DHAPI.createHologram("slate_a", here, false, List.of("&6Crate")));
+            order.verify(hologram).setDownOrigin(true);
+            order.verify(hologram).realignLines();
+            assertThat(backend.has("slate_a")).isTrue();
+        }
     }
 
     @Test

@@ -14,7 +14,8 @@ import java.util.List;
 // DHAPI and Hologram read DecentHolograms' running instance when they initialize, so neither initializes until a call
 // runs after detection found DecentHolograms enabled. Linking their methods does not initialize them. A hologram is
 // removed with destroy, which deletes no file, because DHAPI.removeHologram deletes the file of a hologram that
-// replaced it under the same name.
+// replaced it under the same name. DecentHolograms anchors a hologram at its top line by default, so each hologram is
+// anchored at its bottom line, where the other hologram plugins anchor theirs.
 final class DecentHologramsBackend {
 
     static final String ZERO_WIDTH_SPACE = Character.toString(0x200B);
@@ -44,13 +45,19 @@ final class DecentHologramsBackend {
         ApiLink.staticMethod(DHAPI.class, "moveHologram", void.class, Hologram.class, Location.class);
         ApiLink.instanceMethod(Hologram.class, "destroy", void.class);
         ApiLink.instanceMethod(Hologram.class, "disable", void.class, DisableCause.class);
+        ApiLink.instanceMethod(Hologram.class, "setDownOrigin", void.class, boolean.class);
+        ApiLink.instanceMethod(Hologram.class, "realignLines", void.class);
         Placements<Hologram> placements = new Placements<>(name -> DHAPI.getHologram(name),
             displaced -> displaced.disable(DisableCause.API));
         return HologramBackend.of(
             name -> DHAPI.getHologram(name) != null,
             name -> placements.standing(name) != null,
-            (name, location, lines) -> placements.add(name,
-                DHAPI.createHologram(name, location, false, legacy(lines))),
+            (name, location, lines) -> {
+                Hologram hologram = DHAPI.createHologram(name, location, false, legacy(lines));
+                hologram.setDownOrigin(true);
+                hologram.realignLines();
+                placements.add(name, hologram);
+            },
             (name, lines) -> {
                 Hologram hologram = placements.standing(name);
                 if (hologram != null) {

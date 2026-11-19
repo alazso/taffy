@@ -88,10 +88,11 @@ public interface HologramProvider {
     boolean available();
 
     /**
-     * Places a temporary hologram.
+     * Places a temporary hologram. The location is the bottom centre of its text, and the lines stack upward from it,
+     * the last line lowest.
      *
      * @param id the hologram's id
-     * @param location where the hologram stands; the provider keeps a copy
+     * @param location where the hologram stands, at the bottom centre of its text; the provider keeps a copy
      * @param lines the hologram's lines in MiniMessage, top first; may be empty
      * @return {@code true} if the hologram was placed, or the placement was accepted to be done on the location's
      *     region thread a little later; {@code false} if the provider is not {@linkplain #available() available}, the
@@ -117,10 +118,10 @@ public interface HologramProvider {
     boolean update(String id, List<String> lines);
 
     /**
-     * Moves a hologram.
+     * Moves a hologram. The location is the bottom centre of its text, and the lines stack upward from it.
      *
      * @param id the hologram's id
-     * @param location where the hologram stands from now; the provider keeps a copy
+     * @param location where the hologram stands from now, at the bottom centre of its text; the provider keeps a copy
      * @return {@code true} if the move was done, or was accepted to be done on the location's region thread a
      *     little later; {@code false} if the provider is not {@linkplain #available() available}, the location has no
      *     world or its world has unloaded, no hologram this provider placed with this id stands, or the hologram
