@@ -176,6 +176,8 @@
  * <h2>At disable</h2>
  *
  * <p>At disable, a plugin calls {@link so.alaz.taffy.hooks.PlaceholderRegistration#unregister()} first, before
- * {@code Scheduler.close}, so that no placeholder request reaches the plugin while it shuts down.
+ * {@code Scheduler.close}, so that no placeholder request reaches the plugin while it shuts down. It then calls
+ * {@link so.alaz.taffy.hooks.HologramProvider#close()} on each hologram provider it holds, also before
+ * {@code Scheduler.close}.
  */
 package so.alaz.taffy.hooks;

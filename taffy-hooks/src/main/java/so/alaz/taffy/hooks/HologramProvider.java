@@ -47,8 +47,8 @@ public interface HologramProvider {
      *
      * <p>Call on the server thread while the owner is enabled, normally from its {@code onEnable}: the provider
      * registers a listener for the owner that removes a hologram when its world unloads and removes every hologram
-     * the provider placed when the owner's {@code PluginDisableEvent} fires, before the owner's {@code onDisable}. So
-     * each call adds one more listener until the owner disables.
+     * the provider placed when the owner's {@code PluginDisableEvent} fires, before the owner's {@code onDisable}. To
+     * detect again, such as when the owner reloads its settings, close the held provider, then detect again.
      *
      * @param owner the plugin that places holograms: its server's plugin manager is searched, its logger receives
      *     every warning, its name prefixes every hologram it places, and the provider's listener is registered for it
@@ -82,7 +82,8 @@ public interface HologramProvider {
     @Nullable HologramPlugin plugin();
 
     /**
-     * Whether calls can reach the holograms: for a provider bound to a hologram plugin, whether that plugin is enabled.
+     * Whether calls can reach the holograms: the provider is not {@linkplain #close() closed} and, for a provider
+     * bound to a hologram plugin, that plugin is enabled.
      *
      * @return {@code true} if calls can place, change and remove holograms
      */
@@ -173,4 +174,11 @@ public interface HologramProvider {
      * @return how many holograms were removed
      */
     int removeAll();
+
+    /**
+     * Removes every hologram this provider placed and stops the provider: its listener is unregistered, and every
+     * later call answers {@code false}, {@code 0} or an empty set. A second call does nothing. The owner calls it in
+     * {@code onDisable}, before {@code Scheduler.close}.
+     */
+    void close();
 }

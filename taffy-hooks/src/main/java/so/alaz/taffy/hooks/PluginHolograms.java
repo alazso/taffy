@@ -4,6 +4,7 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
+import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.event.server.PluginDisableEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
@@ -43,6 +44,7 @@ final class PluginHolograms implements HologramProvider, Listener {
     private final ErrorReports errors;
     private final String source;
     private final Map<String, UUID> placed = new ConcurrentHashMap<>();
+    private volatile boolean closed;
 
     PluginHolograms(HologramPlugin plugin, Plugin bound, Plugin owner, HologramBackend backend, ErrorReports errors) {
         this.plugin = plugin;
@@ -78,7 +80,7 @@ final class PluginHolograms implements HologramProvider, Listener {
 
     @Override
     public boolean available() {
-        return bound.isEnabled();
+        return !closed && bound.isEnabled();
     }
 
     @Override
@@ -217,6 +219,16 @@ final class PluginHolograms implements HologramProvider, Listener {
             }
         }
         return removed;
+    }
+
+    @Override
+    public void close() {
+        if (closed) {
+            return;
+        }
+        removeAll();
+        HandlerList.unregisterAll(this);
+        closed = true;
     }
 
     // Removes the holograms in a world while it is still loaded: FancyHolograms keeps a temporary hologram of an

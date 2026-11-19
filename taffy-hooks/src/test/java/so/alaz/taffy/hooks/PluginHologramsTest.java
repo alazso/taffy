@@ -3,10 +3,14 @@ package so.alaz.taffy.hooks;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.Server;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.HandlerList;
+import org.bukkit.event.Listener;
 import org.bukkit.event.server.PluginDisableEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
+import org.bukkit.plugin.RegisteredListener;
 import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.same;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -333,6 +338,57 @@ final class PluginHologramsTest {
         assertThat(holograms.ids()).isEmpty();
         assertThat(calls).isEmpty();
         assertThat(lines).containsOnlyKeys("slate_a");
+    }
+
+    @Test
+    void closeRemovesTheHologramsPlacedAndThenEveryCallAnswersNothing() {
+        PluginHolograms holograms = holograms();
+        holograms.create("a", here, List.of());
+        holograms.create("b", here, List.of());
+        lines.put("slate_c", List.of());
+
+        holograms.close();
+
+        assertThat(lines).containsOnlyKeys("slate_c");
+        calls.clear();
+        assertThat(holograms.available()).isFalse();
+        assertThat(holograms.create("d", here, List.of())).isFalse();
+        assertThat(holograms.update("a", List.of())).isFalse();
+        assertThat(holograms.move("a", here)).isFalse();
+        assertThat(holograms.exists("a")).isFalse();
+        assertThat(holograms.ids()).isEmpty();
+        assertThat(holograms.remove("a")).isFalse();
+        assertThat(holograms.removeAll()).isZero();
+        holograms.close();
+        holograms.onPluginDisable(disabling(owner));
+        assertThat(calls).isEmpty();
+    }
+
+    @Test
+    void closeUnregistersTheListenerSoDetectingAgainLeavesOne() {
+        doAnswer(call -> {
+            Listener listener = call.getArgument(0);
+            Plugin plugin = call.getArgument(1);
+            PluginDisableEvent.getHandlerList().register(new RegisteredListener(listener, (each, event) -> { },
+                EventPriority.MONITOR, plugin, false));
+            return null;
+        }).when(pluginManager).registerEvents(any(Listener.class), any(Plugin.class));
+        try {
+            HologramProvider first = PluginHolograms.detect(owner, errors, true, HologramPlugin.FANCYHOLOGRAMS,
+                new FakePresence(), plugin -> backend).provider();
+            assertThat(first).isNotNull();
+            first.create("a", here, List.of());
+
+            first.close();
+            HologramProvider second = PluginHolograms.detect(owner, errors, true, HologramPlugin.FANCYHOLOGRAMS,
+                new FakePresence(), plugin -> backend).provider();
+
+            assertThat(HandlerList.getRegisteredListeners(owner)).extracting(RegisteredListener::getListener)
+                .containsExactly((Listener) second);
+            assertThat(lines).isEmpty();
+        } finally {
+            HandlerList.unregisterAll(owner);
+        }
     }
 
     @Test
