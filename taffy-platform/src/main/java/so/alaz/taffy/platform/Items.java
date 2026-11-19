@@ -9,9 +9,14 @@ public final class Items {
     private Items() {
     }
 
-    /** Adds the item to the player's inventory, dropping whatever does not fit at their feet. */
+    /**
+     * Adds the item to the player's inventory, dropping whatever does not fit at their feet.
+     *
+     * <p>{@code item} is left unchanged: a copy is added and split across the slots, so the same stack can be
+     * given to several players.
+     */
     public static void giveOrDrop(Player player, ItemStack item) {
-        player.getInventory().addItem(item).values()
+        player.getInventory().addItem(item.clone()).values()
             .forEach(leftover -> player.getWorld().dropItemNaturally(player.getLocation(), leftover));
     }
 }

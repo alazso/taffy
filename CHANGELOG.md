@@ -5,6 +5,10 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+- `Items.giveOrDrop` leaves the given `ItemStack` unchanged: it adds a copy, so the same stack can be given
+  to several players without being reduced to what was left over.
+
 ## [0.1.0] - 2026-11-18
 
 ### Added
