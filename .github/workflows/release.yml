@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.workflow }}
   cancel-in-progress: false
 
 jobs:
@@ -30,6 +30,9 @@ jobs:
 
       - name: Resolve version
         id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: |
           set -euo pipefail
           GRADLE_VERSION="$(sed -n 's/^version=//p' gradle.properties | tr -d '[:space:]')"
@@ -37,7 +40,11 @@ jobs:
             echo "Could not read version from gradle.properties" >&2
             exit 1
           fi
-          if [ "${{ github.event_name }}" = "push" ]; then
+          if [[ "$GRADLE_VERSION" == *-SNAPSHOT ]] && [ "$DRY_RUN" != "true" ]; then
+            echo "gradle.properties has the snapshot version ${GRADLE_VERSION}; the CI workflow publishes snapshots." >&2
+            exit 1
+          fi
+          if [ "$EVENT_NAME" = "push" ]; then
             TAG="${GITHUB_REF_NAME}"
             TAG_VERSION="${TAG#v}"
             if [ "$TAG_VERSION" != "$GRADLE_VERSION" ]; then
@@ -46,6 +53,16 @@ jobs:
             fi
           else
             TAG="v${GRADLE_VERSION}"
+            if [ "$DRY_RUN" != "true" ]; then
+              if ! TAG_COMMIT="$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}")"; then
+                echo "Tag $TAG does not exist; push it before publishing ${GRADLE_VERSION}." >&2
+                exit 1
+              fi
+              if [ "$TAG_COMMIT" != "$(git rev-parse HEAD)" ]; then
+                echo "Tag $TAG is at ${TAG_COMMIT}, not at the commit being built; run the workflow on the tag." >&2
+                exit 1
+              fi
+            fi
           fi
           echo "version=${GRADLE_VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
@@ -102,7 +119,7 @@ jobs:
           ' CHANGELOG.md > release-notes.md || true
 
           if [ -s release-notes.md ]; then
-            gh release create "$TAG" --title "v${VERSION}" --notes-file release-notes.md
+            gh release create "$TAG" --verify-tag --title "v${VERSION}" --notes-file release-notes.md
           else
-            gh release create "$TAG" --title "v${VERSION}" --generate-notes
+            gh release create "$TAG" --verify-tag --title "v${VERSION}" --generate-notes
           fi
