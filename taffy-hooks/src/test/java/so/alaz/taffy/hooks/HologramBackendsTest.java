@@ -82,7 +82,7 @@ final class HologramBackendsTest {
     void decentHologramsShowsALiteralAmpersandOrHashAsWritten() {
         Pattern solid = Pattern.compile("[<{]#([A-Fa-f0-9]{6})[}>]|[&\u00a7]?#([A-Fa-f0-9]{6})");
         Pattern code = Pattern.compile("&[0-9a-fk-orxA-FK-ORX]");
-        String zws = DecentHologramsBackend.ZERO_WIDTH_SPACE;
+        String zws = PluginHolograms.ZERO_WIDTH_SPACE;
 
         List<String> lines = DecentHologramsBackend.legacy(List.of("Q&A board", "Ticket #abcdef", "R&D",
             "\\<#abcdef>x", "{#abcdef}", "&<bold>a</bold>", "#<hover:show_text:'x'>abcdef</hover>"));
@@ -102,6 +102,19 @@ final class HologramBackendsTest {
             .isEqualTo(FancyHologramsBackend.PLACEHOLDER_REFRESH_MILLIS);
         assertThat(FancyHologramsBackend.refresh(List.of("<gold>Crate"))).isEqualTo(FancyHologramsBackend.NO_REFRESH);
         assertThat(FancyHologramsBackend.refresh(List.of())).isEqualTo(FancyHologramsBackend.NO_REFRESH);
+    }
+
+    @Test
+    void fancyHologramsShowsALiteralAmpersandAsWritten() {
+        TextHologramData data = mock(TextHologramData.class);
+        String zws = PluginHolograms.ZERO_WIDTH_SPACE;
+
+        FancyHologramsBackend.write(data, List.of("Fish&chips", "<gold>R&D", "&6Old &#abcdef", "<gold>Crate",
+            "%slate_keys% & more", ""));
+
+        verify(data).setText(List.of("Fish&" + zws + "chips", "<gold>R&" + zws + "D",
+            "&" + zws + "6Old &" + zws + "#abcdef", "<gold>Crate", "%slate_keys% &" + zws + " more", ""));
+        verify(data).setTextUpdateInterval(FancyHologramsBackend.PLACEHOLDER_REFRESH_MILLIS);
     }
 
     @Test

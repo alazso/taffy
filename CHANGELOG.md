@@ -10,12 +10,14 @@ All notable changes to Taffy are documented here. This project follows
   newer, FancyHolograms 2, Holograms by TheNextLvl or HologramLib. A hologram is named by an id of 1 to 48 of
   `a-z`, `0-9`, `_` and `-`, stored under a prefix made from the owner's name, and never saved by the hologram
   plugin. The location given to `create` and `move` is the bottom centre of the text, with the lines stacked
-  upward from it. Lines are MiniMessage (converted to `&` colour codes for DecentHolograms). Every call but
-  `create` reaches only a hologram the provider placed, and `create` refuses a name another hologram holds. A
-  hologram is removed when its world unloads. `create`, `update`, `move`, `remove`, `exists`, `ids` and
-  `removeAll` answer `false` or nothing found while the hologram plugin is disabled or fails, and failures are
-  reported under `hook.<plugin key>`, such as `hook.fancyholograms`. `HologramProvider.plugin()` is `null` for a
-  provider bound to no hologram plugin, and a later version may add `HologramPlugin` constants.
+  upward from it. Lines are MiniMessage (converted to `&` colour codes for DecentHolograms). Taffy keeps
+  DecentHolograms and FancyHolograms from reading a `&` in a line as a colour code, and DecentHolograms from
+  reading a `#` as a hex colour. Every call but `create` reaches only a hologram the provider placed, and `create`
+  refuses a name another hologram holds. A hologram is removed when its world unloads. `create`, `update`, `move`,
+  `remove`, `exists`, `ids` and `removeAll` answer `false` or nothing found while the hologram plugin is disabled
+  or fails, and failures are reported under `hook.<plugin key>`, such as `hook.fancyholograms`.
+  `HologramProvider.plugin()` is `null` for a provider bound to no hologram plugin, and a later version may add
+  `HologramPlugin` constants.
 - Catalog entries `alaz.decentholograms`, `alaz.fancyholograms`, `alaz.holograms`, `alaz.hologramlib` and
   `alaz.packetevents.api`. `so.alaz.taffy.repositories` adds the FancyInnovations and TheNextLvl repositories and
   CodeMC for `com.github.retrooper` only.

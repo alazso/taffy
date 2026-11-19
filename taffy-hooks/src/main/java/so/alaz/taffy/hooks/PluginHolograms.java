@@ -31,6 +31,7 @@ final class PluginHolograms implements HologramProvider, Listener {
 
     private static final Pattern ID = Pattern.compile("[a-z0-9_-]{1,48}");
     private static final Pattern OUTSIDE_OWNER = Pattern.compile("[^a-z0-9-]");
+    static final String ZERO_WIDTH_SPACE = Character.toString(0x200B);
 
     private final HologramPlugin plugin;
     private final Plugin bound;

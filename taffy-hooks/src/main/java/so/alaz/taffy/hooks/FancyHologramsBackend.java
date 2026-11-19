@@ -5,6 +5,8 @@ import de.oliver.fancyholograms.api.HologramManager;
 import de.oliver.fancyholograms.api.data.HologramData;
 import de.oliver.fancyholograms.api.data.TextHologramData;
 import de.oliver.fancyholograms.api.hologram.Hologram;
+import net.kyori.adventure.text.TextReplacementConfig;
+import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
@@ -24,6 +26,13 @@ final class FancyHologramsBackend {
 
     static final int PLACEHOLDER_REFRESH_MILLIS = 1000;
     static final int NO_REFRESH = -1;
+
+    // FancyHolograms reads & colour codes and &#RRGGBB hex colours in a line before MiniMessage does, so a zero-width
+    // space after every literal & keeps it from reading one in the text.
+    private static final TextReplacementConfig LITERAL_AMPERSANDS = TextReplacementConfig.builder()
+        .matchLiteral("&")
+        .replacement(match -> match.content(match.content() + PluginHolograms.ZERO_WIDTH_SPACE))
+        .build();
 
     private FancyHologramsBackend() {
     }
@@ -116,8 +125,15 @@ final class FancyHologramsBackend {
 
     static void write(TextHologramData data, List<String> lines) {
         // TextHologramData keeps the list it is given and edits it in place.
-        data.setText(new ArrayList<>(lines));
+        data.setText(new ArrayList<>(literalAmpersands(lines)));
         data.setTextUpdateInterval(refresh(lines));
+    }
+
+    static List<String> literalAmpersands(List<String> lines) {
+        MiniMessage miniMessage = MiniMessage.miniMessage();
+        return lines.stream()
+            .map(line -> miniMessage.serialize(miniMessage.deserialize(line).replaceText(LITERAL_AMPERSANDS)))
+            .toList();
     }
 
     static int refresh(List<String> lines) {

@@ -18,8 +18,6 @@ import java.util.List;
 // anchored at its bottom line, where the other hologram plugins anchor theirs.
 final class DecentHologramsBackend {
 
-    static final String ZERO_WIDTH_SPACE = Character.toString(0x200B);
-
     // DecentHolograms reads & colour codes and &#RRGGBB, <#RRGGBB>, {#RRGGBB} and #RRGGBB hex colours, not MiniMessage.
     private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.builder()
         .character('&')
@@ -31,7 +29,7 @@ final class DecentHologramsBackend {
     // in the text, including one that continues in the next component.
     private static final TextReplacementConfig LITERAL_CODES = TextReplacementConfig.builder()
         .match("[&#]")
-        .replacement(match -> match.content(match.content() + ZERO_WIDTH_SPACE))
+        .replacement(match -> match.content(match.content() + PluginHolograms.ZERO_WIDTH_SPACE))
         .build();
 
     private DecentHologramsBackend() {
