@@ -35,6 +35,21 @@ All notable changes to Taffy are documented here. This project follows
   response has no type for insufficient funds, and a withdraw never gives `INSUFFICIENT` or `OVERDRAWN`: one that
   leaves the balance below zero gives `OK`. The amount, the thread and the disabled economy plugin are checked as
   under `EMULATED`.
+- `Params.decimal(BigDecimal)` and `Row.decimal(String)` bind and read a decimal number without scaling or
+  rounding it, for a balance that passes `MoneyColumn.MAX` (about 9.22e14), which an inflated economy reaches:
+  `Params.money` throws `MoneyOutOfRangeException` for such a balance and `Params.moneyOrNull` stores `NULL`.
+  The value is bound as a `DECIMAL` on MySQL and MariaDB and a `NUMERIC` on PostgreSQL, and as the text of
+  `BigDecimal.toString` on SQLite. The plugin declares the column in each migration script:
+  `DECIMAL(precision, scale)` on MySQL and MariaDB (up to 65 digits), `NUMERIC` on PostgreSQL and `TEXT` on
+  SQLite, where a column declared `NUMERIC` or `DECIMAL` loses digits beyond the 15th. On SQLite the stored
+  values compare as text, so `ORDER BY`, `<`, `>`, `MIN` and `MAX` over the column are not numeric there (`10`
+  sorts before `9`), and arithmetic in SQL, `SUM` included, converts the text to a floating-point number and
+  loses digits; a column that is sorted, compared or summed in SQL on every database stays a `money` column.
+  `Row.decimal` returns the scale the column holds, so compare with `compareTo`.
+- `Params.signedMoney(BigDecimal)` binds a signed amount for a `money` column like `moneyOrNull`, and throws
+  `MoneyOutOfRangeException` for an amount above `MoneyColumn.MAX` in magnitude where `moneyOrNull` stores
+  `NULL`. `MoneyColumn.toStoredSigned(BigDecimal)` is the encoding behind it. `moneyOrNull` and
+  `MoneyColumn.toStoredOrNull` are unchanged.
 
 ### Changed
 - `balance`, `has`, `withdraw` and `deposit` of the Vault economy throw `IllegalStateException` when the calling

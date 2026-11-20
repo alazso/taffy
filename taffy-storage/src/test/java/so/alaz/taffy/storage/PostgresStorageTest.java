@@ -66,7 +66,7 @@ final class PostgresStorageTest extends StorageContract {
     @Override
     String createProbe(String table) {
         return "CREATE TABLE " + table + " (id UUID NOT NULL PRIMARY KEY, state VARCHAR(16) NOT NULL, amount BIGINT,"
-            + " at BIGINT, doc JSONB, data BYTEA)";
+            + " at BIGINT, doc JSONB, data BYTEA, wide NUMERIC)";
     }
 
     @AfterEach

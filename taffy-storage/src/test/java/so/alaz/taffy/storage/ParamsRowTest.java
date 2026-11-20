@@ -37,7 +37,7 @@ final class ParamsRowTest {
         connection = DriverManager.getConnection("jdbc:sqlite:" + folder.resolve("probe.db"));
         try (Statement statement = connection.createStatement()) {
             statement.execute("CREATE TABLE probe (id BLOB NOT NULL PRIMARY KEY, state VARCHAR(16),"
-                + " amount BIGINT, at BIGINT, doc TEXT, data BLOB)");
+                + " amount BIGINT, at BIGINT, doc TEXT, data BLOB, wide TEXT)");
         }
     }
 
@@ -77,7 +77,7 @@ final class ParamsRowTest {
                 + " FROM probe WHERE id = ?", params -> params.uuid(id),
             found -> Arrays.<Object>asList(found.text("state"), found.money("amount"), found.time("at"),
                 found.json("doc"), found.bytes("data"), found.integer("amount"), found.text("missing"),
-                found.uuid("missing")));
+                found.uuid("missing"), found.decimal("missing")));
 
         assertThat(rows).singleElement().satisfies(values -> assertThat(values).containsOnlyNulls());
     }
@@ -134,6 +134,75 @@ final class ParamsRowTest {
             .isInstanceOf(MoneyOutOfRangeException.class);
         assertThat(query("SELECT COUNT(*) AS n FROM probe", params -> { }, row -> row.integer("n")))
             .containsExactly(1L);
+    }
+
+    @Test
+    void anOverCapSignedBalanceIsRefusedAndOneInsideTheCapIsKept() throws SQLException {
+        UUID id = UUID.randomUUID();
+
+        for (String over : List.of("1e20", "-1e20")) {
+            assertThatThrownBy(() -> update("INSERT INTO probe (id, state, amount) VALUES (?, ?, ?)",
+                params -> params.uuid(UUID.randomUUID()).text("A").signedMoney(new BigDecimal(over))))
+                .isInstanceOf(MoneyOutOfRangeException.class)
+                .hasMessageEndingWith("is outside -922337203685477.5807 to 922337203685477.5807");
+        }
+        update("INSERT INTO probe (id, state, amount) VALUES (?, ?, ?)",
+            params -> params.uuid(id).text("A").signedMoney(new BigDecimal("-5.5")));
+
+        assertThat(query("SELECT amount FROM probe", params -> { }, row -> row.money("amount")))
+            .singleElement().satisfies(amount -> assertThat(amount).isEqualByComparingTo("-5.5"));
+    }
+
+    @Test
+    void aNullSignedBalanceBindsNull() throws SQLException {
+        update("INSERT INTO probe (id, state, amount) VALUES (?, ?, ?)",
+            params -> params.uuid(UUID.randomUUID()).text("A").signedMoney(null));
+
+        assertThat(query("SELECT amount FROM probe", params -> { }, row -> row.money("amount")))
+            .containsExactly((BigDecimal) null);
+    }
+
+    @Test
+    void aDecimalBeyondTheMoneyCapRoundTripsWithItsScale() throws SQLException {
+        List<BigDecimal> values = List.of(new BigDecimal("123456789012345678901234567890.123456789"),
+            new BigDecimal("-1000000000000000.00"), new BigDecimal("1E+30"), BigDecimal.ZERO);
+        for (BigDecimal value : values) {
+            update("INSERT INTO probe (id, state, wide) VALUES (?, ?, ?)",
+                params -> params.uuid(UUID.randomUUID()).text(value.toString()).decimal(value));
+        }
+        update("INSERT INTO probe (id, state, wide) VALUES (?, ?, ?)",
+            params -> params.uuid(UUID.randomUUID()).text(null).decimal(null));
+
+        List<Object[]> rows = query("SELECT state, wide FROM probe", params -> { },
+            row -> new Object[] {row.text("state"), row.decimal("wide")});
+
+        assertThat(rows).hasSize(5).allSatisfy(row -> assertThat(row[1])
+            .isEqualTo(row[0] == null ? null : new BigDecimal((String) row[0])));
+        assertThat(query("SELECT typeof(wide) AS kind FROM probe WHERE wide IS NOT NULL", params -> { },
+            row -> row.text("kind"))).containsOnly("text");
+    }
+
+    @Test
+    void aDecimalSortsAsTextOnSqlite() throws SQLException {
+        for (String value : List.of("10", "9", "100")) {
+            update("INSERT INTO probe (id, state, wide) VALUES (?, ?, ?)",
+                params -> params.uuid(UUID.randomUUID()).text("A").decimal(new BigDecimal(value)));
+        }
+
+        List<BigDecimal> sorted = query("SELECT wide FROM probe ORDER BY wide", params -> { },
+            row -> row.decimal("wide"));
+
+        assertThat(sorted).extracting(BigDecimal::toPlainString).containsExactly("10", "100", "9");
+    }
+
+    @Test
+    void textThatIsNotADecimalNumberIsRefusedOnRead() throws SQLException {
+        update("INSERT INTO probe (id, state) VALUES (?, ?)", params -> params.uuid(UUID.randomUUID()).text("lots"));
+
+        assertThatThrownBy(() -> query("SELECT state FROM probe", params -> { }, row -> row.decimal("state")))
+            .isInstanceOf(SQLException.class)
+            .hasMessage("state holds text that is not a decimal number")
+            .hasCauseInstanceOf(NumberFormatException.class);
     }
 
     private void insert(UUID id, @Nullable String state, @Nullable BigDecimal amount, @Nullable Instant at,

@@ -97,6 +97,8 @@ public final class Params {
      * Binds a signed amount of money as a whole number at {@value MoneyColumn#SCALE} decimal places, encoded by
      * {@link MoneyColumn#toStoredOrNull}. An amount whose magnitude is below {@code 0.0001} is bound as 0 whatever
      * its sign, and one whose magnitude is above {@link MoneyColumn#MAX} is bound as {@code NULL}.
+     * {@link #signedMoney} throws for that amount instead, and {@link #decimal} binds an amount of any magnitude
+     * for a column that is declared for it.
      *
      * @param value the amount, which may be negative, or {@code null}
      * @return this instance
@@ -104,6 +106,45 @@ public final class Params {
      */
     public Params moneyOrNull(@Nullable BigDecimal value) throws SQLException {
         return integer(value == null ? null : MoneyColumn.toStoredOrNull(value));
+    }
+
+    /**
+     * Binds a signed amount of money as a whole number at {@value MoneyColumn#SCALE} decimal places, encoded by
+     * {@link MoneyColumn#toStoredSigned}. An amount whose magnitude is below {@code 0.0001} is bound as 0 whatever
+     * its sign.
+     *
+     * @param value the amount, which may be negative, or {@code null}
+     * @return this instance
+     * @throws MoneyOutOfRangeException if the magnitude of the amount is above {@link MoneyColumn#MAX}
+     * @throws SQLException if the driver refuses the value
+     */
+    public Params signedMoney(@Nullable BigDecimal value) throws SQLException {
+        return value == null ? nullBigint() : integer(MoneyColumn.toStoredSigned(value));
+    }
+
+    /**
+     * Binds a decimal number without scaling or rounding it, for an amount that may pass {@link MoneyColumn#MAX}:
+     * as a {@code DECIMAL} value on MySQL and MariaDB and a {@code NUMERIC} value on PostgreSQL, and on SQLite as
+     * the text {@link BigDecimal#toString} gives, which keeps every digit and the scale.
+     *
+     * <p>The column is declared in the migration script of each database: {@code DECIMAL(precision, scale)} on
+     * MySQL and MariaDB, which hold up to 65 digits, {@code NUMERIC} on PostgreSQL and {@code TEXT} on SQLite. The
+     * database rounds the value to the declared scale and decides what happens to one with more digits than the
+     * declared precision. A SQLite column declared {@code NUMERIC} or {@code DECIMAL} converts the text to a
+     * floating-point number and loses digits beyond the 15th.
+     *
+     * <p>On SQLite the stored values compare as text, so {@code ORDER BY}, {@code <}, {@code >}, {@code MIN} and
+     * {@code MAX} over the column are not numeric there: {@code 10} sorts before {@code 9}. Arithmetic in SQL,
+     * {@code SUM} included, converts the text to a floating-point number there and loses digits beyond the 15th.
+     * A column that is sorted, compared or summed in SQL on every database is a {@link #money} column.
+     *
+     * @param value the number, or {@code null}
+     * @return this instance
+     * @throws SQLException if the driver refuses the value
+     */
+    public Params decimal(@Nullable BigDecimal value) throws SQLException {
+        dialect.bindDecimal(statement, ++index, value);
+        return this;
     }
 
     /**

@@ -73,6 +73,19 @@ public final class Row {
     }
 
     /**
+     * Reads a decimal number bound by {@link Params#decimal}: a {@code DECIMAL} or {@code NUMERIC} value on MySQL,
+     * MariaDB and PostgreSQL, and text on SQLite. The scale of the result is the scale the column holds, which
+     * may differ from the scale of the bound value, so compare with {@link BigDecimal#compareTo}.
+     *
+     * @param column the column name
+     * @return the number, or {@code null}
+     * @throws SQLException if the column cannot be read, or on SQLite holds text that is not a decimal number
+     */
+    public @Nullable BigDecimal decimal(String column) throws SQLException {
+        return dialect.readDecimal(result, column);
+    }
+
+    /**
      * Reads an instant stored as milliseconds since the epoch.
      *
      * @param column the column name

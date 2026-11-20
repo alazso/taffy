@@ -150,6 +150,44 @@ abstract class StorageContract {
     }
 
     @Test
+    void anOverCapSignedBalanceIsRefusedAndOneInsideTheCapIsKept() {
+        UUID id = UUID.randomUUID();
+        String sql = "INSERT INTO " + probe() + " (id, state, amount) VALUES (?, ?, ?)";
+
+        assertThatThrownBy(() -> storage().async(tx -> tx.update(sql,
+            params -> params.uuid(UUID.randomUUID()).text("A").signedMoney(new BigDecimal("-1e20")))).join())
+            .hasRootCauseInstanceOf(MoneyOutOfRangeException.class);
+        storage().async(tx -> tx.update(sql,
+            params -> params.uuid(id).text("A").signedMoney(new BigDecimal("-5.5")))).join();
+
+        assertThat(storage().read(tx -> tx.query("SELECT amount FROM " + probe(), Tx.Binder.NONE,
+            row -> row.money("amount"))).join())
+            .singleElement().satisfies(amount -> assertThat(amount).isEqualByComparingTo("-5.5"));
+    }
+
+    @Test
+    void aDecimalBeyondTheMoneyCapRoundTrips() {
+        String sql = "INSERT INTO " + probe() + " (id, state, wide) VALUES (?, ?, ?)";
+        List<String> values = List.of("123456789012345678901234567890.1234", "-1000000000000000.5", "0");
+        for (String value : values) {
+            storage().async(tx -> tx.update(sql,
+                params -> params.uuid(UUID.randomUUID()).text(value).decimal(new BigDecimal(value)))).join();
+        }
+        UUID empty = UUID.randomUUID();
+        storage().async(tx -> tx.update(sql, params -> params.uuid(empty).text("A").decimal(null))).join();
+
+        List<Object[]> stored = storage().read(tx -> tx.query(
+            "SELECT state, wide FROM " + probe() + " WHERE id <> ?", params -> params.uuid(empty),
+            row -> new Object[] {row.text("state"), row.decimal("wide")})).join();
+        List<BigDecimal> missing = storage().read(tx -> tx.query("SELECT wide FROM " + probe() + " WHERE id = ?",
+            params -> params.uuid(empty), row -> row.decimal("wide"))).join();
+
+        assertThat(stored).hasSize(3)
+            .allSatisfy(row -> assertThat((BigDecimal) row[1]).isEqualByComparingTo((String) row[0]));
+        assertThat(missing).containsExactly((BigDecimal) null);
+    }
+
+    @Test
     void insertOrIgnoreCountsANewRowOnceAndNeverThrows() {
         UUID id = UUID.randomUUID();
         String sql = storage().dialect().insertOrIgnore(probe(), List.of("id", "state"), List.of("id"));

@@ -45,6 +45,7 @@ public final class MoneyColumn {
      * decimal places. An amount whose magnitude is below the smallest step of {@code 0.0001} is stored as 0
      * whatever its sign, without rounding. The magnitude is compared with {@link #MAX} before the amount is
      * rescaled, so an amount such as {@code 1e999999999} is refused without building its digits.
+     * {@link #toStoredSigned} throws for the amount this method gives {@code null} for.
      *
      * @param amount the amount
      * @return the stored whole number, or {@code null} if the magnitude of the amount is above {@link #MAX}
@@ -58,6 +59,22 @@ public final class MoneyColumn {
             return 0L;
         }
         return amount.setScale(SCALE, RoundingMode.HALF_EVEN).unscaledValue().longValueExact();
+    }
+
+    /**
+     * Encodes a signed amount, such as a balance that may be negative, as {@link #toStoredOrNull} does, and
+     * refuses the amount that method gives {@code null} for.
+     *
+     * @param amount the amount
+     * @return the stored whole number
+     * @throws MoneyOutOfRangeException if the magnitude of the amount is above {@link #MAX}
+     */
+    public static long toStoredSigned(BigDecimal amount) {
+        Long stored = toStoredOrNull(amount);
+        if (stored == null) {
+            throw MoneyOutOfRangeException.signed(amount);
+        }
+        return stored;
     }
 
     /**

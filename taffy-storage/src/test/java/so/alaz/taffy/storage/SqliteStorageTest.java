@@ -67,7 +67,7 @@ final class SqliteStorageTest extends StorageContract {
     @Override
     String createProbe(String table) {
         return "CREATE TABLE " + table + " (id BLOB NOT NULL PRIMARY KEY, state VARCHAR(16) NOT NULL, amount BIGINT,"
-            + " at BIGINT, doc TEXT, data BLOB)";
+            + " at BIGINT, doc TEXT, data BLOB, wide TEXT)";
     }
 
     @AfterEach

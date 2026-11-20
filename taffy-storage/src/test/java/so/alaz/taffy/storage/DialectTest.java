@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -194,5 +195,56 @@ final class DialectTest {
         verify(statement).setObject(1, "{\"a\":1}", Types.OTHER);
         verify(statement).setObject(2, null, Types.OTHER);
         verifyNoMoreInteractions(statement);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Dialect.class, names = {"MYSQL", "MARIADB", "POSTGRES"})
+    void serverDialectsBindADecimalAsANumericValue(Dialect dialect) throws SQLException {
+        PreparedStatement statement = mock(PreparedStatement.class);
+        BigDecimal value = new BigDecimal("1000000000000000.5000");
+
+        dialect.bindDecimal(statement, 1, value);
+        dialect.bindDecimal(statement, 2, null);
+
+        verify(statement).setBigDecimal(1, value);
+        verify(statement).setNull(2, Types.NUMERIC);
+        verifyNoMoreInteractions(statement);
+    }
+
+    @Test
+    void sqliteBindsADecimalAsItsText() throws SQLException {
+        PreparedStatement statement = mock(PreparedStatement.class);
+
+        Dialect.SQLITE.bindDecimal(statement, 1, new BigDecimal("1000000000000000.5000"));
+        Dialect.SQLITE.bindDecimal(statement, 2, new BigDecimal("1e999999999"));
+        Dialect.SQLITE.bindDecimal(statement, 3, null);
+
+        verify(statement).setString(1, "1000000000000000.5000");
+        verify(statement).setString(2, "1E+999999999");
+        verify(statement).setNull(3, Types.VARCHAR);
+        verifyNoMoreInteractions(statement);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Dialect.class, names = {"MYSQL", "MARIADB", "POSTGRES"})
+    void serverDialectsReadADecimalFromTheDriver(Dialect dialect) throws SQLException {
+        ResultSet row = mock(ResultSet.class);
+        when(row.getBigDecimal("balance")).thenReturn(new BigDecimal("1000000000000000.5000"));
+
+        assertThat(dialect.readDecimal(row, "balance")).isEqualTo(new BigDecimal("1000000000000000.5000"));
+        assertThat(dialect.readDecimal(row, "missing")).isNull();
+    }
+
+    @Test
+    void sqliteReadsADecimalFromItsText() throws SQLException {
+        ResultSet row = mock(ResultSet.class);
+        when(row.getString("balance")).thenReturn("1000000000000000.5000");
+        when(row.getString("label")).thenReturn("lots");
+
+        assertThat(Dialect.SQLITE.readDecimal(row, "balance")).isEqualTo(new BigDecimal("1000000000000000.5000"));
+        assertThat(Dialect.SQLITE.readDecimal(row, "missing")).isNull();
+        assertThatThrownBy(() -> Dialect.SQLITE.readDecimal(row, "label"))
+            .isInstanceOf(SQLException.class)
+            .hasMessage("label holds text that is not a decimal number");
     }
 }

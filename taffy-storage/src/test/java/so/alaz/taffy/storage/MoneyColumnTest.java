@@ -63,11 +63,31 @@ final class MoneyColumnTest {
     }
 
     @Test
+    void aSignedAmountIsStoredUpToTheCapInMagnitudeAndRefusedBeyondIt() {
+        BigDecimal over = new BigDecimal("922337203685477.5808");
+
+        assertThat(MoneyColumn.toStoredSigned(new BigDecimal("-3.25"))).isEqualTo(-32_500L);
+        assertThat(MoneyColumn.toStoredSigned(new BigDecimal("1.00015"))).isEqualTo(10_002L);
+        assertThat(MoneyColumn.toStoredSigned(new BigDecimal("-0.00009"))).isZero();
+        assertThat(MoneyColumn.toStoredSigned(MoneyColumn.MAX)).isEqualTo(Long.MAX_VALUE);
+        assertThat(MoneyColumn.toStoredSigned(MoneyColumn.MAX.negate())).isEqualTo(-Long.MAX_VALUE);
+        assertThatThrownBy(() -> MoneyColumn.toStoredSigned(over))
+            .isInstanceOf(MoneyOutOfRangeException.class)
+            .hasMessage("amount 922337203685477.5808 is outside -922337203685477.5807 to 922337203685477.5807");
+        assertThatThrownBy(() -> MoneyColumn.toStoredSigned(over.negate()))
+            .isInstanceOf(MoneyOutOfRangeException.class)
+            .hasMessage("amount -922337203685477.5808 is outside -922337203685477.5807 to 922337203685477.5807");
+    }
+
+    @Test
     @Timeout(value = 1, unit = TimeUnit.SECONDS)
     void hugeExponentsAreRefusedWithoutBuildingTheirDigits() {
         assertThatThrownBy(() -> MoneyColumn.toStored(new BigDecimal("1e999999999")))
             .isInstanceOf(MoneyOutOfRangeException.class)
             .hasMessageContaining("1E+999999999");
         assertThat(MoneyColumn.toStoredOrNull(new BigDecimal("-1e200000000"))).isNull();
+        assertThatThrownBy(() -> MoneyColumn.toStoredSigned(new BigDecimal("-1e999999999")))
+            .isInstanceOf(MoneyOutOfRangeException.class)
+            .hasMessageContaining("-1E+999999999");
     }
 }

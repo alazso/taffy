@@ -60,8 +60,8 @@ abstract class CheckpointedStorageContract extends StorageContract {
     @Override
     String createProbe(String table) {
         return "CREATE TABLE " + table + " (id BINARY(16) NOT NULL PRIMARY KEY, state VARCHAR(16) NOT NULL,"
-            + " amount BIGINT, at BIGINT, doc JSON, data LONGBLOB) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4"
-            + " COLLATE = utf8mb4_bin";
+            + " amount BIGINT, at BIGINT, doc JSON, data LONGBLOB, wide DECIMAL(65, 4)) ENGINE = InnoDB"
+            + " DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_bin";
     }
 
     @AfterEach

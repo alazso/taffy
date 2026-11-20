@@ -2,6 +2,7 @@ package so.alaz.taffy.storage;
 
 import org.jetbrains.annotations.Nullable;
 
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -13,7 +14,7 @@ import java.util.stream.Collectors;
 
 /**
  * A supported database: the SQL that differs between databases, the JDBC driver it connects with, and how it
- * stores UUIDs and JSON.
+ * stores UUIDs, JSON and decimal numbers.
  *
  * <p>The SQL builders take table and column names as given and concatenate them into the statement, so they
  * must come from code, never from a player or a server owner. Every value is a {@code ?} placeholder.
@@ -180,6 +181,35 @@ public enum Dialect {
             statement.setNull(index, Types.VARCHAR);
         } else {
             statement.setString(index, json);
+        }
+    }
+
+    void bindDecimal(PreparedStatement statement, int index, @Nullable BigDecimal value) throws SQLException {
+        if (this == SQLITE) {
+            if (value == null) {
+                statement.setNull(index, Types.VARCHAR);
+            } else {
+                statement.setString(index, value.toString());
+            }
+        } else if (value == null) {
+            statement.setNull(index, Types.NUMERIC);
+        } else {
+            statement.setBigDecimal(index, value);
+        }
+    }
+
+    @Nullable BigDecimal readDecimal(ResultSet row, String column) throws SQLException {
+        if (this != SQLITE) {
+            return row.getBigDecimal(column);
+        }
+        String text = row.getString(column);
+        if (text == null) {
+            return null;
+        }
+        try {
+            return new BigDecimal(text);
+        } catch (NumberFormatException failure) {
+            throw new SQLException(column + " holds text that is not a decimal number", failure);
         }
     }
 
