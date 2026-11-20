@@ -13,7 +13,8 @@
  *       then closes the open menus of the players the disabling thread owns;</li>
  *   <li>the removal of the plugin's holograms, {@code HologramProvider.close} of {@code taffy-hooks}, which
  *       removes every hologram the plugin placed, on the disabling thread, and stops the provider;</li>
- *   <li>{@link so.alaz.taffy.platform.Scheduler#close()}, which stops the repeating tasks;</li>
+ *   <li>{@link so.alaz.taffy.platform.Scheduler#close()}, which stops the repeating tasks and completes the
+ *       futures of unstarted dispatches as refused;</li>
  *   <li>{@link so.alaz.taffy.platform.TaskGate#close}, which refuses new async tasks and waits for the
  *       admitted ones;</li>
  *   <li>{@link so.alaz.taffy.platform.PendingSettlements#settleAll}, which settles the work no callback
