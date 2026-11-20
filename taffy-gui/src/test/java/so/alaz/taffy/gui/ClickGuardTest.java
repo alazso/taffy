@@ -1,9 +1,11 @@
 package so.alaz.taffy.gui;
 
+import org.bukkit.Material;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.junit.jupiter.api.Test;
@@ -12,12 +14,15 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import so.alaz.taffy.test.FakeItems;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -243,6 +248,76 @@ final class ClickGuardTest {
         sample.session().busy(false);
         sample.viewer.click(13, ClickType.LEFT);
         assertThat(sample.works).hasValue(2);
+    }
+
+    @Test
+    void withTwoMenusOverOneViewerOnlyTheMenusThatOpenedTheSessionRunsTheHandlerAndEndsIt() {
+        Sample sample = new Sample(folder);
+        Menus admin = sample.harness.another();
+        TestMenu menu = new TestMenu(MenuHarness.MAIN);
+        AtomicInteger clicks = new AtomicInteger();
+        menu.render = frame -> frame.action(MenuKind.CLOSE, Frame.Spec.click(click -> clicks.incrementAndGet()));
+        admin.register(menu);
+        assertThat(sample.harness.registered).containsExactly(sample.harness.listener, admin.menuListener());
+
+        sample.viewer.click(BUTTON, ClickType.LEFT);
+
+        assertThat(sample.acts).hasValue(1);
+        assertThat(sample.viewer.heard()).containsExactly("ui.button.click");
+
+        admin.openLater(sample.viewer.player, MenuHarness.MAIN.id(), null);
+        sample.harness.drain();
+        sample.harness.advance(Sample.SETTLED);
+        MenuSession<Integer> session = menu.sessions.getLast();
+        assertThat(sample.menu.closes).containsExactly(true);
+        assertThat(session.owner()).isSameAs(admin);
+        assertThat(admin.session(sample.viewer.id)).containsSame(session);
+        assertThat(sample.harness.menus.session(sample.viewer.id)).isEmpty();
+
+        InventoryClickEvent event = sample.viewer.click(53, ClickType.LEFT);
+
+        assertThat(event.isCancelled()).isTrue();
+        assertThat(clicks).hasValue(1);
+        assertThat(sample.viewer.heard()).containsExactly("ui.button.click", "ui.button.click");
+
+        sample.viewer.player.closeInventory(InventoryCloseEvent.Reason.PLAYER);
+
+        assertThat(menu.closes).containsExactly(true);
+        assertThat(sample.menu.closes).containsExactly(true);
+        assertThat(session.closed()).isTrue();
+        assertThat(admin.session(sample.viewer.id)).isEmpty();
+        assertThat(sample.harness.log.lines()).isEmpty();
+    }
+
+    @Test
+    void aListenerCancelsAClickAndADragInAMenuOfOtherMenusAndRunsNothing() {
+        MenuHarness harness = new MenuHarness(folder);
+        Menus admin = harness.another();
+        TestMenu menu = new TestMenu(MenuHarness.MAIN);
+        AtomicInteger clicks = new AtomicInteger();
+        menu.render = frame -> frame.action(MenuKind.CLOSE, Frame.Spec.click(click -> clicks.incrementAndGet()));
+        admin.register(menu);
+        MenuHarness.Viewer viewer = harness.viewer("Alex");
+        admin.openLater(viewer.player, MenuHarness.MAIN.id(), null);
+        harness.drain();
+        harness.advance(Sample.SETTLED);
+        FakeView view = viewer.current();
+
+        InventoryClickEvent click = new InventoryClickEvent(view, view.getSlotType(53), 53, ClickType.LEFT,
+            InventoryAction.PICKUP_ALL);
+        harness.listener.onClick(click);
+        InventoryDragEvent drag = new InventoryDragEvent(view, null, FakeItems.item(Material.STONE, 4), false,
+            Map.of(53, FakeItems.item(Material.STONE, 4)));
+        harness.listener.onDrag(drag);
+        harness.listener.onClose(new InventoryCloseEvent(view, InventoryCloseEvent.Reason.PLAYER));
+
+        assertThat(click.isCancelled()).isTrue();
+        assertThat(drag.isCancelled()).isTrue();
+        assertThat(clicks).hasValue(0);
+        assertThat(viewer.heard()).isEmpty();
+        assertThat(menu.closes).isEmpty();
+        assertThat(menu.sessions.getLast().closed()).isFalse();
+        assertThat(admin.session(viewer.id)).isPresent();
     }
 
     @Test

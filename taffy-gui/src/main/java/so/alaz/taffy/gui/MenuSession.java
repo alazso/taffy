@@ -16,6 +16,7 @@ import java.util.Objects;
  */
 public final class MenuSession<S> implements InventoryHolder {
 
+    private final Menus owner;
     private final Player viewer;
     private final Menu<S> menu;
     private final MenuLayout layout;
@@ -33,13 +34,20 @@ public final class MenuSession<S> implements InventoryHolder {
     private boolean handoff;
     private boolean closedInHandoff;
 
-    MenuSession(Player viewer, Menu<S> menu, MenuLayout layout, S state, @Nullable Route back, long openedAt) {
+    MenuSession(Menus owner, Player viewer, Menu<S> menu, MenuLayout layout, S state, @Nullable Route back,
+                long openedAt) {
+        this.owner = owner;
         this.viewer = viewer;
         this.menu = menu;
         this.layout = layout;
         this.state = Objects.requireNonNull(state, "state");
         this.back = back;
         this.openedAt = openedAt;
+    }
+
+    /** The menus that opened the session. */
+    Menus owner() {
+        return owner;
     }
 
     /**

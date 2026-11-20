@@ -49,6 +49,9 @@ import java.util.logging.Logger;
  * how a {@link ClickHandler} opens, closes and redraws menus. The session map serves {@link #session(UUID)}, a quit and
  * {@link #shutdown()}; listeners find a menu by its inventory holder, the {@link MenuSession}.
  *
+ * <p>A plugin may build more than one {@code Menus}. Each listener cancels the clicks and drags in a menu of any of
+ * them, and only the menus that opened a session run its button handlers, play its sounds and end it.
+ *
  * <p>Opening a menu while the viewer has another open is a hand-off: the previous session's close is not the viewer
  * leaving, so its {@link Menu#closed(MenuSession, boolean)} gets {@code left = false}. Once {@link #shutdown()} ran the
  * menus are stopping and nothing opens again.
@@ -880,7 +883,7 @@ public final class Menus {
         }
         prompts.end(viewer.getUniqueId());
         MenuLayout layout = layouts.get(menu.kind().id());
-        MenuSession<S> session = new MenuSession<>(viewer, menu, layout, state, back, nanos.getAsLong());
+        MenuSession<S> session = new MenuSession<>(this, viewer, menu, layout, state, back, nanos.getAsLong());
         Locale locale = parts.locales().apply(viewer);
         Component title = menu.title(new Frame<>(this, session, locale));
         session.attach(inventories.create(session, layout.size(), title));

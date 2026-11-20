@@ -107,6 +107,12 @@ All notable changes to Taffy are documented here. This project follows
   does not own, which happens only on Folia. Such a menu still stays open with no listener to cancel its clicks,
   but it now shows nothing, so its viewer has no menu copy to take. Before, it stayed fully stocked and a copy
   taken from it was deleted only when a click met it after a later enable.
+- A plugin with two `Menus`, such as one for player menus and one for admin menus, runs a button's handler once
+  per click. Each `Menus` registers its own listener, and before, both listeners dispatched every click in any
+  menu, so the handler ran twice, the click sound played twice, and the listener registered first ended every
+  session with its own `Menus`, whichever had opened it. A session now belongs to the `Menus` that opened it: every
+  listener still cancels the clicks and drags in a menu of any `Menus`, and only the listener of the owning
+  `Menus` runs the handler, plays `Cue.CLICK` and `Cue.FAIL` and ends the session.
 
 ### Removed
 - Breaking: `Menus.Parts.messages()` and `MenuText.messages()` are gone, since the menus hold a `TextSource` and

@@ -53,7 +53,8 @@ import static org.mockito.Mockito.when;
 // menu id. Each viewer is a mocked player whose open and close go through the listener as on a server: an open closes
 // the previous view with OPEN_NEW first. Clicks and drags are real events passed to the listener. With listening false the close event
 // reaches no listener, as on a server while the plugin is disabled. registered holds the listeners the menus and
-// their prompts registered, in order.
+// their prompts registered, in order. Every click, drag and close goes to the listener of these menus and then to
+// the listener of each menus another() built.
 final class MenuHarness {
 
     static final MenuKind MAIN = MenuKind.of("main", false, MenuKind.BACK, MenuKind.CLOSE);
@@ -117,6 +118,8 @@ final class MenuHarness {
     final Menus menus;
     final PreviewMarker marker;
     final MenuListener listener;
+    final List<MenuListener> listeners = new ArrayList<>();
+    private final Menus.Parts parts;
     Predicate<Player> owned = player -> true;
     final Set<Material> notItems = new HashSet<>(Set.of(Material.AIR, Material.WATER, Material.WALL_TORCH));
     boolean listening = true;
@@ -152,12 +155,24 @@ final class MenuHarness {
         Menus.Parts parts = text == null
             ? Menus.Parts.of(plugin, this.messages, tasks, entity, errors)
             : Menus.Parts.of(plugin, text, tasks, entity, errors);
-        menus = new Menus(parts.layouts(layouts).settings(settings).sounds(() -> SOUNDS).home(home),
-            marker -> inventories, player -> owned.test(player), material -> !notItems.contains(material), clock,
-            registered::add);
+        this.parts = parts.layouts(layouts).settings(settings).sounds(() -> SOUNDS).home(home);
+        menus = build();
         marker = menus.marker();
         menus.prompts(prompts);
         listener = menus.menuListener();
+        listeners.add(listener);
+    }
+
+    // A second Menus of the same plugin over the same parts and fakes, whose listener receives every event too.
+    Menus another() {
+        Menus other = build();
+        listeners.add(other.menuListener());
+        return other;
+    }
+
+    private Menus build() {
+        return new Menus(parts, marker -> inventories, player -> owned.test(player),
+            material -> !notItems.contains(material), clock, registered::add);
     }
 
     // A mocked plugin named TaffyTest, so its preview key is taffytest:preview.
@@ -317,7 +332,8 @@ final class MenuHarness {
             view = null;
             closes.add(reason);
             if (listening) {
-                listener.onClose(new InventoryCloseEvent(closing, reason));
+                InventoryCloseEvent event = new InventoryCloseEvent(closing, reason);
+                listeners.forEach(each -> each.onClose(event));
             }
         }
 
@@ -355,7 +371,7 @@ final class MenuHarness {
 
         InventoryClickEvent clickOn(FakeView on, int raw, ClickType type, InventoryAction action, int key) {
             InventoryClickEvent event = new InventoryClickEvent(on, on.getSlotType(raw), raw, type, action, key);
-            listener.onClick(event);
+            listeners.forEach(each -> each.onClick(event));
             return event;
         }
 
@@ -366,7 +382,7 @@ final class MenuHarness {
                 dragged.put(raw, oldCursor);
             }
             InventoryDragEvent event = new InventoryDragEvent(on, null, oldCursor, false, dragged);
-            listener.onDrag(event);
+            listeners.forEach(each -> each.onDrag(event));
             return event;
         }
 

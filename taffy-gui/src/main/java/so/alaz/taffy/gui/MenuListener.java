@@ -27,6 +27,10 @@ import java.util.logging.Logger;
  * {@link EventPriority#HIGHEST} in case another plugin cancelled it back. Closes and quits are watched at
  * {@link EventPriority#MONITOR}.
  *
+ * <p>A click or drag in the menu view of any {@link Menus} is cancelled. A click is dispatched, and a close ends the
+ * session, only for a session the menus of this listener opened, so two {@code Menus} over one viewer run a handler and
+ * {@link Menu#closed(MenuSession, boolean)} once.
+ *
  * <p>Only a click whose type is one of {@link ClickGuard#ANY_PLAIN}, by the viewer of an open session, on a raw slot
  * of the menu inventory that holds a button accepting that click type, reaches the button. The checks then run in this
  * order: the open arming (no click within the click debounce window of the menu opening), the busy check (an exclusive
@@ -74,7 +78,7 @@ final class MenuListener implements Listener {
             return;
         }
         event.setCancelled(true);
-        if (session.closed() || !(event.getWhoClicked() instanceof Player player)
+        if (session.owner() != menus || session.closed() || !(event.getWhoClicked() instanceof Player player)
             || !player.getUniqueId().equals(session.viewer().getUniqueId())) {
             return;
         }
@@ -165,14 +169,14 @@ final class MenuListener implements Listener {
     }
 
     /**
-     * Ends the session of a menu view its own viewer closed, for any reason.
+     * Ends the session of a menu view of these menus its own viewer closed, for any reason.
      *
      * @param event the close
      */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onClose(InventoryCloseEvent event) {
         if (event.getView().getTopInventory().getHolder(false) instanceof MenuSession<?> session
-            && event.getPlayer().getUniqueId().equals(session.viewer().getUniqueId())) {
+            && session.owner() == menus && event.getPlayer().getUniqueId().equals(session.viewer().getUniqueId())) {
             menus.closed(session);
         }
     }
