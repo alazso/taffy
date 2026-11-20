@@ -575,6 +575,50 @@ final class PromptsTest {
     }
 
     @Test
+    @SuppressWarnings("deprecation")
+    void aTakenLineLosesItsAudienceInBothEventsAndAnotherLineKeepsIt() {
+        start(PromptMode.CHAT);
+        ask();
+        Player other = mock(Player.class);
+        Component message = Component.text("7");
+
+        AsyncPlayerChatEvent legacy = new AsyncPlayerChatEvent(true, alex.player, "7", new HashSet<>(Set.of(other)));
+        post(legacy);
+        AsyncChatEvent modern = new AsyncChatEvent(true, alex.player, new HashSet<>(Set.of(other)),
+            ChatRenderer.defaultRenderer(), message, message, mock(SignedMessage.class));
+        modern.setCancelled(true);
+        post(modern);
+
+        assertThat(legacy.getRecipients()).isEmpty();
+        assertThat(modern.viewers()).isEmpty();
+        assertThat(legacy.getMessage()).isEqualTo("7");
+        assertThat(modern.message()).isEqualTo(message);
+        AsyncPlayerChatEvent free = new AsyncPlayerChatEvent(true, alex.player, "hello", new HashSet<>(Set.of(other)));
+        post(free);
+        assertThat(free.getRecipients()).containsExactly(other);
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void aLineTakenFromTheModernEventLosesItsAudienceAndAFixedAudienceIsLeftAsItIs() {
+        start(PromptMode.CHAT);
+        ask();
+        Player other = mock(Player.class);
+        Component message = Component.text("nope");
+        AsyncChatEvent modern = new AsyncChatEvent(true, alex.player, new HashSet<>(Set.of(other)),
+            ChatRenderer.defaultRenderer(), message, message, mock(SignedMessage.class));
+
+        chat.onChat(modern);
+        AsyncPlayerChatEvent fixed = new AsyncPlayerChatEvent(true, alex.player, "7", Set.of(other));
+        post(fixed);
+
+        assertThat(modern.viewers()).isEmpty();
+        assertThat(fixed.isCancelled()).isTrue();
+        assertThat(fixed.getRecipients()).containsExactly(other);
+        assertThat(judged).containsExactly("nope", "7");
+    }
+
+    @Test
     void aLongLineIsCutTo256Characters() {
         start(PromptMode.CHAT);
         List<String> seen = new ArrayList<>();

@@ -23,6 +23,12 @@ All notable changes to Taffy are documented here. This project follows
   waiting by the time the second event arrived took the same line again, so a refusal was told twice or the next
   question was answered with the previous text. The line the legacy event took is now left alone by the second
   event, which stays cancelled.
+- A chat line that answers a `Prompts` ask loses its audience: the prompt listener empties
+  `AsyncChatEvent.viewers()` and `AsyncPlayerChatEvent.getRecipients()` of the line it takes, where the set can
+  be changed, and still cancels the event and leaves the message as typed. A chat plugin that delivers cancelled
+  lines no longer shows the answer to other players or the console. The `PaperPromptListener` Javadoc now states
+  that the event still reaches every handler that does not ignore cancelled events, at any priority, so such a
+  handler can read the answer.
 - `Menus.shutdown` empties the inventory of each open menu and prompt anvil whose viewer the disabling thread
   does not own, which happens only on Folia. Such a menu still stays open with no listener to cancel its clicks,
   but it now shows nothing, so its viewer has no menu copy to take. Before, it stayed fully stocked and a copy

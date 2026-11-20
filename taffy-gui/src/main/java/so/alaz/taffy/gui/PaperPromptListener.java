@@ -16,6 +16,7 @@ import org.bukkit.inventory.InventoryView;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -24,14 +25,17 @@ import java.util.UUID;
  * {@link Prompts#listener()} gives at enable. Over prompts without an anvil the anvil handlers do nothing.
  *
  * <p>Both chat handlers run at {@link EventPriority#LOWEST} with {@code ignoreCancelled = false}, so the line is taken
- * before any other plugin sees it and a mute plugin cannot leave the prompt waiting. The line is cancelled so nobody
- * else reads it, and it is never modified. A line from a player with no chat prompt is left alone. Paper posts
+ * before any other plugin sees it and a mute plugin cannot leave the prompt waiting. The line is cancelled and its
+ * audience is emptied ({@link AsyncChatEvent#viewers()} and {@link AsyncPlayerChatEvent#getRecipients()}, where the
+ * set can be changed), and its message is never modified. The event still reaches every later handler that does not
+ * ignore cancelled events, at any priority, and such a handler can read the answer from it; with the audience empty, a
+ * handler that delivers a cancelled line has nobody to deliver it to. A line from a player with no chat prompt is left
+ * alone. Paper posts
  * {@link AsyncPlayerChatEvent} before {@link AsyncChatEvent} whenever a plugin listens to it, and this listener does,
  * so once it is registered Paper posts the legacy event for every chat line on the server. The legacy handler
  * therefore normally takes the answer, and {@link AsyncChatEvent} then arrives cancelled; the line is taken from
  * whichever event comes first, and once: a line the legacy handler took is left to no ask by the modern handler, even
- * when the same ask waits again after a refusal or the answer started another ask in between. A handler of another
- * plugin at {@link EventPriority#LOWEST} that reads cancelled lines can still see it.
+ * when the same ask waits again after a refusal or the answer started another ask in between.
  *
  * <p>Every click and drag on a prompt anvil is cancelled first and again last. A click on its result slot submits the
  * name field. The result shows a PAPER named after the name field, marked with the menus' preview key. A close clears
@@ -59,6 +63,7 @@ final class PaperPromptListener implements Listener {
         UUID player = event.getPlayer().getUniqueId();
         if (prompts.takenByLegacy(player)) {
             event.setCancelled(true);
+            empty(event.viewers());
             return;
         }
         Pending taken = prompts.takeChat(player);
@@ -66,6 +71,7 @@ final class PaperPromptListener implements Listener {
             return;
         }
         event.setCancelled(true);
+        empty(event.viewers());
         prompts.answer(player, taken, PlainTextComponentSerializer.plainText().serialize(event.originalMessage()));
     }
 
@@ -83,6 +89,7 @@ final class PaperPromptListener implements Listener {
             return;
         }
         event.setCancelled(true);
+        empty(event.getRecipients());
         prompts.answer(player, taken, event.getMessage());
     }
 
@@ -167,6 +174,15 @@ final class PaperPromptListener implements Listener {
         }
         event.getView().getTopInventory().clear();
         prompts.surfaceClosed(event.getPlayer().getUniqueId(), open.token(), event.getReason());
+    }
+
+    // Bukkit does not promise that the recipients of a chat event can be changed.
+    private static void empty(Set<?> audience) {
+        try {
+            audience.clear();
+        } catch (UnsupportedOperationException fixed) {
+            return;
+        }
     }
 
     private boolean owns(InventoryView view) {
