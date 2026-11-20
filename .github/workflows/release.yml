@@ -102,6 +102,18 @@ jobs:
         if: steps.published.outputs.skip != 'true' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)
         run: ./gradlew build --no-configuration-cache --stacktrace
 
+      # The main sources of every module compile against the paper-api build of the oldest supported Paper server.
+      - name: Compile main sources against taffy.paperFloor
+        if: steps.published.outputs.skip != 'true' || (github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        run: |
+          set -euo pipefail
+          FLOOR="$(sed -n 's/^taffy.paperFloor=//p' gradle.properties | tr -d '[:space:]')"
+          if [ -z "$FLOOR" ]; then
+            echo "::error::gradle.properties sets no taffy.paperFloor."
+            exit 1
+          fi
+          ./gradlew compileJava "-Ptaffy.paperApi=$FLOOR" --no-configuration-cache --stacktrace
+
   # One publish at a time across every ref. A dry run never reaches this job, so it cannot cancel one.
   publish:
     name: Publish
