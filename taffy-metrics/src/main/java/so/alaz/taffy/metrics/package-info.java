@@ -132,5 +132,12 @@
  * {@code plugins/bStats/config.yml} and {@code plugins/faststats/config.properties} apply to it as to the plugin's
  * own metrics. At disable it stops first, without a final send. A started bStats instance runs on its own
  * {@code bStats-Metrics} daemon thread while bStats is enabled.
+ *
+ * <p>One plugin per server reports the usage chart to each provider. The first plugin to start a provider's usage
+ * instance names itself in a system property, {@code taffy.usage.bstats} or {@code taffy.usage.faststats}, which
+ * every relocated copy of Taffy reads, and a plugin that finds another plugin's name there starts no usage instance
+ * for that provider and logs nothing. {@link so.alaz.taffy.metrics.Metrics#shutdown()} of the plugin named there
+ * unsets the property; no other plugin takes the chart over until it next starts its own metrics. A copy of Taffy
+ * older than 0.2.1 neither reads nor sets the properties.
  */
 package so.alaz.taffy.metrics;

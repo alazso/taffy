@@ -14,6 +14,13 @@ All notable changes to Taffy are documented here. This project follows
   `false`.
 
 ### Changed
+- `MetricsBuilder.start()` starts the Taffy usage chart (`taffy_version`) in one plugin per server for each
+  provider. The first plugin to start it names itself in the system property `taffy.usage.bstats` or
+  `taffy.usage.faststats`, which every relocated copy of Taffy reads. A plugin that finds another plugin's name
+  there starts no second bStats instance or FastStats context for that provider and logs nothing; its own metrics
+  start as before. `Metrics.shutdown()` of the plugin named there unsets the property, and no other plugin takes
+  the chart over until it next starts its own metrics. A copy of Taffy older than 0.2.1 neither reads nor sets
+  the properties, so it still starts the chart.
 - The FastStats error trackers of `taffy-metrics` hide more of a message before it leaves the server:
   - the user name and password of a URI of any scheme: `redis://default:hunter2@cache:6379` is sent as
     `redis://[credentials hidden]@cache:6379`;

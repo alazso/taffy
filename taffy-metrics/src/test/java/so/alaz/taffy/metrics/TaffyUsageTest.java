@@ -46,6 +46,8 @@ class TaffyUsageTest {
     @BeforeEach
     void setUp() throws IOException {
         System.clearProperty("faststats.first-run");
+        System.clearProperty(TaffyUsage.BSTATS_HOLDER);
+        System.clearProperty(TaffyUsage.FASTSTATS_HOLDER);
         savedHandler = Thread.getDefaultUncaughtExceptionHandler();
         sink = new LoopbackSink();
         sink.point();
@@ -57,7 +59,120 @@ class TaffyUsageTest {
         started.forEach(TaffyUsage::shutdown);
         sink.close();
         System.clearProperty("faststats.first-run");
+        System.clearProperty(TaffyUsage.BSTATS_HOLDER);
+        System.clearProperty(TaffyUsage.FASTSTATS_HOLDER);
         Thread.setDefaultUncaughtExceptionHandler(savedHandler);
+    }
+
+    /** A second plugin on the same plugins folder, named {@code Other}. */
+    private MetricsFixture otherPlugin() throws IOException {
+        MetricsFixture other = new MetricsFixture(plugins);
+        when(other.plugin.getName()).thenReturn("Other");
+        return other;
+    }
+
+    /** Starts usage metrics over {@code on} with the test credentials and shuts them down after the test. */
+    private TaffyUsage startWithTestCredentials(MetricsFixture on) {
+        TaffyUsage usage = TaffyUsage.start(on.plugin, MetricsFixture.BSTATS_SERVICE_ID,
+            MetricsFixture.FASTSTATS_TOKEN);
+        started.add(usage);
+        return usage;
+    }
+
+    @Test
+    void theHolderKeysStartWithNoPackageAShadowJarRelocates() {
+        assertThat(TaffyUsage.BSTATS_HOLDER).isEqualTo("taffy.usage.bstats");
+        assertThat(TaffyUsage.FASTSTATS_HOLDER).isEqualTo("taffy.usage.faststats");
+    }
+
+    @Test
+    void aStartClaimsEachProviderForTheOwnerAndShutdownReleasesIt() throws IOException {
+        fixture.writeFastStatsConfig(true, true, true);
+
+        TaffyUsage usage = startWithTestCredentials();
+
+        assertThat(System.getProperty(TaffyUsage.BSTATS_HOLDER)).isEqualTo("Owner");
+        assertThat(System.getProperty(TaffyUsage.FASTSTATS_HOLDER)).isEqualTo("Owner");
+        usage.shutdown();
+        assertThat(System.getProperty(TaffyUsage.BSTATS_HOLDER)).isNull();
+        assertThat(System.getProperty(TaffyUsage.FASTSTATS_HOLDER)).isNull();
+    }
+
+    @Test
+    void aStartWithNoProviderClaimsNothing() {
+        TaffyUsage.start(fixture.plugin, false, false);
+
+        assertThat(System.getProperty(TaffyUsage.BSTATS_HOLDER)).isNull();
+        assertThat(System.getProperty(TaffyUsage.FASTSTATS_HOLDER)).isNull();
+    }
+
+    @Test
+    void aSecondPluginStartsNoProviderAnotherPluginHolds() throws IOException {
+        MetricsFixture other = otherPlugin();
+        fixture.writeFastStatsConfig(true, true, true);
+        startWithTestCredentials();
+
+        TaffyUsage second = startWithTestCredentials(other);
+
+        assertThat(second.bStats).isNull();
+        assertThat(second.fastStats).isNull();
+        verify(other.plugin, never()).getDataFolder();
+        verify(other.pluginManager, never()).registerEvents(any(Listener.class), any(Plugin.class));
+        assertThat(other.log.lines()).isEmpty();
+        second.shutdown();
+        assertThat(System.getProperty(TaffyUsage.BSTATS_HOLDER)).isEqualTo("Owner");
+        assertThat(System.getProperty(TaffyUsage.FASTSTATS_HOLDER)).isEqualTo("Owner");
+    }
+
+    @Test
+    void aSecondPluginStartsTheProviderTheFirstDidNotStart() throws IOException {
+        MetricsFixture other = otherPlugin();
+        fixture.writeFastStatsConfig(true, true, true);
+        started.add(TaffyUsage.start(fixture.plugin, MetricsFixture.BSTATS_SERVICE_ID, ""));
+
+        TaffyUsage second = startWithTestCredentials(other);
+
+        assertThat(second.bStats).isNull();
+        assertThat(second.fastStats).isNotNull();
+        assertThat(System.getProperty(TaffyUsage.BSTATS_HOLDER)).isEqualTo("Owner");
+        assertThat(System.getProperty(TaffyUsage.FASTSTATS_HOLDER)).isEqualTo("Other");
+    }
+
+    @Test
+    void aSecondPluginStartsBothProvidersOnceTheHolderShutDown() throws IOException {
+        MetricsFixture other = otherPlugin();
+        fixture.writeFastStatsConfig(true, true, true);
+        startWithTestCredentials().shutdown();
+
+        TaffyUsage second = startWithTestCredentials(other);
+
+        assertThat(second.bStats).isNotNull();
+        assertThat(second.fastStats).isNotNull();
+        assertThat(System.getProperty(TaffyUsage.BSTATS_HOLDER)).isEqualTo("Other");
+        assertThat(System.getProperty(TaffyUsage.FASTSTATS_HOLDER)).isEqualTo("Other");
+    }
+
+    @Test
+    void aProviderThatFailsToStartReleasesItsClaim() throws IOException {
+        MetricsFixture other = otherPlugin();
+        fixture.writeFastStatsConfig(true, true, true);
+        started.add(TaffyUsage.start(fixture.plugin, MetricsFixture.BSTATS_SERVICE_ID, "Not-A-Token"));
+
+        assertThat(System.getProperty(TaffyUsage.BSTATS_HOLDER)).isEqualTo("Owner");
+        assertThat(System.getProperty(TaffyUsage.FASTSTATS_HOLDER)).isNull();
+        assertThat(startWithTestCredentials(other).fastStats).isNotNull();
+    }
+
+    @Test
+    void aPluginThatStartsWhileThePropertyCarriesItsOwnNameStartsBothProviders() throws IOException {
+        fixture.writeFastStatsConfig(true, true, true);
+        System.setProperty(TaffyUsage.BSTATS_HOLDER, "Owner");
+        System.setProperty(TaffyUsage.FASTSTATS_HOLDER, "Owner");
+
+        TaffyUsage usage = startWithTestCredentials();
+
+        assertThat(usage.bStats).isNotNull();
+        assertThat(usage.fastStats).isNotNull();
     }
 
     /** Starts usage metrics over the fixture with the test credentials and shuts them down after the test. */

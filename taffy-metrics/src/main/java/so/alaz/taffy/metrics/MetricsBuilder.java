@@ -150,7 +150,8 @@ public final class MetricsBuilder {
      * down again at once and {@link Metrics#bStatsStarted()} reads {@code false}.
      *
      * <p>With the switch on, this also starts the Taffy usage chart that the package documentation describes, beside
-     * each provider that started here, and the handle stops it at {@link Metrics#shutdown()}.
+     * each provider that started here, unless another plugin on the server already reports the chart to that
+     * provider. The handle stops it at {@link Metrics#shutdown()}.
      *
      * @return the handle, inert when nothing started; never {@code null}
      * @throws IllegalStateException if this builder was already started

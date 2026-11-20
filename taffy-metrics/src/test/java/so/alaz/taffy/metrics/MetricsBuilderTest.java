@@ -59,6 +59,8 @@ class MetricsBuilderTest {
     @BeforeEach
     void setUp() throws IOException {
         System.clearProperty("faststats.first-run");
+        System.clearProperty(TaffyUsage.BSTATS_HOLDER);
+        System.clearProperty(TaffyUsage.FASTSTATS_HOLDER);
         savedHandler = Thread.getDefaultUncaughtExceptionHandler();
         sink = new LoopbackSink();
         sink.point();
@@ -74,6 +76,8 @@ class MetricsBuilderTest {
         contexts.forEach(BukkitContext::shutdown);
         sink.close();
         System.clearProperty("faststats.first-run");
+        System.clearProperty(TaffyUsage.BSTATS_HOLDER);
+        System.clearProperty(TaffyUsage.FASTSTATS_HOLDER);
         Thread.setDefaultUncaughtExceptionHandler(savedHandler);
     }
 
@@ -145,6 +149,41 @@ class MetricsBuilderTest {
         assertThat(metrics.usage.bStats).isNull();
         assertThat(metrics.usage.fastStats).isNotNull();
         verify(fixture.plugin, never()).getDataFolder();
+    }
+
+    @Test
+    void aSecondPluginStartsItsOwnProvidersAndNoUsageChartUntilTheFirstShutsDown() throws IOException {
+        MetricsFixture other = new MetricsFixture(plugins);
+        when(other.plugin.getName()).thenReturn("Other");
+        fixture.enableBStats();
+        fixture.writeFastStatsConfig(true, true, true);
+        Metrics first = start(new MetricsBuilder(fixture.plugin, errors, true)
+            .bStats(MetricsFixture.BSTATS_SERVICE_ID)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN));
+
+        Metrics second = start(new MetricsBuilder(other.plugin, new ErrorReports(), true)
+            .bStats(MetricsFixture.BSTATS_SERVICE_ID)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN));
+
+        assertThat(second.bStatsStarted()).isTrue();
+        assertThat(second.fastStatsSdk()).isNotNull();
+        assertThat(second.usage).isNotNull();
+        assertThat(second.usage.bStats).isNull();
+        assertThat(second.usage.fastStats).isNull();
+        assertThat(other.log.lines()).isEmpty();
+        second.shutdown();
+        assertThat(first.usage).isNotNull();
+        assertThat(first.usage.bStats).isNotNull();
+        assertThat(System.getProperty(TaffyUsage.BSTATS_HOLDER)).isEqualTo("Owner");
+
+        first.shutdown();
+        Metrics third = start(new MetricsBuilder(other.plugin, new ErrorReports(), true)
+            .bStats(MetricsFixture.BSTATS_SERVICE_ID)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN));
+
+        assertThat(third.usage).isNotNull();
+        assertThat(third.usage.bStats).isNotNull();
+        assertThat(third.usage.fastStats).isNotNull();
     }
 
     @Test
