@@ -60,6 +60,7 @@ tasks.register<JavaCompile>("compileAgainstPaperFloor") {
         ", the oldest Paper build Taffy supports."
     source = sourceSets.named("main").get().java
     classpath = paperFloorCompileClasspath
+    javaCompiler.set(javaToolchains.compilerFor(java.toolchain))
     options.annotationProcessorPath = configurations.getByName("annotationProcessor")
     destinationDirectory.set(layout.buildDirectory.dir("classes/java/paperFloor"))
 }

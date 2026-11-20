@@ -8,7 +8,8 @@ All notable changes to Taffy are documented here. This project follows
 ### Added
 - `so.alaz.taffy.paper-plugin`: the `compileAgainstPaperFloor` task compiles a plugin's main Java sources against
   paper-api 26.2.build.135-stable, the oldest Paper build Taffy supports, so a call that build lacks fails the
-  task. Every other dependency resolves as on `compileClasspath`. No task depends on it: run it by name, or add
+  task. Every other dependency resolves as on `compileClasspath`, and the compiler is the one of the project's
+  Java toolchain. No task depends on it: run it by name, or add
   `tasks.check { dependsOn("compileAgainstPaperFloor") }` to make it part of `check`. It compiles only, so a
   method that exists on that build with other behaviour is not caught.
 - `Text.withPlaceholderFormatting()` returns a `Text` that shares the integrations and the log of the one it is
