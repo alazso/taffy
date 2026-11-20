@@ -36,7 +36,7 @@ class PublicApiRulesTest {
             .containsExactlyInAnyOrder("Answer", "BedrockPlayers", "Click", "ClickGuard", "ClickHandler",
                 "Cue", "Frame", "Icon", "ItemLayout", "Menu", "MenuKind", "MenuLayout", "MenuSession",
                 "MenuSettings", "MenuText", "Menus", "Pager", "PagerLayout", "PromptMode", "PromptRequest", "Prompts",
-                "Route", "ViewMemory");
+                "Route", "TextSource", "ViewMemory");
     }
 
     @Test

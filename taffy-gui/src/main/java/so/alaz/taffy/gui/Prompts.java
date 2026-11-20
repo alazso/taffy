@@ -62,7 +62,7 @@ import java.util.logging.Level;
  * dropped. A future that fails or completes with {@code null} is handled as an answer function that throws, and a
  * cancelled future opens the origin again with no message.
  *
- * <p>The prompts read the lang files, the locale function, the entity-thread seams, the thread-ownership check, the
+ * <p>The prompts read the text source, the locale function, the entity-thread seams, the thread-ownership check, the
  * logger and the {@link ErrorReports} of the menus they are built over. Building the prompts makes them the prompts
  * of those menus, so opening a menu ends a pending ask; a second {@code Prompts} over the same menus, or prompts over
  * menus that were shut down, are refused. The plugin registers {@link #listener()} at enable.
@@ -117,7 +117,7 @@ public final class Prompts {
      * Creates the prompts with no ask pending and makes them the prompts that opening one of {@code menus} ends. For
      * {@link PromptMode#ANVIL} the prompts build their anvil, whose paper carries the menus' preview key.
      *
-     * @param menus the plugin's menus, whose lang files, locale function, entity-thread seams, thread-ownership
+     * @param menus the plugin's menus, whose text source, locale function, entity-thread seams, thread-ownership
      *     check, logger and error reports the prompts use
      * @param mode where players type their answers. It holds for the life of the prompts, so a changed mode takes
      *     effect only in prompts built anew
@@ -212,11 +212,11 @@ public final class Prompts {
             return;
         }
         Locale locale = menus.locales().apply(player);
-        player.sendMessage(menus.messages().render(locale, QUESTION,
+        player.sendMessage(menus.source().render(locale, QUESTION,
             Placeholder.component("question", request.question())));
-        Component hint = menus.messages().render(locale, HINT, Placeholder.unparsed("word", cancelWord(locale)));
+        Component hint = menus.source().render(locale, HINT, Placeholder.unparsed("word", cancelWord(locale)));
         if (!onBedrock) {
-            hint = hint.append(Component.space()).append(menus.messages().render(locale, CANCEL_BUTTON)
+            hint = hint.append(Component.space()).append(menus.source().render(locale, CANCEL_BUTTON)
                 .clickEvent(cancelLink.link(() -> cancel(id, entry.token()))));
         }
         player.sendMessage(hint);
@@ -429,7 +429,7 @@ public final class Prompts {
         switch (result) {
             case Answer.Accept accept -> finish(player, taken, null, accept.next());
             case Answer.Retry retry -> {
-                player.sendMessage(menus.messages().render(menus.locales().apply(player), REFUSED,
+                player.sendMessage(menus.source().render(menus.locales().apply(player), REFUSED,
                     Placeholder.component("reason", retry.reason()), Placeholder.unparsed("answer", text)));
                 rearm(player, taken);
             }
@@ -468,7 +468,7 @@ public final class Prompts {
         menus.logger().log(Level.WARNING, "gui: a prompt answer failed for " + player.getName() + ": " + failure,
             failure);
         menus.errors().report("gui.prompt", failure);
-        player.sendMessage(menus.messages().render(menus.locales().apply(player), Menus.ERROR));
+        player.sendMessage(menus.source().render(menus.locales().apply(player), Menus.ERROR));
         finish(player, taken, null, taken.request().origin());
     }
 
@@ -501,7 +501,7 @@ public final class Prompts {
     private void finish(Player player, Pending entry, @Nullable String key, Route next) {
         closeSurface(player, entry);
         if (key != null) {
-            player.sendMessage(menus.messages().render(menus.locales().apply(player), key));
+            player.sendMessage(menus.source().render(menus.locales().apply(player), key));
         }
         if (stopping || player.isDead() || !player.isOnline() || !ownScreen.test(player)) {
             return;
@@ -520,10 +520,10 @@ public final class Prompts {
     }
 
     private String cancelWord(Locale locale) {
-        if (!menus.messages().has(locale, CANCEL_WORD)) {
+        if (!menus.source().has(locale, CANCEL_WORD)) {
             return DEFAULT_CANCEL_WORD;
         }
-        String word = PlainTextComponentSerializer.plainText().serialize(menus.messages().render(locale, CANCEL_WORD))
+        String word = PlainTextComponentSerializer.plainText().serialize(menus.source().render(locale, CANCEL_WORD))
             .strip();
         return word.isEmpty() ? DEFAULT_CANCEL_WORD : word;
     }

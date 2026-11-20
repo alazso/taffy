@@ -384,8 +384,10 @@ final class MenuLifecycleTest {
             entity, errors)).withMessage("preview");
         assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, null, messages, tasks,
             entity, errors)).withMessage("logger");
-        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, null, tasks,
-            entity, errors)).withMessage("messages");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, (Messages) null,
+            tasks, entity, errors)).withMessage("messages");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, (TextSource) null,
+            tasks, entity, errors)).withMessage("text");
         assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, messages, null,
             entity, errors)).withMessage("tasks");
         assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, messages, tasks,
@@ -425,7 +427,7 @@ final class MenuLifecycleTest {
         assertThat(changed.server()).isSameAs(server);
         assertThat(changed.preview()).isEqualTo(parts.preview());
         assertThat(changed.logger()).isSameAs(parts.logger());
-        assertThat(changed.messages()).isSameAs(parts.messages());
+        assertThat(changed.text()).isSameAs(parts.text());
         assertThat(changed.tasks()).isSameAs(parts.tasks());
         assertThat(changed.entity()).isSameAs(parts.entity());
         assertThat(changed.errors()).isSameAs(parts.errors());

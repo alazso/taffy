@@ -68,7 +68,7 @@ public final class Menus {
 
     /**
      * What the menus are built from. Build the parts with
-     * {@link #of(Server, NamespacedKey, Logger, Messages, BiConsumer, EntityThread, ErrorReports)} and the methods
+     * {@link #of(Server, NamespacedKey, Logger, TextSource, BiConsumer, EntityThread, ErrorReports)} and the methods
      * that take a value, such as {@code Parts.of(...).layouts(layouts).home("main")}; each gives a copy and leaves
      * these parts unchanged.
      */
@@ -76,7 +76,7 @@ public final class Menus {
 
         private final Map<String, MenuLayout> layouts;
         private final MenuSettings settings;
-        private final Messages messages;
+        private final TextSource text;
         private final Function<Player, Locale> locales;
         private final Server server;
         private final NamespacedKey preview;
@@ -87,13 +87,13 @@ public final class Menus {
         private final Logger logger;
         private final ErrorReports errors;
 
-        private Parts(Map<String, MenuLayout> layouts, MenuSettings settings, Messages messages,
+        private Parts(Map<String, MenuLayout> layouts, MenuSettings settings, TextSource text,
                       Function<Player, Locale> locales, Server server, NamespacedKey preview,
                       BiConsumer<Player, Runnable> tasks, EntityThread entity, Supplier<Map<Cue, Sound>> sounds,
                       @Nullable String home, Logger logger, ErrorReports errors) {
             this.layouts = layouts;
             this.settings = Objects.requireNonNull(settings, "settings");
-            this.messages = Objects.requireNonNull(messages, "messages");
+            this.text = Objects.requireNonNull(text, "text");
             this.locales = Objects.requireNonNull(locales, "locales");
             this.server = Objects.requireNonNull(server, "server");
             this.preview = Objects.requireNonNull(preview, "preview");
@@ -115,7 +115,7 @@ public final class Menus {
          *     {@code new NamespacedKey(plugin, "preview")}; a plugin that must recognise a menu copy in its own
          *     checks keeps it
          * @param logger the plugin's logger
-         * @param messages the plugin's lang files
+         * @param text gives the text of each lang key the menus and prompts read
          * @param tasks runs work on a player's entity thread on the next tick, and nothing once the player is gone
          *     or the plugin is disabling, such as {@code scheduler::entity}
          * @param entity runs a load's result, and a prompt's answer, cancel and timeout, on the player's entity
@@ -124,10 +124,30 @@ public final class Menus {
          * @return the parts
          * @throws NullPointerException if an argument is {@code null}
          */
+        public static Parts of(Server server, NamespacedKey preview, Logger logger, TextSource text,
+                               BiConsumer<Player, Runnable> tasks, EntityThread entity, ErrorReports errors) {
+            return new Parts(Map.of(), MenuSettings.DEFAULTS, text, Player::locale, server, preview, tasks, entity,
+                Map::of, null, logger, errors);
+        }
+
+        /**
+         * Gives the parts as {@link #of(Server, NamespacedKey, Logger, TextSource, BiConsumer, EntityThread,
+         * ErrorReports)} does, with the text read from Taffy's lang files through {@link TextSource#of(Messages)}.
+         *
+         * @param server the server
+         * @param preview the key every stack a menu or prompt anvil shows carries
+         * @param logger the plugin's logger
+         * @param messages the plugin's lang files
+         * @param tasks runs work on a player's entity thread on the next tick
+         * @param entity runs a load's result, and a prompt's answer, cancel and timeout, on the player's entity
+         *     thread
+         * @param errors where handled failures are reported
+         * @return the parts
+         * @throws NullPointerException if an argument is {@code null}
+         */
         public static Parts of(Server server, NamespacedKey preview, Logger logger, Messages messages,
                                BiConsumer<Player, Runnable> tasks, EntityThread entity, ErrorReports errors) {
-            return new Parts(Map.of(), MenuSettings.DEFAULTS, messages, Player::locale, server, preview, tasks,
-                entity, Map::of, null, logger, errors);
+            return of(server, preview, logger, TextSource.of(messages), tasks, entity, errors);
         }
 
         /**
@@ -149,12 +169,12 @@ public final class Menus {
         }
 
         /**
-         * Gives the plugin's lang files.
+         * Gives what gives the text of each lang key the menus and prompts read.
          *
-         * @return the messages
+         * @return the text source
          */
-        public Messages messages() {
-            return messages;
+        public TextSource text() {
+            return text;
         }
 
         /**
@@ -248,7 +268,7 @@ public final class Menus {
          * @throws IllegalArgumentException if a key differs from its layout's {@link MenuLayout#menu()}
          */
         public Parts layouts(Map<String, MenuLayout> layouts) {
-            return new Parts(checked(layouts), settings, messages, locales, server, preview, tasks, entity, sounds,
+            return new Parts(checked(layouts), settings, text, locales, server, preview, tasks, entity, sounds,
                 home, logger, errors);
         }
 
@@ -260,7 +280,7 @@ public final class Menus {
          * @throws NullPointerException if {@code settings} is {@code null}
          */
         public Parts settings(MenuSettings settings) {
-            return new Parts(layouts, settings, messages, locales, server, preview, tasks, entity, sounds, home,
+            return new Parts(layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
                 logger, errors);
         }
 
@@ -272,7 +292,7 @@ public final class Menus {
          * @throws NullPointerException if {@code locales} is {@code null}
          */
         public Parts locales(Function<Player, Locale> locales) {
-            return new Parts(layouts, settings, messages, locales, server, preview, tasks, entity, sounds, home,
+            return new Parts(layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
                 logger, errors);
         }
 
@@ -284,7 +304,7 @@ public final class Menus {
          * @throws NullPointerException if {@code sounds} is {@code null}
          */
         public Parts sounds(Supplier<Map<Cue, Sound>> sounds) {
-            return new Parts(layouts, settings, messages, locales, server, preview, tasks, entity, sounds, home,
+            return new Parts(layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
                 logger, errors);
         }
 
@@ -296,7 +316,7 @@ public final class Menus {
          * @return a copy of these parts with {@code home} replaced
          */
         public Parts home(@Nullable String home) {
-            return new Parts(layouts, settings, messages, locales, server, preview, tasks, entity, sounds, home,
+            return new Parts(layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
                 logger, errors);
         }
     }
@@ -340,7 +360,7 @@ public final class Menus {
         this.ownedHere = ownedHere;
         this.feedback = new Feedback(parts.sounds());
         this.layouts = parts.layouts();
-        this.text = new MenuText(parts.messages());
+        this.text = new MenuText(parts.text());
         this.debounce = new Debounce(() -> parts.settings().clickDebounce(), nanos);
         this.listener = new MenuListener(this);
     }
@@ -550,7 +570,7 @@ public final class Menus {
                 }
                 session.busy(false);
                 if (failed && !session.closed()) {
-                    player.sendMessage(parts.messages().render(parts.locales().apply(player), ERROR));
+                    player.sendMessage(parts.text().render(parts.locales().apply(player), ERROR));
                     feedback.play(player, Cue.FAIL);
                 }
                 return null;
@@ -717,8 +737,8 @@ public final class Menus {
         return marker;
     }
 
-    Messages messages() {
-        return parts.messages();
+    TextSource source() {
+        return parts.text();
     }
 
     Function<Player, Locale> locales() {

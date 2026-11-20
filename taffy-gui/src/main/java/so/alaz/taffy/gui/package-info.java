@@ -27,11 +27,13 @@
  *
  * <p>{@link so.alaz.taffy.gui.Menus} runs the menus. The plugin builds one at enable from
  * {@link so.alaz.taffy.gui.Menus.Parts}. {@code Menus.Parts.of} takes the server, the plugin's preview key
- * ({@code new NamespacedKey(plugin, "preview")}), its logger, its lang files, the entity-thread seams
+ * ({@code new NamespacedKey(plugin, "preview")}), its logger, its text, the entity-thread seams
  * ({@code scheduler::entity} and {@code EntityThread.on(scheduler, server)}) and its {@code ErrorReports}; the
  * layout of each menu keyed by its id, the {@link so.alaz.taffy.gui.MenuSettings}, how a player's locale is chosen, a
  * supplier of the sounds and the id of the home menu are set on the result and default to no layouts,
- * {@code MenuSettings.DEFAULTS}, {@code Player::locale}, no sounds and no home menu. It then registers each
+ * {@code MenuSettings.DEFAULTS}, {@code Player::locale}, no sounds and no home menu. The text is a
+ * {@link so.alaz.taffy.gui.TextSource}, a function from a locale, a lang key and its values to a component;
+ * {@code Menus.Parts.of} also takes Taffy's {@code Messages} in its place. It then registers each
  * {@link so.alaz.taffy.gui.Menu}; a menu with no layout, or with a layout that does not fit its kind, is refused.
  *
  * <p>A menu opens on the viewer's entity thread: {@link so.alaz.taffy.gui.Menus#open(org.bukkit.entity.Player,
@@ -67,7 +69,8 @@
  * keys the plugin's menus read with no other text to fall back to, and {@link so.alaz.taffy.gui.Prompts#KEYS} the
  * keys of the prompts, so a plugin test can check its bundled English file against both.
  *
- * <p>On reload, {@code Messages.reload} brings new text to every menu and prompt drawn afterwards,
+ * <p>On reload, {@code Messages.reload} (or new text behind the plugin's own
+ * {@link so.alaz.taffy.gui.TextSource}) brings new text to every menu and prompt drawn afterwards,
  * {@link so.alaz.taffy.gui.Menus#reload(java.util.Map)} new layouts to every menu opened afterwards, and a new map
  * behind the sounds supplier new sounds to the next cue played. The {@link so.alaz.taffy.gui.MenuSettings}, the home
  * menu, everything else in {@link so.alaz.taffy.gui.Menus.Parts} and the {@link so.alaz.taffy.gui.PromptMode} hold

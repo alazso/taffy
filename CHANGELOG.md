@@ -29,6 +29,12 @@ All notable changes to Taffy are documented here. This project follows
 - `EconomyProvider.vault(Plugin, ErrorReports, boolean switchedOn, boolean folia, Integer scale)` takes the server
   kind as a flag, `true` on Folia, so a plugin with no Taffy `Scheduler` can look the economy up. A plugin with
   one passes `scheduler.mode() == Scheduler.Mode.FOLIA`.
+- `TextSource` is the text function the menus and prompts read: `render(Locale, String key, TagResolver...)` gives
+  the component of a lang key, so a plugin that keeps its text outside Taffy's `Messages` passes a lambda such as
+  `(locale, key, placeholders) -> lang.component(locale, key, placeholders)`. `has` and `lines` have defaults
+  (every key is held, and the text is one line), which a source overrides to leave optional text out, such as lore
+  no file holds, and to give lore one component per line. `TextSource.of(Messages)` is the source over Taffy's
+  lang files, and `Menus.Parts.of` takes either a `TextSource` or the `Messages` themselves.
 
 ### Changed
 - Breaking: `Menus.register` and `Menus.reload` throw an `IllegalArgumentException` for a material that is not an
@@ -86,6 +92,13 @@ All notable changes to Taffy are documented here. This project follows
   does not own, which happens only on Folia. Such a menu still stays open with no listener to cancel its clicks,
   but it now shows nothing, so its viewer has no menu copy to take. Before, it stayed fully stocked and a copy
   taken from it was deleted only when a click met it after a later enable.
+
+### Removed
+- Breaking: `Menus.Parts.messages()` and `MenuText.messages()` are gone, since the menus hold a `TextSource` and
+  no longer the `Messages`. `Menus.Parts.text()` and `MenuText.source()` give the `TextSource`, whose `render`,
+  `has` and `lines` take the same arguments as those of `Messages`. Call `menus.text().source().render(locale,
+  key)` where a menu called `menus.text().messages().render(locale, key)`, and keep the plugin's own `Messages`
+  for anything else it read from them.
 
 ## [0.2.2] - 2026-11-20
 

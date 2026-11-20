@@ -7,7 +7,6 @@ import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.LegacyText;
-import so.alaz.taffy.platform.Messages;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -15,38 +14,37 @@ import java.util.Locale;
 
 /**
  * The text of a menu: its title and each item's name and lore. A title, name or lore written in the layout wins in
- * every language; otherwise the text comes from the first lang key base that holds the key, as {@link Messages}
- * resolves it for the viewer's locale. Names are not italic; lore lines are not italic and are gray unless the text
- * sets a colour.
+ * every language; otherwise the text comes from the first lang key base that holds the key, as the menus'
+ * {@link TextSource} resolves it for the viewer's locale. Names are not italic; lore lines are not italic and are
+ * gray unless the text sets a colour.
  *
  * <p>Text written in the layout or the lang files is trusted MiniMessage from the owner. Values go in through the
  * placeholders after the template is parsed, so a player-typed value passed as {@code Placeholder.unparsed} or
  * {@code Placeholder.component} is shown as it is. A lang template may write a value as {@code {name}} as well as
  * {@code <name>}; text written in the layout reads only {@code <name>}, and a {@code {name}} there is shown as
- * written. Lang text is rendered as {@link Messages} renders it, so it may write {@code <prefix>}; text written in the
- * layout does not read {@code <prefix>}. A section-sign code in either is converted as
- * {@link LegacyText#sectionToMiniMessage(String)} converts it.
- *
- * <p>A lang key that no file holds renders as the marker {@code <red>missing:key}, except where a method says
- * otherwise.
+ * written. Lang text is rendered as the {@link TextSource} renders it; the source {@link TextSource#of} gives for
+ * Taffy's {@code Messages} reads {@code <prefix>}, converts a section-sign code as
+ * {@link LegacyText#sectionToMiniMessage(String)} does and renders a key that no file holds as the marker
+ * {@code <red>missing:key}, which is the missing-key marker the methods below name. Text written in the layout does
+ * not read {@code <prefix>}, and a section-sign code in it is converted the same way.
  */
 public final class MenuText {
 
     private static final MiniMessage MINI = MiniMessage.miniMessage();
 
-    private final Messages messages;
+    private final TextSource source;
 
-    MenuText(Messages messages) {
-        this.messages = messages;
+    MenuText(TextSource source) {
+        this.source = source;
     }
 
     /**
-     * Gives the messages this text reads, for a menu that renders a lang key as a message of its own.
+     * Gives the source this text reads, for a menu that renders a lang key as a message of its own.
      *
-     * @return the messages
+     * @return the text source given in {@link Menus.Parts}
      */
-    public Messages messages() {
-        return messages;
+    public TextSource source() {
+        return source;
     }
 
     /**
@@ -63,7 +61,7 @@ public final class MenuText {
         if (override != null) {
             return layoutText(override, TagResolver.resolver(placeholders));
         }
-        return messages.render(locale, key, placeholders);
+        return source.render(locale, key, placeholders);
     }
 
     /**
@@ -87,11 +85,11 @@ public final class MenuText {
             return null;
         }
         for (String base : bases) {
-            if (messages.has(locale, base + ".name")) {
-                return name(messages.render(locale, base + ".name", placeholders));
+            if (source.has(locale, base + ".name")) {
+                return name(source.render(locale, base + ".name", placeholders));
             }
         }
-        return name(messages.render(locale, bases.getLast() + ".name", placeholders));
+        return name(source.render(locale, bases.getLast() + ".name", placeholders));
     }
 
     /**
@@ -115,7 +113,7 @@ public final class MenuText {
             return List.copyOf(lines);
         }
         for (String base : bases) {
-            if (messages.has(locale, base + ".lore")) {
+            if (source.has(locale, base + ".lore")) {
                 return lines(locale, base + ".lore", placeholders);
             }
         }
@@ -131,7 +129,7 @@ public final class MenuText {
      * @return the name, or the missing-key marker when no lang file holds the key
      */
     public Component label(Locale locale, String key, TagResolver... placeholders) {
-        return name(messages.render(locale, key, placeholders));
+        return name(source.render(locale, key, placeholders));
     }
 
     /**
@@ -143,7 +141,7 @@ public final class MenuText {
      * @return the line, or the missing-key marker when no lang file holds the key
      */
     public Component line(Locale locale, String key, TagResolver... placeholders) {
-        return lore(messages.render(locale, key, placeholders));
+        return lore(source.render(locale, key, placeholders));
     }
 
     /**
@@ -155,7 +153,7 @@ public final class MenuText {
      * @return the lines in order, or the single missing-key marker line when no lang file holds the key
      */
     public List<Component> lines(Locale locale, String key, TagResolver... placeholders) {
-        return messages.lines(locale, key, placeholders).stream().map(MenuText::lore).toList();
+        return source.lines(locale, key, placeholders).stream().map(MenuText::lore).toList();
     }
 
     /**
@@ -163,10 +161,11 @@ public final class MenuText {
      *
      * @param locale the viewer's locale
      * @param key the lang key
-     * @return whether a lang file the locale reads, the bundled English text included, holds the key
+     * @return whether the text source holds the key for the locale, as {@link TextSource#has(Locale, String)}
+     *     tells
      */
     public boolean has(Locale locale, String key) {
-        return messages.has(locale, key);
+        return source.has(locale, key);
     }
 
     private static Component layoutText(String text, TagResolver resolver) {

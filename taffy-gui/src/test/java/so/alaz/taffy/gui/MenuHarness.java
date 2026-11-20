@@ -131,14 +131,24 @@ final class MenuHarness {
     // With messages null, the lang files are the English text above, read from folder.
     MenuHarness(Path folder, MenuSettings settings, Map<String, MenuLayout> extra, @Nullable String home,
                 @Nullable Messages messages) {
+        this(folder, settings, extra, home, messages, null);
+    }
+
+    // With text null, the menus read the messages.
+    MenuHarness(Path folder, MenuSettings settings, Map<String, MenuLayout> extra, @Nullable String home,
+                @Nullable Messages messages, @Nullable TextSource text) {
         this.messages = messages != null ? messages : Messages.load(folder,
             () -> new ByteArrayInputStream(ENGLISH.getBytes(StandardCharsets.UTF_8)), log.logger);
         Map<String, MenuLayout> all = new HashMap<>(LAYOUTS);
         all.putAll(extra);
         layouts = Map.copyOf(all);
         errors.install((source, error) -> reports.add(new Report(source, error)));
-        menus = new Menus(Menus.Parts.of(mock(Server.class), new NamespacedKey("taffytest", "preview"), log.logger,
-            this.messages, tasks, entity, errors).layouts(layouts).settings(settings).sounds(() -> SOUNDS).home(home),
+        Server server = mock(Server.class);
+        NamespacedKey preview = new NamespacedKey("taffytest", "preview");
+        Menus.Parts parts = text == null
+            ? Menus.Parts.of(server, preview, log.logger, this.messages, tasks, entity, errors)
+            : Menus.Parts.of(server, preview, log.logger, text, tasks, entity, errors);
+        menus = new Menus(parts.layouts(layouts).settings(settings).sounds(() -> SOUNDS).home(home),
             marker -> inventories, player -> owned.test(player), material -> !notItems.contains(material), clock);
         marker = menus.marker();
         menus.prompts(prompts);

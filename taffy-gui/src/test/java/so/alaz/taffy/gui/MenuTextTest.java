@@ -56,8 +56,8 @@ final class MenuTextTest {
             gui.home.browse.name: "<green>Stoebern"
             gui.footer.close.name: "<red>Schliessen"
             """);
-        text = new MenuText(Messages.load(folder,
-            () -> new ByteArrayInputStream(ENGLISH.getBytes(StandardCharsets.UTF_8)), new CapturedLog().logger));
+        text = new MenuText(TextSource.of(Messages.load(folder,
+            () -> new ByteArrayInputStream(ENGLISH.getBytes(StandardCharsets.UTF_8)), new CapturedLog().logger)));
     }
 
     @Test
@@ -188,7 +188,7 @@ final class MenuTextTest {
 
     @Test
     void messagesGivesTheMessagesTheTextReads() {
-        assertThat(plain(text.messages().render(Locale.ENGLISH, "gui.home.title"))).isEqualTo("Home");
+        assertThat(plain(text.source().render(Locale.ENGLISH, "gui.home.title"))).isEqualTo("Home");
     }
 
     private static @Nullable String plain(@Nullable Component component) {
