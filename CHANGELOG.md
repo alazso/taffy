@@ -37,6 +37,9 @@ All notable changes to Taffy are documented here. This project follows
   - a host name of two or more labels that ends in `com`, `net`, `org`, `io`, `gg`, `dev`, `me`, `co`, `xyz`,
     `eu`, `de`, `uk`, `us`, `fr`, `nl`, `ca`, `au`, `ru`, `br`, `pl`, `internal`, `local` or `lan`, as
     `[host hidden]`. A class name such as `org.apache.commons.io.FileUtils` and a host name of one label stay.
+    The id and token of a Discord webhook URL stay hidden beside it:
+    `https://discord.com/api/webhooks/<id>/<token>` is sent as
+    `https://[host hidden]/api/webhooks/[id hidden]/[token hidden]`.
 
   Reports whose messages differ only in such a value now merge into one kind.
 - `taffy-metrics` counts an IPv4 address, an IPv6 address and a run of digits in an error message as the same

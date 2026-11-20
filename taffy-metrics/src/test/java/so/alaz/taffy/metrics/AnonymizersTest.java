@@ -1,10 +1,12 @@
 package so.alaz.taffy.metrics;
 
+import com.google.gson.JsonArray;
 import dev.faststats.ErrorTracker;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.lang.reflect.Method;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -24,11 +26,15 @@ class AnonymizersTest {
     private static final int SQL = 9;
     private static final int WINDOWS_PATH = 10;
     private static final int UNIX_PATH = 11;
-    private static final int HOST = 12;
+    private static final int DISCORD_WEBHOOK = 12;
+    private static final int HOST = 13;
+
+    private static final String WEBHOOK_ID = "123456789012345678";
+    private static final String WEBHOOK_TOKEN = "abcDEF-ghi_JKL";
 
     @Test
-    void thereAreThirteenRulesOfAPatternAndAReplacement() {
-        assertThat(Anonymizers.RULES).hasDimensions(13, 2);
+    void thereAreFourteenRulesOfAPatternAndAReplacement() {
+        assertThat(Anonymizers.RULES).hasDimensions(14, 2);
     }
 
     @Test
@@ -253,6 +259,54 @@ class AnonymizersTest {
     }
 
     @Test
+    void theIdAndTokenOfADiscordWebhookUrlAreHidden() {
+        String path = "webhooks/" + WEBHOOK_ID + "/" + WEBHOOK_TOKEN;
+
+        assertThat(apply(DISCORD_WEBHOOK, "404 for URL: https://discord.com/api/" + path))
+            .isEqualTo("404 for URL: https://discord.com/api/webhooks/[id hidden]/[token hidden]");
+        assertThat(apply(DISCORD_WEBHOOK, "POST https://discordapp.com/api/v10/" + path + "?wait=true failed"))
+            .isEqualTo("POST https://discordapp.com/api/v10/webhooks/[id hidden]/[token hidden] failed");
+        assertThat(apply(DISCORD_WEBHOOK, "POST https://CANARY.discord.com/api/" + path + " failed"))
+            .isEqualTo("POST https://CANARY.discord.com/api/webhooks/[id hidden]/[token hidden] failed");
+        assertThat(apply(DISCORD_WEBHOOK, "POST https://ptb.discord.com/api/" + path + "/slack failed"))
+            .isEqualTo("POST https://ptb.discord.com/api/webhooks/[id hidden]/[token hidden]/slack failed");
+    }
+
+    @Test
+    void aUrlThatIsNoDiscordWebhookIsLeftAsWrittenByTheWebhookRule() {
+        assertThat(apply(DISCORD_WEBHOOK, "GET https://discord.com/api/v10/channels/123456789012345678 failed"))
+            .isEqualTo("GET https://discord.com/api/v10/channels/123456789012345678 failed");
+        assertThat(apply(DISCORD_WEBHOOK, "POST https://example.org/api/webhooks/12/abc failed"))
+            .isEqualTo("POST https://example.org/api/webhooks/12/abc failed");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Server returned HTTP response code: 404 for URL: https://discord.com/api/webhooks/%s/%s",
+        "POST https://discordapp.com/api/v10/webhooks/%s/%s?wait=true failed",
+        "POST https://canary.discord.com/api/webhooks/%s/%s failed",
+        "POST https://ptb.discord.com/api/webhooks/%s/%s/slack failed",
+    })
+    void aTrackerWithTheRulesSendsNoDiscordWebhookIdOrToken(String format) throws ReflectiveOperationException {
+        assertThat(sent(format.formatted(WEBHOOK_ID, WEBHOOK_TOKEN)))
+            .doesNotContain(WEBHOOK_ID)
+            .doesNotContain(WEBHOOK_TOKEN)
+            .contains("webhooks/[id hidden]/[token hidden]");
+    }
+
+    @Test
+    void theRulesTogetherHideTheHostIdAndTokenOfADiscordWebhookUrl() {
+        String path = "webhooks/" + WEBHOOK_ID + "/" + WEBHOOK_TOKEN;
+
+        assertThat(Anonymizers.anonymize("404 for URL: https://discord.com/api/" + path))
+            .isEqualTo("404 for URL: https://[host hidden]/api/webhooks/[id hidden]/[token hidden]");
+        assertThat(Anonymizers.anonymize("POST https://discordapp.com/api/v10/" + path + "?wait=true failed"))
+            .isEqualTo("POST https://[host hidden]/api/v10/webhooks/[id hidden]/[token hidden] failed");
+        assertThat(Anonymizers.anonymize("POST https://canary.discord.com/api/" + path + " failed"))
+            .isEqualTo("POST https://[host hidden]/api/webhooks/[id hidden]/[token hidden] failed");
+    }
+
+    @Test
     void aHostNameIsHidden() {
         assertThat(apply(HOST, "java.net.UnknownHostException: db.examplecraft.net"))
             .isEqualTo("java.net.UnknownHostException: [host hidden]");
@@ -326,6 +380,15 @@ class AnonymizersTest {
 
         assertThat(Anonymizers.apply(tracker)).isSameAs(tracker);
         assertThat(tracker.isContextAttached()).isFalse();
+    }
+
+    /** The message a tracker carrying the rules sends for an exception with {@code message}. */
+    private static String sent(String message) throws ReflectiveOperationException {
+        ErrorTracker tracker = Anonymizers.apply(ErrorTracker.contextUnaware());
+        tracker.trackError(new RuntimeException(message));
+        Method data = tracker.getClass().getDeclaredMethod("getFullData");
+        data.setAccessible(true);
+        return ((JsonArray) data.invoke(tracker)).get(0).getAsJsonObject().get("message").getAsString();
     }
 
     private static String apply(int rule, String line) {

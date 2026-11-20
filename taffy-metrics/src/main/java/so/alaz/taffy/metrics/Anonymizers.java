@@ -31,6 +31,9 @@ import java.util.regex.Pattern;
  *       {@code Failed to update balance for shop 12}, stays, and so does a statement of another shape;</li>
  *   <li>a Windows path that starts with a drive letter and a backslash;</li>
  *   <li>an absolute Unix path of two or more segments;</li>
+ *   <li>the id and token of a Discord webhook URL that starts with {@code https://} on {@code discord.com} or
+ *       {@code discordapp.com}, also with a {@code canary} or {@code ptb} label or an API version, and its
+ *       query;</li>
  *   <li>a host name of two or more labels that ends in {@code com}, {@code net}, {@code org}, {@code io},
  *       {@code gg}, {@code dev}, {@code me}, {@code co}, {@code xyz}, {@code eu}, {@code de}, {@code uk},
  *       {@code us}, {@code fr}, {@code nl}, {@code ca}, {@code au}, {@code ru}, {@code br}, {@code pl},
@@ -42,8 +45,9 @@ import java.util.regex.Pattern;
  * another ending.
  *
  * <p>They come on top of what the SDK already hides by itself in every report: IPv4 and IPv6 addresses, the
- * user name in a home directory path, Discord webhook ids and tokens, the password in a jdbc URL, and the
- * JVM's {@code user.name}.
+ * user name in a home directory path, the password in a jdbc URL, and the JVM's {@code user.name}. The SDK
+ * applies the rules of this class before its own, so its Discord webhook rule finds no {@code discord.com} once
+ * the host name rule has run, and the webhook rule of this class takes its place.
  *
  * <p>Every rule runs in time linear in the length of the text.
  */
@@ -56,7 +60,8 @@ final class Anonymizers {
      * Each rule as a regular expression and its replacement, applied in this order.
      *
      * <p>The jdbc rule reads to the next whitespace and the placeholders hold a space, so it runs before the rules
-     * that match inside a jdbc URL.
+     * that match inside a jdbc URL. The Discord webhook rule needs the host name, so it runs before the host name
+     * rule.
      */
     static final String[][] RULES = {
         {"jdbc:[^\\s\"']+", "jdbc:[redacted]"},
@@ -74,6 +79,8 @@ final class Anonymizers {
             + "|(?:CREATE|ALTER|DROP)\\s+TABLE\\s)[^\\n]{0,200}", "[sql hidden]"},
         {"[A-Za-z]:\\\\[^\\s\"']+", "[path hidden]"},
         {"(?<![\\w./:-])/[\\w.-]+/[\\w./-]*", "[path hidden]"},
+        {"(?i)(https://(?:(?:canary|ptb)\\.)?discord(?:app)?\\.com/api/(?:v\\d+/)?webhooks/)\\d+/[\\w-]+(?:\\?\\S*)?",
+            "$1[id hidden]/[token hidden]"},
         {"(?i)(?<![\\w.-])[\\w.-]+\\.(?:" + HOST_ENDINGS + ")(?![\\w-]|\\.[\\w-])", "[host hidden]"},
     };
 
