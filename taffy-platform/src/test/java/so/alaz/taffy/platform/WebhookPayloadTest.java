@@ -87,6 +87,30 @@ class WebhookPayloadTest {
     }
 
     @Test
+    void aNullAllowedMentionsCountsAsNoKey() {
+        Map<String, Object> template = new LinkedHashMap<>();
+        template.put("allowed_mentions", null);
+        template.put("content", "%arg%");
+
+        String json = WebhookPayload.render(template, s -> s.replace("%arg%", "@everyone"));
+
+        assertThat(json).isEqualTo("{\"content\":\"@everyone\",\"allowed_mentions\":{\"parse\":[]}}");
+    }
+
+    @Test
+    void refusesANumberThatIsNotFiniteAndNamesItsKeyPath() {
+        Map<String, Object> template = new LinkedHashMap<>();
+        template.put("embeds", List.of(Map.of("color", Double.NaN)));
+
+        assertThatThrownBy(() -> WebhookPayload.render(template, s -> s))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("embeds[0].color is NaN");
+        assertThatThrownBy(() -> WebhookPayload.render(Map.of("x", Float.POSITIVE_INFINITY), s -> s))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("x is Infinity");
+    }
+
+    @Test
     void anAllowedMentionsKeyBelowTheTopLevelDoesNotCount() {
         Map<String, Object> template = new LinkedHashMap<>();
         template.put("embeds", List.of(Map.of("allowed_mentions", "x")));

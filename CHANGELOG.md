@@ -64,7 +64,7 @@ All notable changes to Taffy are documented here. This project follows
   write those in the template, around the placeholder.
 - Breaking: `DiscordWebhook.post(String, String, Consumer<String>)` sends `"allowed_mentions": {"parse": []}`
   with the content, and `WebhookPayload.render` adds the same key to the top level of a template that has no
-  `allowed_mentions` key of its own. In 0.1 neither sent the key, so Discord's default applied and player text
+  `allowed_mentions` key of its own or sets it to null. In 0.1 neither sent the key, so Discord's default applied and player text
   in a post, such as an item renamed to `@everyone free nitro` or a reason holding `<@&roleId>`, pinged the
   guild. Now `@everyone`, `@here`, role mentions and user mentions in such a post are shown as text and ping
   no one. A template with an `allowed_mentions` key keeps its value unchanged, and `DiscordWebhook.postBody`
@@ -78,8 +78,9 @@ All notable changes to Taffy are documented here. This project follows
   a plugin must give its last posts more than 5 seconds.
 - Breaking: `WebhookPayload.render` throws `IllegalArgumentException` for a template value that is not a
   `String`, `Number`, `Boolean`, `null`, `Map`, `List` or Bukkit `ConfigurationSection`. The message names the
-  value by its key path, such as `embeds[0].timestamp`. In 0.1 such a value was handed to Gson, which wrote
-  whatever its reflection found. Migration: turn the value into a `String`, `Number` or `Boolean` before the
+  value by its key path, such as `embeds[0].timestamp`. It throws the same way for a `Double` or `Float` that is
+  `NaN` or infinite. In 0.1 such a value was handed to Gson, which wrote whatever its reflection found.
+  Migration: turn the value into a `String`, `Number` or `Boolean` before the
   template is given to `render`.
 - Breaking: `SkullBuilder.fromName` and `SkullBuilder.fromUuid` remember a failed lookup for 2 minutes and reuse a
   resolved texture for 60 minutes, and one `SkullBuilder` caches at most 1000 names and uuids. In 0.1 a failed
