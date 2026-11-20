@@ -5,6 +5,17 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Changed
+- Breaking: Taffy compiles against paper-api 26.3 and supports Paper 26.2 build 135 or newer and Folia 26.3 build 8
+  or newer; Paper 26.1.2 is no longer supported. The `paper` version of the `alaz` catalog moves from
+  `26.1.2.build.66-stable` to `26.3.build.256-stable`, so a plugin that declares `alaz.paper.api` compiles against
+  that build, which brings Adventure 5.2.0 in place of 4.26.1. Migration: run the plugin on Paper 26.2 build 135
+  or newer or Folia 26.3 build 8 or newer, and recompile it against paper-api 26.3. Adventure 5 makes
+  `ClickEvent` generic, so a raw `ClickEvent` compiles with a rawtypes warning until it is written
+  `ClickEvent<?>`.
+- `taffy-gui`: the package-private `CancelLink.link` returns `ClickEvent<?>`, the generic type Adventure 5 gives
+  `ClickEvent`. Its erasure is the same, and no public signature changes.
+
 ## [0.1.2] - 2026-11-19
 
 Built against paper-api 26.1.2.build.66-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

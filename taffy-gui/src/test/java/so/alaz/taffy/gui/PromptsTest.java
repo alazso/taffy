@@ -1186,12 +1186,12 @@ final class PromptsTest {
     // Records each link and runs its action when a test clicks it.
     private static final class FakeLink implements CancelLink {
 
-        final List<ClickEvent> events = new ArrayList<>();
+        final List<ClickEvent<?>> events = new ArrayList<>();
         final List<Runnable> actions = new ArrayList<>();
 
         @Override
-        public ClickEvent link(Runnable action) {
-            ClickEvent event = ClickEvent.runCommand("/prompt-test " + actions.size());
+        public ClickEvent<?> link(Runnable action) {
+            ClickEvent<?> event = ClickEvent.runCommand("/prompt-test " + actions.size());
             events.add(event);
             actions.add(action);
             return event;

@@ -61,7 +61,7 @@ final class MetricsFixture {
         Files.writeString(bStatsConfig, BSTATS_CONFIG);
         when(server.getPluginsFolder()).thenReturn(plugins.toFile());
         when(server.getName()).thenReturn("Paper");
-        when(server.getVersion()).thenReturn("git-Paper-1 (MC: 26.1.2)");
+        when(server.getVersion()).thenReturn("git-Paper-1 (MC: 26.3)");
         when(server.getPluginManager()).thenReturn(pluginManager);
         when(server.getAsyncScheduler()).thenReturn(asyncScheduler);
         when(asyncScheduler.runAtFixedRate(any(Plugin.class), any(), anyLong(), anyLong(), any(TimeUnit.class)))

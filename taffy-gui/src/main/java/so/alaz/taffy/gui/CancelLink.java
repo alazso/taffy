@@ -12,5 +12,5 @@ interface CancelLink {
      * @param action what the click does
      * @return the click event
      */
-    ClickEvent link(Runnable action);
+    ClickEvent<?> link(Runnable action);
 }

@@ -17,7 +17,7 @@ final class PaperCancelLink implements CancelLink {
     }
 
     @Override
-    public ClickEvent link(Runnable action) {
+    public ClickEvent<?> link(Runnable action) {
         return ClickEvent.callback(audience -> action.run(), OPTIONS);
     }
 }

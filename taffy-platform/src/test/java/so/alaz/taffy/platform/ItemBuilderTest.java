@@ -3,9 +3,7 @@ package so.alaz.taffy.platform;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextDecoration;
-import org.bukkit.Bukkit;
 import org.bukkit.Material;
-import org.bukkit.UnsafeValues;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.junit.jupiter.api.AfterEach;
@@ -159,53 +157,51 @@ class ItemBuilderTest {
     }
 
     @Nested
-    @SuppressWarnings("deprecation")
     class Deserialize {
 
-        private final UnsafeValues unsafe = mock(UnsafeValues.class);
         private final ItemStack item = mock(ItemStack.class);
-        private MockedStatic<Bukkit> bukkit;
+        private MockedStatic<ItemStack> stacks;
 
         @BeforeEach
-        void server() {
-            bukkit = mockStatic(Bukkit.class);
-            bukkit.when(Bukkit::getUnsafe).thenReturn(unsafe);
+        void interceptDeserializeBytes() {
+            stacks = mockStatic(ItemStack.class);
         }
 
         @AfterEach
         void close() {
-            bukkit.close();
+            stacks.close();
         }
 
         @Test
         void theDecodedBytesAreTurnedBackIntoTheItem() {
-            when(unsafe.deserializeItem(new byte[] {1, 2, 3, -1})).thenReturn(item);
+            stacks.when(() -> ItemStack.deserializeBytes(new byte[] {1, 2, 3, -1})).thenReturn(item);
 
             assertThat(ItemBuilder.deserialize("serialized:AQID/w==")).isSameAs(item);
         }
 
         @Test
         void aReferenceThatIsNotBase64IsNull() {
-            when(unsafe.deserializeItem(any())).thenReturn(item);
+            stacks.when(() -> ItemStack.deserializeBytes(any())).thenReturn(item);
 
             assertThat(ItemBuilder.deserialize("serialized:not base64!")).isNull();
-            verify(unsafe, never()).deserializeItem(any());
+            stacks.verify(() -> ItemStack.deserializeBytes(any()), never());
         }
 
         @Test
         void bytesTheServerRejectsAreNull() {
-            when(unsafe.deserializeItem(any())).thenThrow(new IllegalArgumentException("Newer version! Server downgrades are not supported!"));
+            stacks.when(() -> ItemStack.deserializeBytes(any()))
+                .thenThrow(new IllegalArgumentException("Newer version! Server downgrades are not supported!"));
 
             assertThat(ItemBuilder.deserialize("serialized:AQID/w==")).isNull();
-            verify(unsafe).deserializeItem(new byte[] {1, 2, 3, -1});
+            stacks.verify(() -> ItemStack.deserializeBytes(new byte[] {1, 2, 3, -1}));
         }
 
         @Test
         void aReferenceShorterThanThePrefixIsNull() {
-            when(unsafe.deserializeItem(any())).thenReturn(item);
+            stacks.when(() -> ItemStack.deserializeBytes(any())).thenReturn(item);
 
             assertThat(ItemBuilder.deserialize("serial")).isNull();
-            verify(unsafe, never()).deserializeItem(any());
+            stacks.verify(() -> ItemStack.deserializeBytes(any()), never());
         }
     }
 }

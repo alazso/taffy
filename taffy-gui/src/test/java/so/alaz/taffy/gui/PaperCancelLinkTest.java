@@ -18,9 +18,9 @@ import static org.mockito.Mockito.times;
 final class PaperCancelLinkTest {
 
     @Test
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings({"unchecked", "rawtypes"})
     void theLinkIsAOneUseCallbackThatLivesAsLongAsAnAskAndRunsTheAction() {
-        ClickEvent made = ClickEvent.runCommand("/cancel-link-test");
+        ClickEvent<?> made = ClickEvent.runCommand("/cancel-link-test");
         AtomicInteger runs = new AtomicInteger();
         ArgumentCaptor<ClickCallback<Audience>> callback = ArgumentCaptor.forClass(ClickCallback.class);
         ArgumentCaptor<ClickCallback.Options> options = ArgumentCaptor.forClass(ClickCallback.Options.class);
@@ -29,7 +29,7 @@ final class PaperCancelLinkTest {
             events.when(() -> ClickEvent.callback(any(ClickCallback.class), any(ClickCallback.Options.class)))
                 .thenReturn(made);
 
-            ClickEvent link = new PaperCancelLink().link(runs::incrementAndGet);
+            ClickEvent<?> link = new PaperCancelLink().link(runs::incrementAndGet);
 
             assertThat(link).isSameAs(made);
             events.verify(() -> ClickEvent.callback(callback.capture(), options.capture()));
@@ -43,6 +43,7 @@ final class PaperCancelLinkTest {
     }
 
     @Test
+    @SuppressWarnings("rawtypes")
     void eachLinkRunsItsOwnAction() {
         AtomicInteger first = new AtomicInteger();
         AtomicInteger second = new AtomicInteger();

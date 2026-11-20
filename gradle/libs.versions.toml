@@ -1,7 +1,7 @@
 # Published as so.alaz.taffy:taffy-catalog and consumed by plugins as the `alaz` catalog.
 
 [versions]
-paper            = "26.1.2.build.66-stable"
+paper            = "26.3.build.256-stable"
 annotations      = "26.1.0"
 placeholderapi   = "2.12.3"
 miniplaceholders = "3.2.0"

@@ -1,6 +1,7 @@
 package so.alaz.taffy.gui;
 
 import io.papermc.paper.persistence.PersistentDataContainerView;
+import net.kyori.adventure.key.Key;
 import org.bukkit.NamespacedKey;
 import org.bukkit.persistence.PersistentDataAdapterContext;
 import org.bukkit.persistence.PersistentDataContainer;
@@ -78,5 +79,10 @@ final class FakeData implements PersistentDataContainerView {
     @Override
     public int getSize() {
         return values.size();
+    }
+
+    @Override
+    public @Nullable PersistentDataType<?, ?> getPrimitiveStorageType(Key key) {
+        throw new UnsupportedOperationException();
     }
 }

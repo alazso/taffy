@@ -52,4 +52,14 @@ dependencies {
 tasks.withType<JavaCompile>().configureEach {
     // Nexo is Kotlin-compiled and declared non-transitively, so its kotlin.* annotation types are absent.
     options.compilerArgs.add("-Xlint:-classfile")
+    // The HologramLib jar carries its own copy of Adventure 4 under net.kyori.adventure. Searched last, the
+    // Adventure of paper-api is the one the sources compile against.
+    classpath = classpath.filter { !it.name.startsWith("HologramLib-") } +
+        classpath.filter { it.name.startsWith("HologramLib-") }
+}
+
+tasks.withType<Test>().configureEach {
+    // Searched last for the same reason: the Adventure of paper-api is the one the tests load.
+    classpath = classpath.filter { !it.name.startsWith("HologramLib-") } +
+        classpath.filter { it.name.startsWith("HologramLib-") }
 }
