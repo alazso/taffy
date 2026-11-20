@@ -48,8 +48,8 @@ final class ShutdownTest {
             throw failure;
         }, log.logger, errors);
 
-        assertThat(log.lines())
-            .containsExactly("WARNING Failed to close storage during shutdown: java.io.IOException: disk full");
+        assertThat(log.lines()).containsExactly("WARNING Failed to close storage during shutdown");
+        assertThat(log.records).singleElement().satisfies(record -> assertThat(record.getThrown()).isSameAs(failure));
         assertThat(reports).containsExactly(new Report("shutdown", failure));
         assertThat(reports.get(0).error()).isSameAs(failure);
         assertThat(Thread.currentThread().isInterrupted()).isFalse();
@@ -64,8 +64,8 @@ final class ShutdownTest {
         }, log.logger, errors);
 
         assertThat(Thread.interrupted()).isTrue();
-        assertThat(log.lines()).containsExactly(
-            "WARNING Failed to settle pending work during shutdown: java.lang.InterruptedException: woken");
+        assertThat(log.lines()).containsExactly("WARNING Failed to settle pending work during shutdown");
+        assertThat(log.records.getFirst().getThrown()).isSameAs(failure);
         assertThat(reports).containsExactly(new Report("shutdown", failure));
     }
 
@@ -77,8 +77,8 @@ final class ShutdownTest {
             throw failure;
         }, log.logger, errors);
 
-        assertThat(log.lines()).containsExactly(
-            "WARNING Failed to stop metrics during shutdown: java.lang.NoClassDefFoundError: gone/Missing");
+        assertThat(log.lines()).containsExactly("WARNING Failed to stop metrics during shutdown");
+        assertThat(log.records.getFirst().getThrown()).isSameAs(failure);
         assertThat(reports).containsExactly(new Report("shutdown", failure));
     }
 
@@ -93,8 +93,9 @@ final class ShutdownTest {
         Shutdown.closeQuietly("close storage", () -> ran.add("storage"), log.logger, errors);
 
         assertThat(ran).containsExactly("menus", "storage");
-        assertThat(log.lines()).containsExactly(
-            "WARNING Failed to close open menus during shutdown: java.lang.IllegalStateException: already closed");
+        assertThat(log.lines()).containsExactly("WARNING Failed to close open menus during shutdown");
+        assertThat(log.records.getFirst().getThrown()).isInstanceOf(IllegalStateException.class)
+            .hasMessage("already closed");
         assertThat(reports).extracting(Report::source).containsExactly("shutdown");
     }
 
@@ -106,8 +107,8 @@ final class ShutdownTest {
             throw new IOException("closed");
         }, log.logger, inert);
 
-        assertThat(log.lines()).containsExactly(
-            "WARNING Failed to close the webhook client during shutdown: java.io.IOException: closed");
+        assertThat(log.lines()).containsExactly("WARNING Failed to close the webhook client during shutdown");
+        assertThat(log.records.getFirst().getThrown()).isInstanceOf(IOException.class).hasMessage("closed");
         assertThat(reports).isEmpty();
     }
 
@@ -124,8 +125,7 @@ final class ShutdownTest {
         Shutdown.closeQuietly("close storage", () -> ran.add("storage"), log.logger, errors);
 
         assertThat(ran).containsExactly("storage");
-        assertThat(log.lines())
-            .containsExactly("WARNING Failed to close open menus during shutdown: java.io.IOException: closed");
+        assertThat(log.lines()).containsExactly("WARNING Failed to close open menus during shutdown");
     }
 
     @Test
@@ -141,7 +141,6 @@ final class ShutdownTest {
         Shutdown.closeQuietly("close storage", () -> ran.add("storage"), log.logger, errors);
 
         assertThat(ran).containsExactly("storage");
-        assertThat(log.lines())
-            .containsExactly("WARNING Failed to close open menus during shutdown: java.io.IOException: closed");
+        assertThat(log.lines()).containsExactly("WARNING Failed to close open menus during shutdown");
     }
 }

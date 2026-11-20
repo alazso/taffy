@@ -32,6 +32,11 @@ All notable changes to Taffy are documented here. This project follows
   accepted, and a task that has started completes its future with its own result. A dispatch Paper accepts as the
   plugin stops being enabled is refused the same way. Migration: call `Scheduler.close()` in `onDisable`, handle
   the refusal where a dispatched future is awaited, and drop an `orTimeout` that was there only for this case.
+- Breaking: `Shutdown.closeQuietly` logs a failed step with its stack trace. The warning reads
+  `Failed to <what> during shutdown` and carries the failure as the record's thrown; in 0.1 the failure's
+  `toString()` was appended to the message and no trace was logged. Migration: a log filter or test that matched
+  the failure text in the message matches `Failed to <what> during shutdown` and reads the failure from
+  `LogRecord.getThrown()`.
 - Breaking: Taffy compiles against paper-api 26.3 and supports Paper 26.2 build 135 or newer and Folia 26.3 build 8
   or newer; Paper 26.1.2 is no longer supported. The `paper` version of the `alaz` catalog moves from
   `26.1.2.build.66-stable` to `26.3.build.256-stable`, so a plugin that declares `alaz.paper.api` compiles against
