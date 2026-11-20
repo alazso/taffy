@@ -143,6 +143,11 @@ All notable changes to Taffy are documented here. This project follows
   owner-keyed path is blank or when one listed section lies inside another, such as `kits.special` beside `kits`.
   The Javadoc already ruled out the second, and which of the two sections applied to a key was not defined. List
   each owner-keyed section once and none inside another.
+- Breaking: `CustomItemPlugin` may gain a constant in any release, and its Javadoc now states so. `0.4.0` adds
+  none. In the release that adds one, a `switch` expression over the four constants of today with no `default`
+  branch no longer compiles, a `switch` statement runs no branch for the new constant, and a plugin that passes
+  `EnumSet.allOf(CustomItemPlugin.class)` to `CustomItems.detect` detects the added plugin too. Add a `default`
+  branch to each `switch` over `CustomItemPlugin`.
 - The warning of `Messages` for a language file that is not UTF-8 names the line:
   `lang/<name> is not saved as UTF-8 (the first byte that is not UTF-8 is on line <n>), so its messages are not
   used.` A file that is not valid YAML or cannot be read keeps `lang/<name> is not valid YAML saved as UTF-8, so

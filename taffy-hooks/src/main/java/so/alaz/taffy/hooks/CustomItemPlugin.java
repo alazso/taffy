@@ -5,7 +5,10 @@ import org.jetbrains.annotations.Nullable;
 import java.util.List;
 import java.util.Locale;
 
-/** The custom item plugins Taffy reads and builds items with, in resolution order. */
+/**
+ * The custom item plugins Taffy reads and builds items with, in resolution order. Constants may be added in any
+ * release, so a {@code switch} over this enum needs a {@code default} branch.
+ */
 public enum CustomItemPlugin {
     /** ItemsAdder, key {@code itemsadder}, also written {@code ia}. */
     ITEMSADDER("ItemsAdder", "itemsadder", "dev.lone.itemsadder.api.CustomStack", "ia"),
