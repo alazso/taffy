@@ -22,6 +22,11 @@ All notable changes to Taffy are documented here. This project follows
   WorldGuard is visible and WorldEdit's `BukkitAdapter`, which every region lookup goes through, is not. It was
   `FAILED` with a report under `hook.worldguard` and no word on what to change. A plugin that uses WorldGuard
   lists both `WorldGuard` and `WorldEdit` under `dependencies.server` in its `paper-plugin.yml`.
+- `CustomItems.create` builds an ItemsAdder id written without its key, such as `gems:ruby`. The text before
+  the first colon was read as a plugin key, `gems` named no plugin, and `create` returned `null` without asking
+  any plugin. A reference whose text before the first colon names no `CustomItemPlugin` is now offered whole to
+  each plugin in order, as a reference without a colon is, and the first item built wins. A reference that starts
+  with a plugin's key or alias still goes only to that plugin, and `CustomItemRef` parses as before.
 
 ## [0.3.0] - 2026-11-20
 

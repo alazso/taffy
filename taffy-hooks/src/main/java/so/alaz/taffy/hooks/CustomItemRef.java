@@ -7,7 +7,9 @@ import org.jetbrains.annotations.Nullable;
  * {@code itemsadder:ax_wings_pack:phoenix_wings} or {@code oraxen:my_item}.
  *
  * <p>The text before the first colon is treated as a provider hint (matched through
- * {@link CustomItemPlugin#byKey}); the remainder is the provider's own item id, which may itself contain colons.
+ * {@link CustomItemPlugin#byKey}); the remainder is the provider's own item id, which may itself contain colons. A
+ * hint that names no {@link CustomItemPlugin} can be the first part of a provider's own id, as {@code gems} is in the
+ * ItemsAdder id {@code gems:ruby}: {@link CustomItems#create} offers such a reference whole to each plugin.
  *
  * @param providerHint the provider name hint, not blank, or {@code null} if none was given
  * @param id           the provider's item id
@@ -31,7 +33,9 @@ public record CustomItemRef(@Nullable String providerHint, String id) {
     }
 
     /**
-     * Whether the reference names a recognized provider (or none, for an unqualified id).
+     * Whether the reference names a recognized provider (or none, for an unqualified id). A reference this is
+     * {@code false} for is still built by {@link CustomItems#create} when a plugin knows the whole reference as its
+     * own id.
      *
      * @return {@code true} if the hint is {@code null} or names a {@link CustomItemPlugin}
      */

@@ -22,8 +22,9 @@ import java.util.logging.Logger;
  * id of an item and builds the item an id names.
  *
  * <p>An id is the plugin's key, a colon and the plugin's own id of the item, as in {@code nexo:ruby} or
- * {@code itemsadder:gems:ruby}. A plugin whose integration is on is still skipped by a call while it is no longer
- * enabled, and while it is still loading its items.
+ * {@code itemsadder:gems:ruby}. {@link #create} also takes the plugin's own id alone, as in {@code ruby} or
+ * {@code gems:ruby}. A plugin whose integration is on is still skipped by a call while it is no longer enabled, and
+ * while it is still loading its items.
  *
  * <p>Immutable after {@link #detect} and thread-safe. Each call runs the integration plugins on the calling thread,
  * so call on the thread that owns the item. {@link #close} unregisters the listeners detection registered, before the
@@ -176,21 +177,24 @@ public final class CustomItems {
     }
 
     /**
-     * Builds the item a reference names, parsed by {@link CustomItemRef#parse}. A reference with a hint goes only
-     * to the plugin the hint names, by its key or an alias, and never to another one. A reference without one is
-     * offered to each plugin in turn, and the first item built wins. Each plugin is given the id without the hint.
-     * A plugin that is no longer enabled or still loading its items is skipped. A plugin that throws is skipped
-     * after a warning, at most once a minute with its stack the first time, and the failure is reported under
-     * {@code hook.<key>}.
+     * Builds the item a reference names, parsed by {@link CustomItemRef#parse}. A reference whose hint names a
+     * plugin, by its key or an alias, goes only to that plugin and never to another one, and the plugin is given the
+     * id without the hint. Any other reference is unqualified: it is offered to each plugin in turn, and the first
+     * item built wins. A reference without a hint is offered as its id, and one whose hint names no plugin is offered
+     * whole, hint and colon included, so an ItemsAdder id written without its key, such as {@code gems:ruby},
+     * builds the ItemsAdder item. A plugin that is no longer enabled or still loading its items is skipped. A plugin
+     * that throws is skipped after a warning, at most once a minute with its stack the first time, and the failure
+     * is reported under {@code hook.<key>}.
      *
-     * @param reference the reference, such as {@code ia:gems:ruby}, {@code hdb:1234} or {@code ruby}
-     * @return the item, or {@code null} when the hint names no plugin or no plugin built one
+     * @param reference the reference, such as {@code ia:gems:ruby}, {@code hdb:1234}, {@code gems:ruby} or
+     *     {@code ruby}
+     * @return the item, or {@code null} when no plugin built one
      * @throws IllegalArgumentException if {@code reference} is {@code null} or its id is blank
      */
     public @Nullable ItemStack create(String reference) {
         CustomItemRef ref = CustomItemRef.parse(reference);
-        if (ref.providerHint() != null) {
-            CustomItemPlugin named = ref.provider();
+        CustomItemPlugin named = ref.provider();
+        if (named != null) {
             for (Active hook : active) {
                 if (hook.plugin() == named) {
                     return create(hook, ref.id());
@@ -198,8 +202,9 @@ public final class CustomItems {
             }
             return null;
         }
+        String id = ref.providerHint() == null ? ref.id() : reference;
         for (Active hook : active) {
-            ItemStack item = create(hook, ref.id());
+            ItemStack item = create(hook, id);
             if (item != null) {
                 return item;
             }

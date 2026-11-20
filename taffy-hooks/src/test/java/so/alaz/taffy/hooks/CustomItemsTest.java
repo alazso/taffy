@@ -538,15 +538,41 @@ final class CustomItemsTest {
     }
 
     @Test
-    void anUnknownHintGivesNullWithoutAskingAnyPlugin() {
-        provider(CustomItemPlugin.ITEMSADDER).id("ruby", "gems:ruby");
+    void aReferenceWhoseHintNamesNoPluginIsOfferedWholeInPluginOrder() {
+        provider(CustomItemPlugin.ITEMSADDER).id("ia_ruby", "gems:ruby");
+        provider(CustomItemPlugin.NEXO).id("nexo_ruby", "ruby").id("nexo_opal", "gems:opal");
         CustomItems items = detected();
 
-        assertThat(items.create("mmoitems:ruby")).isNull();
-        assertThat(items.create("gems:ruby")).isNull();
+        assertThat(FakeItems.type(items.create("gems:ruby"))).isEqualTo("ia_ruby");
+        assertThat(provider(CustomItemPlugin.ITEMSADDER).calls).hasValue(1);
+        assertThat(provider(CustomItemPlugin.NEXO).calls).hasValue(0);
+
+        assertThat(FakeItems.type(items.create("gems:opal"))).isEqualTo("nexo_opal");
+        assertThat(FakeItems.type(items.create("gems:pack:ruby"))).isNull();
+        assertThat(items.create("mmoitems:ruby")).as("no plugin is given the id without the hint").isNull();
         for (CustomItemPlugin plugin : CustomItemPlugin.values()) {
-            assertThat(provider(plugin).calls).as(plugin.plugin()).hasValue(0);
+            assertThat(provider(plugin).calls).as(plugin.plugin())
+                .hasValue(plugin == CustomItemPlugin.ITEMSADDER ? 4 : plugin == CustomItemPlugin.NEXO ? 3 : 2);
         }
+    }
+
+    @Test
+    void aHintThatNamesAPluginNeverFallsBackToTheWholeReference() {
+        provider(CustomItemPlugin.ITEMSADDER).id("ia_ruby", "nexo:ruby").id("ia_opal", "ia:opal");
+        provider(CustomItemPlugin.ORAXEN).id("oraxen_ruby", "nexo:ruby");
+        CustomItems items = detected();
+
+        assertThat(items.create("nexo:ruby")).isNull();
+        assertThat(items.create("ia:opal")).isNull();
+        assertThat(provider(CustomItemPlugin.NEXO).calls).hasValue(1);
+        assertThat(provider(CustomItemPlugin.ITEMSADDER).calls).hasValue(1);
+        assertThat(provider(CustomItemPlugin.ORAXEN).calls).hasValue(0);
+
+        presence.missing.add("Nexo");
+        CustomItems withoutNexo = detected();
+        assertThat(withoutNexo.create("nexo:ruby")).isNull();
+        assertThat(provider(CustomItemPlugin.ITEMSADDER).calls).hasValue(1);
+        assertThat(provider(CustomItemPlugin.ORAXEN).calls).hasValue(0);
     }
 
     @Test
