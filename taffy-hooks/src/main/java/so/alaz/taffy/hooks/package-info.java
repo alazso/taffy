@@ -93,7 +93,8 @@
  * }
  *
  * private Detected<EconomyProvider> lookUpEconomy() {
- *     return EconomyProvider.vault(this, errors, settings.hook("vault"), scheduler.mode(), settings.scale());
+ *     boolean folia = scheduler.mode() == Scheduler.Mode.FOLIA;
+ *     return EconomyProvider.vault(this, errors, settings.hook("vault"), folia, settings.scale());
  * }
  *
  * private @Nullable String balanceText(Player player) {

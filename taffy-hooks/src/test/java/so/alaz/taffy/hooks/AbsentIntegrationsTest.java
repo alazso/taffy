@@ -15,7 +15,6 @@ import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.ServicePriority;
 import org.junit.jupiter.api.Test;
 import so.alaz.taffy.platform.ErrorReports;
-import so.alaz.taffy.platform.Scheduler;
 import so.alaz.taffy.test.ApiRules;
 import so.alaz.taffy.test.CapturedLog;
 import so.alaz.taffy.test.FakeItems;
@@ -364,17 +363,17 @@ final class AbsentIntegrationsTest {
 
     private static Object vaultLookup(ClassLoader loader, Plugin owner, ErrorReports errors, boolean switchedOn)
         throws Throwable {
-        return vaultLookup(loader, owner, errors, switchedOn, Scheduler.Mode.PAPER);
+        return vaultLookup(loader, owner, errors, switchedOn, false);
     }
 
     private static Object vaultLookup(ClassLoader loader, Plugin owner, ErrorReports errors, boolean switchedOn,
-                                      Scheduler.Mode mode) throws Throwable {
+                                      boolean folia) throws Throwable {
         Class<?> providerType = Class.forName(EconomyProvider.class.getName(), true, loader);
         Class<?> detectedType = Class.forName(Detected.class.getName(), true, loader);
         MethodHandle vault = MethodHandles.publicLookup().findStatic(providerType, "vault",
             MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class,
-                Scheduler.Mode.class, Integer.class));
-        Object detected = vault.invoke(owner, errors, switchedOn, mode, (Integer) null);
+                boolean.class, Integer.class));
+        Object detected = vault.invoke(owner, errors, switchedOn, folia, (Integer) null);
         assertThat(detected.getClass().getClassLoader()).isSameAs(loader);
         assertThat(MethodHandles.publicLookup().findVirtual(detectedType, "provider",
             MethodType.methodType(Object.class)).invoke(detected)).isNull();
@@ -414,7 +413,7 @@ final class AbsentIntegrationsTest {
         assertThat(reported).isEmpty();
         assertThat(log.lines()).containsExactly("WARNING Vault 1.7.3 lacks the API that is read, so it stays off.");
 
-        Object folia = vaultLookup(loader, owner, errors, true, Scheduler.Mode.FOLIA);
+        Object folia = vaultLookup(loader, owner, errors, true, true);
 
         assertThat(stateOf(loader, folia)).isEqualTo(HookState.API_MISSING.name());
         assertThat(read(loader, folia, "plugin", String.class)).isEqualTo("Vault");
@@ -445,7 +444,7 @@ final class AbsentIntegrationsTest {
             + " this plugin's paper-plugin.yml does not list Vault under dependencies.server.");
         assertThat(reported).isEmpty();
 
-        Object folia = vaultLookup(loader, owner, errors, true, Scheduler.Mode.FOLIA);
+        Object folia = vaultLookup(loader, owner, errors, true, true);
 
         assertThat(stateOf(loader, folia)).isEqualTo(HookState.NOT_VISIBLE.name());
         assertThat(read(loader, folia, "plugin", String.class)).isEqualTo("Vault");

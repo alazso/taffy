@@ -26,6 +26,9 @@ All notable changes to Taffy are documented here. This project follows
   `Object`, which accepts every state as before, so a wrong state then still fails inside `render` with a
   `ClassCastException`; a menu overrides it, such as `return Integer.class;` in a `Menu<Integer>`, to get the
   check.
+- `EconomyProvider.vault(Plugin, ErrorReports, boolean switchedOn, boolean folia, Integer scale)` takes the server
+  kind as a flag, `true` on Folia, so a plugin with no Taffy `Scheduler` can look the economy up. A plugin with
+  one passes `scheduler.mode() == Scheduler.Mode.FOLIA`.
 
 ### Changed
 - Breaking: `Menus.register` and `Menus.reload` throw an `IllegalArgumentException` for a material that is not an
@@ -35,6 +38,9 @@ All notable changes to Taffy are documented here. This project follows
   WALL_TORCH, which is not an item". Before, such a layout registered and every open of the menu failed with a
   stack trace. A refused `reload` leaves the layouts as they were. Give each of these an item material, and
   catch the exception where the plugin reads layouts or settings from a file, to show the owner the message.
+- `EconomyProvider.vault(Plugin, ErrorReports, boolean, Scheduler.Mode, Integer)` is deprecated and a later
+  release removes it. It still works and gives the same result as the overload with the `folia` flag. Pass
+  `scheduler.mode() == Scheduler.Mode.FOLIA` in place of `scheduler.mode()`.
 
 ### Fixed
 - A chat line that answers a `Prompts` ask is judged once. Paper posts the legacy `AsyncPlayerChatEvent` and then

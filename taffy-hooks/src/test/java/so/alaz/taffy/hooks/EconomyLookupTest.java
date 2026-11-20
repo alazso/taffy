@@ -57,8 +57,8 @@ final class EconomyLookupTest {
         when(plugins.getPlugin("Vault")).thenReturn(vault);
     }
 
-    private Detected<EconomyProvider> lookUp(Scheduler.Mode mode, Integer scale) {
-        return EconomyLookup.vault(owner, errors, true, mode, scale);
+    private Detected<EconomyProvider> lookUp(boolean folia, Integer scale) {
+        return EconomyLookup.vault(owner, errors, true, folia, scale);
     }
 
     @SuppressWarnings("unchecked")
@@ -73,7 +73,7 @@ final class EconomyLookupTest {
         registered();
         installVault("1.7.3");
 
-        Detected<EconomyProvider> found = lookUp(Scheduler.Mode.PAPER, 3);
+        Detected<EconomyProvider> found = lookUp(false, 3);
 
         assertThat(found.status()).isEqualTo(new HookStatus("Vault", HookState.ON, "1.7.3", null));
         EconomyProvider provider = found.provider();
@@ -89,7 +89,7 @@ final class EconomyLookupTest {
     void anEconomyRegisteredWithoutAVaultPluginIsOnWithAnUnknownVersion() {
         registered();
 
-        Detected<EconomyProvider> found = lookUp(Scheduler.Mode.FOLIA, null);
+        Detected<EconomyProvider> found = lookUp(true, null);
 
         assertThat(found.status()).isEqualTo(new HookStatus("Vault", HookState.ON, "unknown", null));
         assertThat(found.provider()).isInstanceOf(VaultEconomy.class);
@@ -103,7 +103,7 @@ final class EconomyLookupTest {
         when(plugins.getPlugin("Vault")).thenReturn(vault);
         when(plugins.isPluginEnabled("Vault")).thenReturn(false);
 
-        Detected<EconomyProvider> found = lookUp(Scheduler.Mode.PAPER, null);
+        Detected<EconomyProvider> found = lookUp(false, null);
 
         assertThat(found.status().state()).isEqualTo(HookState.ON);
         assertThat(found.bound()).isNull();
@@ -115,18 +115,31 @@ final class EconomyLookupTest {
         registered();
         installVault("1.7.3");
 
-        Detected<EconomyProvider> found = EconomyProvider.vault(owner, errors, true, Scheduler.Mode.PAPER, null);
+        Detected<EconomyProvider> found = EconomyProvider.vault(owner, errors, true, false, null);
 
         assertThat(found.status()).isEqualTo(new HookStatus("Vault", HookState.ON, "1.7.3", null));
         assertThat(found.provider()).isInstanceOf(VaultEconomy.class);
-        assertThat(EconomyProvider.vault(owner, errors, false, Scheduler.Mode.PAPER, null).status().state())
+        assertThat(EconomyProvider.vault(owner, errors, false, false, null).status().state())
             .isEqualTo(HookState.SWITCHED_OFF);
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void theDeprecatedEntryPointReadsTheFoliaFlagFromTheSchedulerMode() {
+        installVault("1.7.3");
+
+        assertThat(EconomyProvider.vault(owner, errors, true, Scheduler.Mode.FOLIA, null).status())
+            .isEqualTo(EconomyProvider.vault(owner, errors, true, true, null).status());
+        assertThat(EconomyProvider.vault(owner, errors, true, Scheduler.Mode.PAPER, null).status())
+            .isEqualTo(EconomyProvider.vault(owner, errors, true, false, null).status());
+        assertThatThrownBy(() -> EconomyProvider.vault(owner, errors, true, (Scheduler.Mode) null, null))
+            .isInstanceOf(NullPointerException.class).hasMessage("mode");
     }
 
     @Test
     void noRegistrationOnPaperAsksForAnEconomyOrForVaultAndAnEconomy() {
         installVault("1.7.3");
-        Detected<EconomyProvider> unregistered = lookUp(Scheduler.Mode.PAPER, null);
+        Detected<EconomyProvider> unregistered = lookUp(false, null);
 
         assertThat(unregistered.status()).isEqualTo(new HookStatus("Vault", HookState.NOT_REGISTERED, "1.7.3",
             MissingEconomy.line(false, true)));
@@ -134,7 +147,7 @@ final class EconomyLookupTest {
         assertThat(unregistered.provider()).isNull();
 
         when(plugins.getPlugin("Vault")).thenReturn(null);
-        assertThat(lookUp(Scheduler.Mode.PAPER, null).status()).isEqualTo(
+        assertThat(lookUp(false, null).status()).isEqualTo(
             new HookStatus("Vault", HookState.NOT_INSTALLED, null, MissingEconomy.line(false, false)));
         assertThat(reported).isEmpty();
         assertThat(log.lines()).isEmpty();
@@ -143,11 +156,11 @@ final class EconomyLookupTest {
     @Test
     void noRegistrationOnFoliaAsksForAFoliaEconomyOrForVaultUnlocked() {
         installVault("2.10.0");
-        assertThat(lookUp(Scheduler.Mode.FOLIA, null).status()).isEqualTo(
+        assertThat(lookUp(true, null).status()).isEqualTo(
             new HookStatus("Vault", HookState.NOT_REGISTERED, "2.10.0", MissingEconomy.line(true, true)));
 
         when(plugins.getPlugin("Vault")).thenReturn(null);
-        assertThat(lookUp(Scheduler.Mode.FOLIA, null).status()).isEqualTo(
+        assertThat(lookUp(true, null).status()).isEqualTo(
             new HookStatus("Vault", HookState.NOT_INSTALLED, null, MissingEconomy.line(true, false)));
     }
 
@@ -157,7 +170,7 @@ final class EconomyLookupTest {
         when(services.getRegistration(Economy.class)).thenThrow(broken);
         installVault("1.7.3");
 
-        Detected<EconomyProvider> failed = lookUp(Scheduler.Mode.PAPER, null);
+        Detected<EconomyProvider> failed = lookUp(false, null);
 
         assertThat(failed.status()).isEqualTo(new HookStatus("Vault", HookState.FAILED, "1.7.3",
             "The economy could not be read (java.lang.IllegalStateException: services unavailable)."));
@@ -172,14 +185,14 @@ final class EconomyLookupTest {
     void aLinkageErrorIsReportedAndAnyOtherErrorPropagates() {
         when(services.getRegistration(Economy.class)).thenThrow(new NoClassDefFoundError("net/milkbowl/vault/Gone"));
 
-        assertThat(lookUp(Scheduler.Mode.PAPER, null).status()).isEqualTo(new HookStatus("Vault", HookState.FAILED,
+        assertThat(lookUp(false, null).status()).isEqualTo(new HookStatus("Vault", HookState.FAILED,
             "unknown", "The economy could not be read (java.lang.NoClassDefFoundError: net/milkbowl/vault/Gone)."));
         assertThat(reported).containsExactly("hook.vault net/milkbowl/vault/Gone");
         assertThat(log.lines()).containsExactly("WARNING Vault unknown could not be hooked"
             + " (java.lang.NoClassDefFoundError: net/milkbowl/vault/Gone), so it stays off.");
 
         doThrow(new AssertionError("not a linkage error")).when(services).getRegistration(Economy.class);
-        assertThatThrownBy(() -> lookUp(Scheduler.Mode.PAPER, null))
+        assertThatThrownBy(() -> lookUp(false, null))
             .isInstanceOf(AssertionError.class).hasMessage("not a linkage error");
         assertThat(reported).hasSize(1);
         assertThat(log.lines()).hasSize(1);
@@ -187,7 +200,7 @@ final class EconomyLookupTest {
 
     @Test
     void aSwitchedOffEconomyReadsNothingFromTheServer() {
-        Detected<EconomyProvider> off = EconomyLookup.vault(owner, errors, false, Scheduler.Mode.PAPER, 2);
+        Detected<EconomyProvider> off = EconomyLookup.vault(owner, errors, false, false, 2);
 
         assertThat(off.status()).isEqualTo(new HookStatus("Vault", HookState.SWITCHED_OFF, null, null));
         assertThat(off.provider()).isNull();
@@ -198,23 +211,21 @@ final class EconomyLookupTest {
 
     @Test
     void aScaleOutsideZeroToFourIsRefusedBeforeTheSwitchAndBeforeAnythingIsRead() {
-        assertThatThrownBy(() -> lookUp(Scheduler.Mode.PAPER, -1))
+        assertThatThrownBy(() -> lookUp(false, -1))
             .isInstanceOf(IllegalArgumentException.class).hasMessage("a scale runs from 0 to 4, not -1");
-        assertThatThrownBy(() -> lookUp(Scheduler.Mode.PAPER, 5))
+        assertThatThrownBy(() -> lookUp(false, 5))
             .isInstanceOf(IllegalArgumentException.class).hasMessage("a scale runs from 0 to 4, not 5");
-        assertThatThrownBy(() -> EconomyLookup.vault(owner, errors, false, Scheduler.Mode.PAPER, 5))
+        assertThatThrownBy(() -> EconomyLookup.vault(owner, errors, false, false, 5))
             .isInstanceOf(IllegalArgumentException.class).hasMessage("a scale runs from 0 to 4, not 5");
         verifyNoInteractions(server, services, plugins);
     }
 
     @Test
-    void aMissingOwnerErrorSinkOrModeIsRefused() {
-        assertThatThrownBy(() -> EconomyLookup.vault(null, errors, true, Scheduler.Mode.PAPER, null))
+    void aMissingOwnerOrErrorSinkIsRefused() {
+        assertThatThrownBy(() -> EconomyLookup.vault(null, errors, true, false, null))
             .isInstanceOf(NullPointerException.class).hasMessage("owner");
-        assertThatThrownBy(() -> EconomyLookup.vault(owner, null, true, Scheduler.Mode.PAPER, null))
+        assertThatThrownBy(() -> EconomyLookup.vault(owner, null, true, false, null))
             .isInstanceOf(NullPointerException.class).hasMessage("errors");
-        assertThatThrownBy(() -> EconomyLookup.vault(owner, errors, true, null, null))
-            .isInstanceOf(NullPointerException.class).hasMessage("mode");
     }
 
     @Test
@@ -222,8 +233,8 @@ final class EconomyLookupTest {
         registered();
         when(economy.fractionalDigits()).thenReturn(4);
 
-        Detected<EconomyProvider> finest = lookUp(Scheduler.Mode.PAPER, 4);
-        Detected<EconomyProvider> whole = lookUp(Scheduler.Mode.PAPER, 0);
+        Detected<EconomyProvider> finest = lookUp(false, 4);
+        Detected<EconomyProvider> whole = lookUp(false, 0);
 
         assertThat(finest.provider().scale()).isEqualTo(4);
         assertThat(whole.provider().scale()).isZero();
@@ -234,7 +245,7 @@ final class EconomyLookupTest {
     void theLookupChecksTheSameClassTheWatcherMatches() {
         when(plugins.getPlugin("Vault")).thenReturn(null);
 
-        lookUp(Scheduler.Mode.PAPER, 0);
+        lookUp(false, 0);
 
         assertThat(EconomyWatcher.ECONOMY).isEqualTo(Economy.class.getName());
         verify(services).getRegistration(Economy.class);

@@ -8,6 +8,7 @@ import so.alaz.taffy.platform.ThreadTag;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 
@@ -62,17 +63,41 @@ public interface EconomyProvider {
      * @param errors receives a lookup that failed
      * @param switchedOn whether the owner switched the economy on; {@code false} gives {@link HookState#SWITCHED_OFF}
      *     and reads nothing from the server
-     * @param mode the server kind, which decides what each reason asks the owner to install
+     * @param folia whether the server is Folia, which decides what each reason asks the owner to install
      * @param scale decimal places to use instead of the economy's own, from 0 to {@value #MAX_SCALE}, or {@code null}
      *     to use the economy's fractional digits, capped at {@value #MAX_SCALE}, or 2 when it reports none; a scale
      *     finer than the economy keeps is warned about on its first use
      * @return the lookup result, with a provider when the state is {@link HookState#ON}
      * @throws IllegalArgumentException if {@code scale} is outside 0 to {@value #MAX_SCALE}, checked before the switch
-     * @throws NullPointerException if {@code owner}, {@code errors} or {@code mode} is {@code null}
+     * @throws NullPointerException if {@code owner} or {@code errors} is {@code null}
      */
+    static Detected<EconomyProvider> vault(Plugin owner, ErrorReports errors, boolean switchedOn, boolean folia,
+                                           @Nullable Integer scale) {
+        return EconomyLookup.vault(owner, errors, switchedOn, folia, scale);
+    }
+
+    /**
+     * Looks the economy up as {@link #vault(Plugin, ErrorReports, boolean, boolean, Integer)} does, with the server
+     * kind given as a {@link Scheduler.Mode}.
+     *
+     * @param owner the plugin that pays through the economy
+     * @param errors receives a lookup that failed
+     * @param switchedOn whether the owner switched the economy on
+     * @param mode the server kind
+     * @param scale decimal places to use instead of the economy's own, or {@code null}
+     * @return the lookup result, with a provider when the state is {@link HookState#ON}
+     * @throws IllegalArgumentException if {@code scale} is outside 0 to {@value #MAX_SCALE}
+     * @throws NullPointerException if {@code owner}, {@code errors} or {@code mode} is {@code null}
+     * @deprecated use {@link #vault(Plugin, ErrorReports, boolean, boolean, Integer)} with
+     *     {@code mode == Scheduler.Mode.FOLIA}
+     */
+    @Deprecated
     static Detected<EconomyProvider> vault(Plugin owner, ErrorReports errors, boolean switchedOn, Scheduler.Mode mode,
                                            @Nullable Integer scale) {
-        return EconomyLookup.vault(owner, errors, switchedOn, mode, scale);
+        Objects.requireNonNull(owner, "owner");
+        Objects.requireNonNull(errors, "errors");
+        Objects.requireNonNull(mode, "mode");
+        return EconomyLookup.vault(owner, errors, switchedOn, mode == Scheduler.Mode.FOLIA, scale);
     }
 
     /**

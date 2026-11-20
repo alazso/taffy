@@ -5,7 +5,6 @@ import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.Classes;
 import so.alaz.taffy.platform.ErrorReports;
-import so.alaz.taffy.platform.Scheduler;
 
 import java.util.Objects;
 import java.util.logging.Logger;
@@ -19,11 +18,10 @@ final class EconomyLookup {
     private EconomyLookup() {
     }
 
-    static Detected<EconomyProvider> vault(Plugin owner, ErrorReports errors, boolean switchedOn, Scheduler.Mode mode,
+    static Detected<EconomyProvider> vault(Plugin owner, ErrorReports errors, boolean switchedOn, boolean folia,
                                            @Nullable Integer scale) {
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(errors, "errors");
-        Objects.requireNonNull(mode, "mode");
         if (scale != null && (scale < 0 || scale > EconomyProvider.MAX_SCALE)) {
             throw new IllegalArgumentException(
                 "a scale runs from 0 to " + EconomyProvider.MAX_SCALE + ", not " + scale);
@@ -33,7 +31,6 @@ final class EconomyLookup {
         }
         Server server = owner.getServer();
         Logger logger = owner.getLogger();
-        boolean folia = mode == Scheduler.Mode.FOLIA;
         Plugin vault = server.getPluginManager().getPlugin(VAULT);
         String version = vault == null ? null : vault.getPluginMeta().getVersion();
         if (!Classes.present(EconomyWatcher.ECONOMY, EconomyLookup.class, logger)) {
