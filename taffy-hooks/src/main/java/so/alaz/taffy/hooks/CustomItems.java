@@ -1,5 +1,7 @@
 package so.alaz.taffy.hooks;
 
+import org.bukkit.event.HandlerList;
+import org.bukkit.event.Listener;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
@@ -24,7 +26,8 @@ import java.util.logging.Logger;
  * enabled, and while it is still loading its items.
  *
  * <p>Immutable after {@link #detect} and thread-safe. Each call runs the integration plugins on the calling thread,
- * so call on the thread that owns the item.
+ * so call on the thread that owns the item. {@link #close} unregisters the listeners detection registered, before the
+ * owner detects again.
  */
 public final class CustomItems {
 
@@ -71,8 +74,8 @@ public final class CustomItems {
      *
      * <p>Call on the server thread while the owner is enabled, normally from its {@code onEnable}: when ItemsAdder is
      * on, its integration registers a listener for the owner, which the server refuses while the owner is not
-     * enabled. That listener stays registered until the owner disables, so each further call, such as one from the
-     * plugin's own reload command, leaves at most one more small listener registered.
+     * enabled. That listener stays registered until {@link #close} is called on the result or the owner disables, so
+     * a plugin that detects again, such as from its own reload command, closes the result it holds first.
      *
      * @param owner the plugin that uses the integrations: its server's plugin manager is searched, its logger
      *     receives every log line, and the ItemsAdder integration registers its listener for it
@@ -284,5 +287,23 @@ public final class CustomItems {
             now.set(hook.plugin().ordinal(), current);
         }
         return List.copyOf(now);
+    }
+
+    /**
+     * Unregisters every listener {@link #detect} registered for the owner to build these integrations, so a plugin
+     * that detects again leaves none behind. Call it on the result that is held before each further {@link #detect},
+     * on the server thread. The server unregisters the listeners itself when the owner disables, so a plugin that
+     * detects once has no need to call it.
+     *
+     * <p>After the call a plugin that had not loaded its items stays {@link HookState#LOADING} here for good, since
+     * the event that ends its load is no longer heard: use the result of the next {@link #detect}. Every other call
+     * answers as before. A second call does nothing.
+     */
+    public void close() {
+        for (Active hook : active) {
+            if (hook.provider() instanceof Listener listener) {
+                HandlerList.unregisterAll(listener);
+            }
+        }
     }
 }

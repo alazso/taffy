@@ -5,6 +5,13 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `CustomItems.close()` unregisters every listener `CustomItems.detect` registered for the owner, such as the
+  one that waits for `ItemsAdderLoadDataEvent`. A plugin that detects again from its reload command calls it on
+  the `CustomItems` it holds first, so no listener of an earlier detection stays registered. A closed
+  `CustomItems` keeps answering, but a plugin that was still loading its items stays `LOADING` in it. A second
+  call does nothing.
+
 ## [0.3.0] - 2026-11-20
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

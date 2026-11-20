@@ -5,10 +5,13 @@ import io.papermc.paper.plugin.configuration.PluginMeta;
 import me.arcaniax.hdb.api.HeadDatabaseAPI;
 import org.bukkit.Material;
 import org.bukkit.Server;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
+import org.bukkit.plugin.RegisteredListener;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedConstruction;
@@ -730,6 +733,75 @@ final class CustomItemsTest {
             assertThat(items.ready()).isFalse();
             assertThat(items.create("hdb:1234")).isSameAs(head);
             assertThat(apis.constructed()).hasSize(1);
+        }
+    }
+
+    // Registers each listener the manager is given in a handler list of its own, as the server does per event.
+    private HandlerList registering(PluginManager manager) {
+        HandlerList handlers = new HandlerList();
+        doAnswer(call -> {
+            handlers.register(new RegisteredListener(call.getArgument(0), (listener, event) -> { },
+                EventPriority.MONITOR, owner, false));
+            return null;
+        }).when(manager).registerEvents(any(Listener.class), eq(owner));
+        return handlers;
+    }
+
+    private void install(PluginManager manager, CustomItemPlugin plugin) {
+        Plugin installed = mock(Plugin.class);
+        PluginMeta meta = mock(PluginMeta.class);
+        when(meta.getVersion()).thenReturn("2.0");
+        when(installed.getPluginMeta()).thenReturn(meta);
+        when(installed.isEnabled()).thenReturn(true);
+        when(manager.getPlugin(plugin.plugin())).thenReturn(installed);
+        when(manager.isPluginEnabled(plugin.plugin())).thenReturn(true);
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void closeUnregistersTheListenerDetectionRegisteredSoASecondDetectLeavesOne() {
+        PluginManager manager = server();
+        install(manager, CustomItemPlugin.ITEMSADDER);
+        HandlerList handlers = registering(manager);
+
+        try (MockedStatic<ItemsAdder> itemsAdder = mockStatic(ItemsAdder.class)) {
+            itemsAdder.when(ItemsAdder::areItemsLoaded).thenReturn(false);
+
+            CustomItems first = CustomItems.detect(owner, errors, EnumSet.of(CustomItemPlugin.ITEMSADDER));
+            assertThat(handlers.getRegisteredListeners()).hasSize(1);
+
+            first.close();
+            assertThat(handlers.getRegisteredListeners()).isEmpty();
+            assertThat(first.statuses().getFirst().state()).isEqualTo(HookState.LOADING);
+            assertThat(first.active()).containsExactly(CustomItemPlugin.ITEMSADDER);
+            first.close();
+
+            CustomItems second = CustomItems.detect(owner, errors, EnumSet.of(CustomItemPlugin.ITEMSADDER));
+            assertThat(handlers.getRegisteredListeners()).singleElement()
+                .extracting(RegisteredListener::getListener).isInstanceOf(ItemsAdderProvider.class);
+            second.close();
+            assertThat(handlers.getRegisteredListeners()).isEmpty();
+        } finally {
+            HandlerList.unregisterAll(owner);
+        }
+    }
+
+    @Test
+    void closeLeavesTheListenersOfOtherCodeAndAnIntegrationWithoutOneAlone() {
+        PluginManager manager = server();
+        HandlerList handlers = registering(manager);
+        Listener other = new Listener() { };
+        manager.registerEvents(other, owner);
+        CustomItems items = detected();
+
+        try {
+            items.close();
+
+            assertThat(handlers.getRegisteredListeners()).singleElement()
+                .extracting(RegisteredListener::getListener).isSameAs(other);
+            assertThat(items.active()).containsExactly(CustomItemPlugin.values());
+        } finally {
+            HandlerList.unregisterAll(owner);
         }
     }
 
