@@ -55,6 +55,7 @@ public final class MetricsBuilder {
     private final List<MetricChart> charts = new ArrayList<>();
     private int bStatsServiceId;
     private @Nullable String fastStatsToken;
+    private boolean usageChart = true;
     private boolean started;
 
     /**
@@ -132,6 +133,23 @@ public final class MetricsBuilder {
     }
 
     /**
+     * Sets whether {@link #start()} also starts the Taffy usage chart that the package documentation describes. It
+     * is on unless this is called with {@code false}. With it off, {@link #start()} starts no second bStats instance
+     * and no second FastStats context, and neither reads nor sets the system properties that name the plugin
+     * reporting the chart, so another plugin on the server can still report it. The plugin's own metrics start as
+     * they do with it on.
+     *
+     * @param enabled {@code false} to leave the Taffy usage chart off
+     * @return this builder
+     * @throws IllegalStateException if {@link #start()} was already called
+     */
+    public MetricsBuilder usageChart(boolean enabled) {
+        checkNotStarted();
+        this.usageChart = enabled;
+        return this;
+    }
+
+    /**
      * Starts every provider whose credential is set, when the owner's switch is on, and returns the handle. Call
      * it once, at the end of enable.
      *
@@ -150,8 +168,8 @@ public final class MetricsBuilder {
      * down again at once and {@link Metrics#bStatsStarted()} reads {@code false}.
      *
      * <p>With the switch on, this also starts the Taffy usage chart that the package documentation describes, beside
-     * each provider that started here, unless another plugin on the server already reports the chart to that
-     * provider. The handle stops it at {@link Metrics#shutdown()}.
+     * each provider that started here, unless {@link #usageChart(boolean)} turned it off or another plugin on the
+     * server already reports the chart to that provider. The handle stops it at {@link Metrics#shutdown()}.
      *
      * @return the handle, inert when nothing started; never {@code null}
      * @throws IllegalStateException if this builder was already started
@@ -172,7 +190,7 @@ public final class MetricsBuilder {
         }
         BukkitContext fastStats = fastStatsToken != null
             ? startFastStats(owner, fastStatsToken, charts, true, logger, FASTSTATS_FAILED) : null;
-        TaffyUsage usage = TaffyUsage.start(owner, bStats != null, fastStats != null);
+        TaffyUsage usage = usageChart ? TaffyUsage.start(owner, bStats != null, fastStats != null) : null;
         Metrics handle = new Metrics(bStats, fastStats, usage, errors, logger);
         if (handle.sources != null) {
             errors.install(handle::report, handle::reportUnhandled);

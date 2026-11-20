@@ -187,6 +187,71 @@ class MetricsBuilderTest {
     }
 
     @Test
+    void theUsageChartSwitchedOffStartsNoSecondBStatsInstanceOrFastStatsContext() throws IOException {
+        fixture.enableBStats();
+        fixture.writeFastStatsConfig(true, true, true);
+        Set<Thread> before = bStatsThreads();
+
+        Metrics metrics = start(new MetricsBuilder(fixture.plugin, errors, true)
+            .bStats(MetricsFixture.BSTATS_SERVICE_ID)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN)
+            .usageChart(false));
+
+        assertThat(metrics.usage).isNull();
+        assertThat(metrics.bStatsStarted()).isTrue();
+        assertThat(metrics.fastStatsSdk()).isNotNull();
+        assertThat(metrics.fastStatsErrorTracking()).isTrue();
+        Set<Thread> added = bStatsThreads();
+        added.removeAll(before);
+        assertThat(added).hasSize(1);
+        verify(fixture.asyncScheduler, times(2))
+            .runAtFixedRate(any(Plugin.class), any(), anyLong(), anyLong(), any(TimeUnit.class));
+        verify(fixture.pluginManager, times(1)).registerEvents(any(Listener.class), any(Plugin.class));
+        assertThat(System.getProperty(TaffyUsage.BSTATS_HOLDER)).isNull();
+        assertThat(System.getProperty(TaffyUsage.FASTSTATS_HOLDER)).isNull();
+        assertThat(fixture.log.lines()).isEmpty();
+        metrics.shutdown();
+        assertThat(sink.requests).extracting(LoopbackSink.Request::body)
+            .isNotEmpty()
+            .noneMatch(body -> body.contains(TaffyUsage.VERSION_CHART));
+    }
+
+    @Test
+    void aPluginWithTheUsageChartSwitchedOffLeavesTheChartToAnotherPlugin() throws IOException {
+        MetricsFixture other = new MetricsFixture(plugins);
+        when(other.plugin.getName()).thenReturn("Other");
+        fixture.enableBStats();
+        fixture.writeFastStatsConfig(true, true, true);
+        start(new MetricsBuilder(fixture.plugin, errors, true)
+            .bStats(MetricsFixture.BSTATS_SERVICE_ID)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN)
+            .usageChart(false));
+
+        Metrics second = start(new MetricsBuilder(other.plugin, new ErrorReports(), true)
+            .bStats(MetricsFixture.BSTATS_SERVICE_ID)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN));
+
+        assertThat(second.usage).isNotNull();
+        assertThat(second.usage.bStats).isNotNull();
+        assertThat(second.usage.fastStats).isNotNull();
+        assertThat(System.getProperty(TaffyUsage.BSTATS_HOLDER)).isEqualTo("Other");
+        assertThat(System.getProperty(TaffyUsage.FASTSTATS_HOLDER)).isEqualTo("Other");
+    }
+
+    @Test
+    void theUsageChartSwitchedBackOnStartsIt() throws IOException {
+        fixture.enableBStats();
+
+        Metrics metrics = start(new MetricsBuilder(fixture.plugin, errors, true)
+            .bStats(MetricsFixture.BSTATS_SERVICE_ID)
+            .usageChart(false)
+            .usageChart(true));
+
+        assertThat(metrics.usage).isNotNull();
+        assertThat(metrics.usage.bStats).isNotNull();
+    }
+
+    @Test
     void aBStatsTheServerOwnerTurnedOffStartsNoTaffyBStatsInstance() {
         Metrics metrics = start(new MetricsBuilder(fixture.plugin, errors, true)
             .bStats(MetricsFixture.BSTATS_SERVICE_ID));
@@ -768,6 +833,8 @@ class MetricsBuilderTest {
             .withMessage("metrics already started");
         assertThatIllegalStateException()
             .isThrownBy(() -> builder.addChart(MetricChart.number("item_count", () -> 1)))
+            .withMessage("metrics already started");
+        assertThatIllegalStateException().isThrownBy(() -> builder.usageChart(false))
             .withMessage("metrics already started");
     }
 

@@ -139,5 +139,9 @@
  * for that provider and logs nothing. {@link so.alaz.taffy.metrics.Metrics#shutdown()} of the plugin named there
  * unsets the property; no other plugin takes the chart over until it next starts its own metrics. A copy of Taffy
  * older than 0.2.1 neither reads nor sets the properties.
+ *
+ * <p>A plugin leaves the usage chart off with {@link so.alaz.taffy.metrics.MetricsBuilder#usageChart(boolean)
+ * usageChart(false)}, such as from a switch of its own in its config. {@code start()} then starts neither usage
+ * instance and leaves both system properties alone, and the plugin's own metrics start as before.
  */
 package so.alaz.taffy.metrics;

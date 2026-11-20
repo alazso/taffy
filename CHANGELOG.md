@@ -12,6 +12,10 @@ All notable changes to Taffy are documented here. This project follows
   `install(BiConsumer)` receives both, as before.
 - `Metrics.reportUnhandled(String, Throwable)` sends a report to FastStats error tracking with `handled` set to
   `false`.
+- `MetricsBuilder.usageChart(boolean)` turns the Taffy usage chart (`taffy_version`) off or on for the plugin
+  alone. With `usageChart(false)`, `start()` starts no second bStats instance and no second FastStats context and
+  leaves the system properties `taffy.usage.bstats` and `taffy.usage.faststats` alone, while the plugin's own
+  metrics start as before. A plugin that does not call it starts the chart, as before.
 
 ### Changed
 - `MetricsBuilder.start()` starts the Taffy usage chart (`taffy_version`) in one plugin per server for each
