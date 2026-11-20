@@ -193,6 +193,22 @@ final class ClickGuardTest {
     }
 
     @Test
+    void aThrowingHandlerLeavesTheHoldAnotherButtonTook() {
+        Sample sample = new Sample(folder);
+        sample.viewer.click(12, ClickType.LEFT);
+        sample.harness.advance(Sample.SETTLED);
+
+        sample.viewer.click(15, ClickType.LEFT);
+
+        assertThat(sample.harness.reports).singleElement()
+            .satisfies(report -> assertThat(report.source()).isEqualTo("gui.click"));
+        assertThat(sample.session().busy()).isTrue();
+        sample.harness.advance(Sample.SETTLED);
+        sample.viewer.click(13, ClickType.LEFT);
+        assertThat(sample.works).hasValue(1);
+    }
+
+    @Test
     void aClickOnAClosedSessionsViewDoesNothing() {
         Sample sample = new Sample(folder);
         FakeView old = sample.viewer.current();

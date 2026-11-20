@@ -187,23 +187,27 @@ public final class MenuSession<S> implements InventoryHolder {
      * as a claim that calls back, calls {@code busy(true)} before it starts the work, and the hold lasts past the
      * handler's return until {@code busy(false)} is called on the viewer's entity thread, such as in that callback.
      * {@code busy(false)} also releases a session that is busy for a load, and a handler that throws releases the
-     * hold too.
+     * hold it took. A handler of a button that is not exclusive, which runs while the session is busy, leaves the
+     * session busy when it throws.
      *
      * <p>A hold belongs to a load when both start in one step: the same run of a {@link ClickHandler}, the same
      * {@link Menu#opened(MenuSession, Player)}, or the time between two of those. Such a hold is released when that
      * load applies, fails or is cancelled, also when a later load started meanwhile, so a handler that calls
      * {@code busy(true)} and then {@code Menus.load} calls no {@code busy(false)}. A hold with no load in its step is
-     * released only by {@code busy(false)} or a handler that throws: a load another button or a timer starts does not
-     * release it.
+     * released only by {@code busy(false)} or when the handler that took it throws: a load another button or a timer
+     * starts does not release it. {@code busy(true)} on a session that is already held changes nothing.
      *
      * @param busy {@code true} to hold the session, {@code false} to release it
      */
     public void busy(boolean busy) {
-        this.held = busy;
         if (busy) {
-            this.holdStep = step;
-            this.holdLoad = loading && loadStep == step ? loadToken : 0;
+            if (!held) {
+                this.held = true;
+                this.holdStep = step;
+                this.holdLoad = loading && loadStep == step ? loadToken : 0;
+            }
         } else {
+            this.held = false;
             this.holdLoad = 0;
             this.guarded = false;
             this.guardLoad = 0;

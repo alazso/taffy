@@ -45,7 +45,7 @@ import java.util.logging.Logger;
  * the handler set it, and a load the same handler started releases it. A handler that throws a
  * {@link RuntimeException}
  * leaves the event cancelled, is logged with its stack, reported to {@link ErrorReports} under {@code gui.click},
- * clears {@link MenuSession#busy()} and plays {@link Cue#FAIL}.
+ * clears {@link MenuSession#busy()} unless the session was busy before the handler ran, and plays {@link Cue#FAIL}.
  *
  * <p>The client moves a stack on its own screen before the server answers, so after a cancelled shift-click, and
  * after a menu closed, it can show a stack where the server has none. The listener of the menus that opened the
@@ -131,6 +131,7 @@ final class MenuListener implements Listener {
         }
         menus.feedback().play(player, Cue.CLICK);
         long load = session.loadToken();
+        boolean wasBusy = session.busy();
         session.step();
         try {
             handler.click(new Click(session, player, click, raw));
@@ -141,7 +142,9 @@ final class MenuListener implements Listener {
             logger.log(Level.WARNING, "gui: " + session.id() + " button " + button.key() + " failed for "
                 + player.getName() + ": " + failure, failure);
             errors.report("gui.click", failure);
-            session.busy(false);
+            if (!wasBusy) {
+                session.busy(false);
+            }
             menus.feedback().play(player, Cue.FAIL);
         } finally {
             session.step();

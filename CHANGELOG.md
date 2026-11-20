@@ -78,8 +78,10 @@ All notable changes to Taffy are documented here. This project follows
   handler started the load, or a `busy(true)` taken in the same handler or `Menu.opened` as the `Menus.load` call.
   It clears that hold also when a later load started meanwhile. Before, the end of the latest load of a session
   released every hold, so a refresh or a page turn that ended while a claim held the session with `busy(true)`
-  let the same claim run a second time. A handler that takes `busy(true)` for work outside `Menus.load` and relied
-  on a later load to release it calls `session.busy(false)` when its work ends.
+  let the same claim run a second time. A handler that throws likewise clears `busy()` only when the session was
+  not busy before it ran, so a failing button that is not exclusive no longer releases the hold of a claim in
+  flight. A handler that takes `busy(true)` for work outside `Menus.load` and relied on a later load or a failing
+  handler to release it calls `session.busy(false)` when its work ends.
 - Breaking: `Menus.register` and `Menus.reload` throw an `IllegalArgumentException` for a material that is not an
   item a slot can show, air included: the material of an `ItemLayout` (shown or not), the `filler` of a
   `MenuLayout`, the `emptyMaterial` of a `PagerLayout`, and, in `register`, the `filler` and `loadingItem` of the
@@ -168,7 +170,7 @@ All notable changes to Taffy are documented here. This project follows
   Before, `exclusively()` did nothing unless the handler called `MenuSession.busy(true)` itself, so a buy button
   without that call ran a second purchase once the 250 ms debounce passed. A handler that calls `busy(true)` keeps
   working: its hold lasts past the handler's return until `busy(false)`, the end of a load the same handler
-  started, or a handler that throws, which is how a handler whose work runs outside `Menus.load`, such as a claim
+  started, or that handler throwing, which is how a handler whose work runs outside `Menus.load`, such as a claim
   that calls back on the viewer's thread, holds the session and releases it in the callback. `MenuSession.busy()`
   still reads `false` inside the handler of the first click.
 - The menu listener sends a player's inventory again, through `Player.updateInventory()` on the next tick on the
