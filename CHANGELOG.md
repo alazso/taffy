@@ -15,6 +15,10 @@ All notable changes to Taffy are documented here. This project follows
   called on and parses colour tags, decoration tags, `<gradient>`, `<rainbow>` and `<reset>` in what a
   PlaceholderAPI placeholder returns. The instance it is called on is left as it is, so a plugin can keep one
   `Text` for chat and one for owner-written item text.
+- `DiscordWebhook.post(String, String, PostOptions, Consumer<String>)` posts a plain message with the mention
+  types of its options allowed to ping. `DiscordWebhook.PostOptions` is a record of a `Set<DiscordWebhook.Mention>`
+  (`EVERYONE` for `@everyone` and `@here`, `ROLES`, `USERS`), built with `PostOptions.allowing(Mention...)` or
+  `PostOptions.noMentions()`. The body carries the named types as the `allowed_mentions.parse` list.
 
 ### Changed
 - Breaking: Taffy compiles against paper-api 26.3 and supports Paper 26.2 build 135 or newer and Folia 26.3 build 8
@@ -37,6 +41,16 @@ All notable changes to Taffy are documented here. This project follows
   that parses colour tags, decoration tags, `<gradient>`, `<rainbow>` and `<reset>` in placeholder output and
   shows every other tag as written. No option brings back click, hover or any other tag from placeholder output:
   write those in the template, around the placeholder.
+- Breaking: `DiscordWebhook.post(String, String, Consumer<String>)` sends `"allowed_mentions": {"parse": []}`
+  with the content, and `WebhookPayload.render` adds the same key to the top level of a template that has no
+  `allowed_mentions` key of its own. In 0.1 neither sent the key, so Discord's default applied and player text
+  in a post, such as an item renamed to `@everyone free nitro` or a reason holding `<@&roleId>`, pinged the
+  guild. Now `@everyone`, `@here`, role mentions and user mentions in such a post are shown as text and ping
+  no one. A template with an `allowed_mentions` key keeps its value unchanged, and `DiscordWebhook.postBody`
+  still sends its body as given and adds nothing. Migration: where a post is meant to ping, call
+  `post(url, content, PostOptions.allowing(Mention.ROLES), onError)` with the mention types to allow, or give
+  the payload template its own `allowed_mentions` object, such as `allowed_mentions: {parse: [roles]}` in the
+  server owner's config.
 - `taffy-gui`: the package-private `CancelLink.link` returns `ClickEvent<?>`, the generic type Adventure 5 gives
   `ClickEvent`. Its erasure is the same, and no public signature changes.
 

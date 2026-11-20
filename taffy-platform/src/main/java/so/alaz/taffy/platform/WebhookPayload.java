@@ -13,17 +13,32 @@ import java.util.function.UnaryOperator;
  * maps, as read from config) into a JSON body. Every string value is passed through {@code resolve}
  * (the caller's value substitution) first; the structure is then serialized with Gson, so a resolved
  * value cannot change the JSON structure. The body is in the form {@link DiscordWebhook#postBody} sends.
+ *
+ * <p>A template with no {@code allowed_mentions} key at its top level is rendered with
+ * {@code "allowed_mentions": {"parse": []}} added, so no mention in a resolved value pings. A template
+ * that has the key keeps its own value, whatever it is, which is how a server owner allows mentions.
  */
 public final class WebhookPayload {
 
     private static final Gson GSON = new Gson();
 
+    private static final String ALLOWED_MENTIONS = "allowed_mentions";
+
     private WebhookPayload() {
     }
 
-    /** Resolves every string in {@code template} via {@code resolve}, then serializes to a JSON object. */
+    /**
+     * Resolves every string in {@code template} via {@code resolve}, then serializes to a JSON object.
+     * When the template has no top-level {@code allowed_mentions} key, the object ends with
+     * {@code "allowed_mentions": {"parse": []}}. The template is not changed.
+     */
     public static String render(Map<String, Object> template, UnaryOperator<String> resolve) {
-        return GSON.toJson(resolveValue(template, resolve));
+        Map<String, Object> out = new LinkedHashMap<>();
+        template.forEach((key, child) -> out.put(String.valueOf(key), resolveValue(child, resolve)));
+        if (!out.containsKey(ALLOWED_MENTIONS)) {
+            out.put(ALLOWED_MENTIONS, Map.of("parse", List.of()));
+        }
+        return GSON.toJson(out);
     }
 
     private static Object resolveValue(Object value, UnaryOperator<String> resolve) {

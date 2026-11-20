@@ -43,6 +43,50 @@ class WebhookPayloadTest {
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
         assertThat(root.get("content").getAsString()).isEqualTo(injected);
         assertThat(root.has("x")).isFalse();
-        assertThat(root.keySet()).containsExactly("content");
+        assertThat(root.keySet()).containsExactly("content", "allowed_mentions");
+    }
+
+    @Test
+    void addsAllowedMentionsWithAnEmptyParseListWhenTheTemplateHasNone() {
+        Map<String, Object> template = new LinkedHashMap<>();
+        template.put("content", "%arg%");
+
+        String json = WebhookPayload.render(template, s -> s.replace("%arg%", "@everyone"));
+
+        assertThat(json).isEqualTo("{\"content\":\"@everyone\",\"allowed_mentions\":{\"parse\":[]}}");
+        assertThat(template).containsOnlyKeys("content");
+    }
+
+    @Test
+    void keepsTheAllowedMentionsOfTheTemplate() {
+        Map<String, Object> template = new LinkedHashMap<>();
+        template.put("content", "hi");
+        template.put("allowed_mentions", Map.of("parse", List.of("users", "roles")));
+
+        JsonObject root = JsonParser.parseString(WebhookPayload.render(template, s -> s)).getAsJsonObject();
+
+        assertThat(root.keySet()).containsExactly("content", "allowed_mentions");
+        assertThat(root.getAsJsonObject("allowed_mentions").toString())
+            .isEqualTo("{\"parse\":[\"users\",\"roles\"]}");
+    }
+
+    @Test
+    void keepsAnAllowedMentionsValueThatAllowsEverything() {
+        Map<String, Object> template = new LinkedHashMap<>();
+        template.put("allowed_mentions", Map.of());
+        template.put("content", "hi");
+
+        assertThat(WebhookPayload.render(template, s -> s))
+            .isEqualTo("{\"allowed_mentions\":{},\"content\":\"hi\"}");
+    }
+
+    @Test
+    void anAllowedMentionsKeyBelowTheTopLevelDoesNotCount() {
+        Map<String, Object> template = new LinkedHashMap<>();
+        template.put("embeds", List.of(Map.of("allowed_mentions", "x")));
+
+        JsonObject root = JsonParser.parseString(WebhookPayload.render(template, s -> s)).getAsJsonObject();
+
+        assertThat(root.getAsJsonObject("allowed_mentions").toString()).isEqualTo("{\"parse\":[]}");
     }
 }

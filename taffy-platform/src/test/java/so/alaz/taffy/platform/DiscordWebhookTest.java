@@ -1,5 +1,7 @@
 package so.alaz.taffy.platform;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -10,7 +12,11 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -80,6 +86,16 @@ final class DiscordWebhookTest {
         return JsonParser.parseString(request.body()).getAsJsonObject().get("content").getAsString();
     }
 
+    private static JsonObject json(Received request) {
+        return JsonParser.parseString(request.body()).getAsJsonObject();
+    }
+
+    private static List<String> allowedParse(Received request) {
+        JsonObject allowed = json(request).getAsJsonObject("allowed_mentions");
+        assertThat(allowed.keySet()).containsExactly("parse");
+        return allowed.getAsJsonArray("parse").asList().stream().map(JsonElement::getAsString).toList();
+    }
+
     private String errorFrom(String url) throws Exception {
         CompletableFuture<String> error = new CompletableFuture<>();
         webhook.post(url, "hi", error::complete);
@@ -95,8 +111,94 @@ final class DiscordWebhookTest {
         Received request = nextRequest();
         assertThat(request.method()).isEqualTo("POST");
         assertThat(request.contentType()).isEqualTo("application/json");
-        assertThat(JsonParser.parseString(request.body()).getAsJsonObject().keySet()).containsExactly("content");
+        assertThat(json(request).keySet()).containsExactly("content", "allowed_mentions");
         assertThat(content(request)).isEqualTo(content);
+    }
+
+    @Test
+    void postSendsAllowedMentionsWithAnEmptyParseList() throws Exception {
+        webhook.post(url("/204"), "@everyone <@&1> <@2> free nitro", errors::add);
+
+        Received request = nextRequest();
+        assertThat(request.body()).contains("\"allowed_mentions\":{\"parse\":[]}");
+        assertThat(allowedParse(request)).isEmpty();
+        assertThat(content(request)).isEqualTo("@everyone <@&1> <@2> free nitro");
+    }
+
+    @Test
+    void postWithNoMentionsOptionsSendsAnEmptyParseList() throws Exception {
+        webhook.post(url("/204"), "@here", DiscordWebhook.PostOptions.noMentions(), errors::add);
+
+        assertThat(allowedParse(nextRequest())).isEmpty();
+    }
+
+    @Test
+    void postWithOptionsAllowsTheNamedMentionTypes() throws Exception {
+        webhook.post(url("/204"), "<@&1> restock",
+            DiscordWebhook.PostOptions.allowing(DiscordWebhook.Mention.ROLES), errors::add);
+        assertThat(allowedParse(nextRequest())).containsExactly("roles");
+
+        webhook.post(url("/204"), "<@2> won", new DiscordWebhook.PostOptions(
+            Set.of(DiscordWebhook.Mention.USERS, DiscordWebhook.Mention.EVERYONE)), errors::add);
+        Received request = nextRequest();
+        assertThat(allowedParse(request)).containsExactly("everyone", "users");
+        assertThat(content(request)).isEqualTo("<@2> won");
+    }
+
+    @Test
+    void postWithEveryMentionTypeListsThemInDiscordOrder() throws Exception {
+        webhook.post(url("/204"), "hi",
+            DiscordWebhook.PostOptions.allowing(DiscordWebhook.Mention.values()), errors::add);
+
+        assertThat(allowedParse(nextRequest())).containsExactly("everyone", "roles", "users");
+    }
+
+    @Test
+    void postOptionsCopyTheirMentionSet() {
+        Set<DiscordWebhook.Mention> mentions = new HashSet<>(Set.of(DiscordWebhook.Mention.ROLES));
+        DiscordWebhook.PostOptions options = new DiscordWebhook.PostOptions(mentions);
+
+        mentions.add(DiscordWebhook.Mention.EVERYONE);
+
+        assertThat(options.mentions()).containsExactly(DiscordWebhook.Mention.ROLES);
+        assertThat(DiscordWebhook.PostOptions.noMentions().mentions()).isEmpty();
+    }
+
+    @Test
+    void aRenderedTemplateWithoutAllowedMentionsIsPostedWithAnEmptyParseList() throws Exception {
+        Map<String, Object> template = new LinkedHashMap<>();
+        template.put("content", "{reason}");
+
+        webhook.postBody(url("/204"), WebhookPayload.render(template, s -> s.replace("{reason}", "@everyone")),
+            errors::add);
+
+        Received request = nextRequest();
+        assertThat(json(request).keySet()).containsExactly("content", "allowed_mentions");
+        assertThat(allowedParse(request)).isEmpty();
+        assertThat(content(request)).isEqualTo("@everyone");
+    }
+
+    @Test
+    void aRenderedTemplateKeepsItsOwnAllowedMentions() throws Exception {
+        Map<String, Object> template = new LinkedHashMap<>();
+        template.put("allowed_mentions", Map.of("parse", List.of("roles")));
+        template.put("content", "<@&1> {reason}");
+
+        webhook.postBody(url("/204"), WebhookPayload.render(template, s -> s.replace("{reason}", "restock")),
+            errors::add);
+
+        Received request = nextRequest();
+        assertThat(json(request).keySet()).containsExactly("allowed_mentions", "content");
+        assertThat(allowedParse(request)).containsExactly("roles");
+    }
+
+    @Test
+    void postBodyAddsNoAllowedMentions() throws Exception {
+        webhook.postBody(url("/204"), "{\"content\":\"@everyone\"}", errors::add);
+
+        Received request = nextRequest();
+        assertThat(request.body()).isEqualTo("{\"content\":\"@everyone\"}");
+        assertThat(json(request).has("allowed_mentions")).isFalse();
     }
 
     @Test
