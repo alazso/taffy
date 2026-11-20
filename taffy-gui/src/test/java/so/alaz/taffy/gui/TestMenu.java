@@ -20,6 +20,7 @@ final class TestMenu implements Menu<Integer> {
     final List<Boolean> closes = new ArrayList<>();
     final List<MenuSession<Integer>> sessions = new ArrayList<>();
     int renders;
+    int initials;
 
     TestMenu(MenuKind kind) {
         this.kind = kind;
@@ -32,6 +33,7 @@ final class TestMenu implements Menu<Integer> {
 
     @Override
     public Integer initial(Player viewer) {
+        initials++;
         return 0;
     }
 

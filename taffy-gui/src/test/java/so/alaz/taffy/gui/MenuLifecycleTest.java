@@ -1029,7 +1029,8 @@ final class MenuLifecycleTest {
     void openOffTheViewersThreadThrowsBeforeAnythingChangesAndOpenLaterStillOpens() {
         Sample sample = new Sample(folder);
         Menus menus = sample.harness.menus;
-        menus.register(new TestMenu(MenuHarness.MAIN));
+        TestMenu main = new TestMenu(MenuHarness.MAIN);
+        menus.register(main);
         MenuSession<?> session = sample.session();
         int created = sample.harness.inventories.created.size();
         sample.harness.prompts.ended.clear();
@@ -1042,6 +1043,7 @@ final class MenuLifecycleTest {
             .isThrownBy(() -> menus.open(sample.viewer.player, new Route(MenuHarness.MAIN.id(), 0, null)))
             .withMessage("Menus.open must run on the viewer's entity thread; use Menus.openLater");
 
+        assertThat(main.initials).isZero();
         assertThat(sample.harness.prompts.ended).isEmpty();
         assertThat(sample.harness.inventories.created).hasSize(created);
         assertThat(sample.viewer.session()).isSameAs(session);
@@ -1054,17 +1056,33 @@ final class MenuLifecycleTest {
 
         assertThat(sample.viewer.session()).isNotNull().isNotSameAs(session);
         assertThat(sample.viewer.session().id()).isEqualTo(MenuHarness.MAIN.id());
+        assertThat(main.initials).isEqualTo(1);
     }
 
     @Test
     void openOffTheViewersThreadDoesNothingOnceShutdownRan() {
         Sample sample = new Sample(folder);
+        int initials = sample.menu.initials;
         sample.harness.menus.shutdown();
         sample.harness.owned = player -> false;
 
         sample.harness.menus.open(sample.viewer.player, Sample.KIND.id(), null);
 
         assertThat(sample.viewer.session()).isNull();
+        assertThat(sample.menu.initials).isEqualTo(initials);
+    }
+
+    @Test
+    void anOpenScheduledBeforeShutdownAsksForNoInitialState() {
+        Sample sample = new Sample(folder);
+        int initials = sample.menu.initials;
+        sample.harness.menus.openLater(sample.viewer.player, Sample.KIND.id(), null);
+
+        sample.harness.menus.shutdown();
+        sample.harness.drain();
+
+        assertThat(sample.viewer.session()).isNull();
+        assertThat(sample.menu.initials).isEqualTo(initials);
     }
 
     @Test

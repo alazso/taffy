@@ -894,6 +894,10 @@ public final class Menus {
     }
 
     private <S> void open(Player viewer, Menu<S> menu, @Nullable Route back) {
+        if (stopping) {
+            return;
+        }
+        onViewerThread(viewer, "Menus.open", "use Menus.openLater");
         start(viewer, menu, menu.initial(viewer), back);
     }
 
