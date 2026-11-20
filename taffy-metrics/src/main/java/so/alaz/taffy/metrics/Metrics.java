@@ -12,6 +12,10 @@ import java.util.function.Predicate;
  * A live metrics submission, returned by {@link MetricsBuilder#start()}. Wraps the providers that started.
  * {@link #shutdown()} must be called on plugin disable.
  *
+ * <p>A plugin starts its metrics once per enable and keeps the handle through a config reload. {@link #shutdown()}
+ * does not unregister the {@code ServerExceptionEvent} listeners FastStats registered for the plugin: they stay
+ * registered until the plugin is disabled, so each further start in the same enable adds to them.
+ *
  * <p>When FastStats starts with its error service, {@link MetricsBuilder#start()} routes the plugin's
  * {@link ErrorReports} to {@link #report}, and each report goes to FastStats error tracking: reports of one kind from
  * one source merge into one error with a count, and each error carries its source as the {@code source} attribute.

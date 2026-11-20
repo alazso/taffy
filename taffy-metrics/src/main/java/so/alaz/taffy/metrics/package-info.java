@@ -36,6 +36,11 @@
  * {@code start()} before it returns, without the charts whose state never came up. Its disable then shuts the
  * metrics down, and the reports raised during enable go out in the final send. Without that call they are lost.
  *
+ * <p>Metrics start once per enable and are not restarted on a config reload: the plugin keeps the handle until
+ * disable. {@link so.alaz.taffy.metrics.Metrics#shutdown()} does not unregister the {@code ServerExceptionEvent}
+ * listeners FastStats registered for the plugin, which stay registered until the plugin is disabled, so each
+ * further start in the same enable adds to them.
+ *
  * <pre>{@code
  * private final ErrorReports errors = new ErrorReports();
  * private final LongAdder commandsRun = new LongAdder();
