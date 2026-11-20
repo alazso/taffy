@@ -27,11 +27,12 @@ import java.util.function.Supplier;
  * bound to the owning plugin, and Paper cancels them when it disables. {@code Bukkit.getScheduler()} is
  * unsupported on Folia and is never called.
  *
- * <p>The scheduler never waits for work and never runs leftover work on its own. Once the plugin is
- * disabling, {@link #global}, {@link #async}, {@link #delayedAsync} and {@link #repeatingAsync} return
- * {@code false} and run nothing, {@link #entity(Entity, Runnable, Runnable)} runs {@code retired} on the
- * calling thread, {@link #dispatch} completes exceptionally, {@link #asyncExecutor} rejects, and
- * {@link #asyncOrRun} runs the task on the calling thread.
+ * <p>The scheduler never waits for work and never runs leftover work on its own. When the plugin is not
+ * enabled (before {@code onEnable} or once it is disabling), {@link #global}, {@link #async},
+ * {@link #delayedAsync} and {@link #repeatingAsync} return {@code false} and run nothing,
+ * {@link #entity(Entity, Runnable, Runnable)} runs {@code retired} on the calling thread, {@link #dispatch}
+ * completes exceptionally, {@link #asyncExecutor} rejects, and {@link #asyncOrRun} runs the task on the calling
+ * thread.
  *
  * <p>A task Paper accepted but has not run by the time the owning plugin disables may never run: an entity
  * task then runs neither its task nor its retired callback, and a delayed task is cancelled. {@link #close}
@@ -110,7 +111,7 @@ public final class Scheduler implements Dispatcher {
 
     /**
      * Runs {@code task} on the global region thread, as soon as possible. Returns {@code false} when the
-     * plugin is disabling: the task will never run.
+     * plugin is not enabled (before {@code onEnable} or once it is disabling): the task will never run.
      *
      * <p>On Paper the global region thread is the main thread, which owns every chunk and entity. On Folia it
      * owns no chunk and no entity, so world and entity work in {@code task} must hop to the thread that owns
@@ -122,7 +123,7 @@ public final class Scheduler implements Dispatcher {
 
     /**
      * Runs {@code task} on an async thread, as soon as possible. Returns {@code false} when the plugin is
-     * disabling: the task will never run.
+     * not enabled (before {@code onEnable} or once it is disabling): the task will never run.
      */
     public boolean async(Runnable task) {
         return submit(() -> server.getAsyncScheduler().runNow(plugin, reported(ASYNC_SOURCE, task)));
@@ -130,9 +131,11 @@ public final class Scheduler implements Dispatcher {
 
     /**
      * Runs {@code task} on an async thread, as soon as possible, or on the calling thread when the plugin is
-     * disabling and cannot schedule. The task may then block the calling thread, so it must be safe to run
-     * there. A task scheduled before the plugin disables keeps running once started, but one that has not
-     * started when Paper cancels the plugin's tasks, after {@code onDisable} returns, never runs.
+     * not enabled (before {@code onEnable} or once it is disabling) and cannot schedule. A call before enable,
+     * from the plugin's constructor or {@code onLoad}, therefore runs the task on the calling thread. The task
+     * may then block the calling thread, so it must be safe to run there. A task scheduled before the plugin
+     * disables keeps running once started, but one that has not started when Paper cancels the plugin's tasks,
+     * after {@code onDisable} returns, never runs.
      */
     public void asyncOrRun(Runnable task) {
         if (!async(task)) {
@@ -142,7 +145,8 @@ public final class Scheduler implements Dispatcher {
 
     /**
      * An executor over {@link #async}. Its {@code execute} runs the task on an async thread, or throws
-     * {@link RejectedExecutionException} when the plugin is disabling: the task will never run.
+     * {@link RejectedExecutionException} when the plugin is not enabled (before {@code onEnable} or once it is
+     * disabling): the task will never run.
      */
     public Executor asyncExecutor() {
         return task -> {
@@ -154,9 +158,9 @@ public final class Scheduler implements Dispatcher {
 
     /**
      * Runs {@code task} once on an async thread after {@code delay}, which is passed to Paper in whole
-     * milliseconds. Returns {@code false} when the plugin is disabling: the task will never run. Paper
-     * cancels the task when the plugin disables, so one not yet due by then never runs either. Paper throws
-     * {@link IllegalArgumentException} for a negative delay.
+     * milliseconds. Returns {@code false} when the plugin is not enabled (before {@code onEnable} or once it is
+     * disabling): the task will never run. Paper cancels the task when the plugin disables, so one not yet due
+     * by then never runs either. Paper throws {@link IllegalArgumentException} for a negative delay.
      */
     public boolean delayedAsync(Runnable task, Duration delay) {
         return submit(() -> server.getAsyncScheduler().runDelayed(
@@ -166,8 +170,9 @@ public final class Scheduler implements Dispatcher {
     /**
      * Runs {@code task} on an async thread after {@code initialDelay}, then every {@code period} thereafter,
      * both passed to Paper in whole milliseconds, until {@link #close}. Returns {@code false} when the
-     * plugin is disabling: the task is then not scheduled, or is cancelled at once. Paper throws
-     * {@link IllegalArgumentException} for a negative initial delay or a period below one millisecond.
+     * plugin is not enabled (before {@code onEnable} or once it is disabling): the task is then not scheduled,
+     * or is cancelled at once. Paper throws {@link IllegalArgumentException} for a negative initial delay or a
+     * period below one millisecond.
      */
     public boolean repeatingAsync(Runnable task, Duration initialDelay, Duration period) {
         if (!plugin.isEnabled()) {
@@ -199,8 +204,9 @@ public final class Scheduler implements Dispatcher {
      * {@link EntityUnavailableException} for an entity tag. A task whose future is completed here never runs,
      * also when Paper still runs what it accepted. A run already in progress finishes, and the future of a
      * dispatched task that has started completes with what the task returns or throws. Other one-shot tasks are
-     * left to Paper. The owning plugin calls this first in {@code onDisable}. The instance stays usable: a
-     * repeating task started, or a dispatch made, after the call or while it runs is handled by the next call.
+     * left to Paper. The owning plugin calls this while it disables, at the place the order in the package
+     * description gives it. The instance stays usable: a repeating task started, or a dispatch made, after the
+     * call or while it runs is handled by the next call.
      */
     public void close() {
         // A task tracked during this pass is not in the snapshot being iterated and stays tracked.
@@ -213,7 +219,7 @@ public final class Scheduler implements Dispatcher {
 
     /**
      * Runs {@code task} on the region thread owning the entity. The task is dropped if the entity is gone or
-     * the plugin is disabling.
+     * the plugin is not enabled (before {@code onEnable} or once it is disabling).
      */
     public void entity(Entity entity, Runnable task) {
         entity(entity, task, NOTHING);
@@ -222,9 +228,9 @@ public final class Scheduler implements Dispatcher {
     /**
      * Runs {@code task} on the region thread owning the entity, or {@code retired} when the task cannot run.
      * Paper runs {@code retired} if the entity retires (for example the player logs out) before the task
-     * runs. When the entity is already removed, Paper runs neither, and while the plugin is disabling
-     * nothing can be scheduled: in both cases {@code retired} runs here, on the calling thread, so it must
-     * not assume a region thread.
+     * runs. When the entity is already removed, Paper runs neither, and when the plugin is not enabled (before
+     * {@code onEnable} or once it is disabling) nothing can be scheduled: in both cases {@code retired} runs
+     * here, on the calling thread, so it must not assume a region thread.
      *
      * <p>At most one of the two runs. A task still scheduled when the owning plugin disables runs neither,
      * so work that must settle is also tracked by its caller in {@link PendingSettlements}.
@@ -253,11 +259,12 @@ public final class Scheduler implements Dispatcher {
      * {@inheritDoc}
      *
      * <p>{@link ThreadTag#GLOBAL} and {@link ThreadTag#ASYNC} complete with
-     * {@link RejectedExecutionException} when the plugin is disabling. An entity tag names an online player
-     * and completes with {@link EntityUnavailableException} when the player is offline, retires before the
-     * task runs, or the plugin is disabling. A task that has not started when {@link #close} runs, or that Paper
-     * accepted as the plugin stopped being enabled, never runs, and its future completes the same way. Every tag
-     * queues the task, also when the caller is already on that thread.
+     * {@link RejectedExecutionException} when the plugin is not enabled (before {@code onEnable} or once it is
+     * disabling). An entity tag names an online player and completes with {@link EntityUnavailableException}
+     * when the player is offline, retires before the task runs, or the plugin is not enabled. A task that has
+     * not started when {@link #close} runs, or that Paper accepted as the plugin stopped being enabled, never
+     * runs, and its future completes the same way. Every tag queues the task, also when the caller is already on
+     * that thread.
      */
     @Override
     public <T> CompletableFuture<T> dispatch(ThreadTag tag, Supplier<T> task) {
