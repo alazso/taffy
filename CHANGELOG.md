@@ -23,6 +23,14 @@ All notable changes to Taffy are documented here. This project follows
 - `taffy-gui`: the package-private `CancelLink.link` returns `ClickEvent<?>`, the generic type Adventure 5 gives
   `ClickEvent`. Its erasure is the same, and no public signature changes.
 
+### Fixed
+- `LegacyText.toMiniMessage`, `LegacyText.sectionToMiniMessage` and every `Text` and `Messages` render: a legacy
+  colour code ends the format codes before it, as it does in legacy text. `&c&lADMIN &7Steve` becomes
+  `<red><bold>ADMIN <gray><!bold>Steve`, so `Steve` is gray and not bold; before, `<bold>` stayed open and the
+  rest of the line was bold. The colour tag is followed by the negation of each decoration that a format code
+  earlier in the same string opened. A decoration opened by a tag, or by a format code in a separately converted
+  string such as a `Placeholder.parsed` value, stays open after a colour code.
+
 ## [0.1.2] - 2026-11-19
 
 Built against paper-api 26.1.2.build.66-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

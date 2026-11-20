@@ -2,6 +2,7 @@ package so.alaz.taffy.platform;
 
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.minimessage.Context;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.ParsingException;
@@ -156,6 +157,16 @@ class TextTest {
         assertThat(text.render("§aHi {name}", null, Placeholder.unparsed("name", "Ann")))
             .isEqualTo(Component.text("Hi Ann", NamedTextColor.GREEN));
         assertThat(plain(text.render("§", viewer))).isEqualTo("§");
+    }
+
+    @Test
+    void aSectionSignColourCodeEndsTheFormatCodesBeforeIt() {
+        Text text = new Text(log.logger, null, null);
+
+        Component rendered = text.render("§c§lADMIN §7Steve");
+
+        assertThat(rendered).isEqualTo(Component.text("ADMIN ", NamedTextColor.RED, TextDecoration.BOLD)
+            .append(Component.text("Steve", NamedTextColor.GRAY).decoration(TextDecoration.BOLD, false)));
     }
 
     @Test

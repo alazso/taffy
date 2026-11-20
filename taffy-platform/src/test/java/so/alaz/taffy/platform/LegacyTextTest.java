@@ -20,7 +20,27 @@ class LegacyTextTest {
 
     @Test
     void convertsUpperCaseCodeLetters() {
-        assertThat(LegacyText.toMiniMessage("&LBold &Cred")).isEqualTo("<bold>Bold <red>red");
+        assertThat(LegacyText.toMiniMessage("&LBold &Cred")).isEqualTo("<bold>Bold <red><!bold>red");
+    }
+
+    @Test
+    void aColourCodeClosesTheDecorationsOpenedBeforeIt() {
+        assertThat(LegacyText.toMiniMessage("&c&lADMIN &7Steve")).isEqualTo("<red><bold>ADMIN <gray><!bold>Steve");
+        assertThat(LegacyText.toMiniMessage("&o&n&m&l&ka&fb")).isEqualTo(
+            "<italic><underlined><strikethrough><bold><obfuscated>a"
+                + "<white><!obfuscated><!bold><!strikethrough><!underlined><!italic>b");
+        assertThat(LegacyText.toMiniMessage("&la&#FF8800b&cc")).isEqualTo("<bold>a<#FF8800><!bold>b<red>c");
+        assertThat(LegacyText.sectionToMiniMessage("§oa§x§F§F§8§8§0§0b")).isEqualTo("<italic>a<#FF8800><!italic>b");
+    }
+
+    @Test
+    void aResetCodeLeavesNoDecorationToClose() {
+        assertThat(LegacyText.toMiniMessage("&la&rb&cc")).isEqualTo("<bold>a<reset>b<red>c");
+    }
+
+    @Test
+    void aDecorationOpenedByATagStaysOpenAfterAColourCode() {
+        assertThat(LegacyText.toMiniMessage("<bold>a&cb")).isEqualTo("<bold>a<red>b");
     }
 
     @Test

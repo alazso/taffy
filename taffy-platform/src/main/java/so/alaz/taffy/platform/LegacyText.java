@@ -13,6 +13,12 @@ import java.util.Map;
  * <p>The paired hex form is read only when every character of it follows a section sign, as in
  * {@code §x§R§R§G§G§B§B}. The {@code &x&R&R&G&G&B&B} form is not supported: {@code &x} stays as text and
  * each pair after it is converted on its own, so that form comes out as a run of color tags.
+ *
+ * <p>A color code ends the format codes before it, as it does in legacy text: {@code &c&lADMIN &7Steve}
+ * becomes {@code <red><bold>ADMIN <gray><!bold>Steve}. The color tag is followed by the negation of each
+ * decoration that a format code earlier in the same call opened, and {@code &r} becomes {@code <reset>}. Only
+ * format codes count: a decoration opened by a tag in the input, or in a string converted by another call,
+ * stays open after a color code.
  */
 public final class LegacyText {
 
@@ -34,6 +40,9 @@ public final class LegacyText {
         Map.entry('m', "<strikethrough>"), Map.entry('n', "<underlined>"),
         Map.entry('o', "<italic>"), Map.entry('r', "<reset>"));
 
+    /** The decoration of each format code from {@code k} to {@code o}, in that order. */
+    private static final String[] DECORATIONS = {"obfuscated", "bold", "strikethrough", "underlined", "italic"};
+
     private LegacyText() {
     }
 
@@ -53,12 +62,14 @@ public final class LegacyText {
 
     private static String convert(String input, boolean ampersand) {
         StringBuilder out = new StringBuilder(input.length());
+        int open = 0;
         for (int i = 0; i < input.length(); i++) {
             char c = input.charAt(i);
             if ((c == SECTION || (ampersand && c == '&')) && i + 1 < input.length()) {
                 char next = Character.toLowerCase(input.charAt(i + 1));
                 if (next == '#' && i + 7 < input.length() && isHex(input, i + 2, 6)) {
                     out.append('<').append(input, i + 1, i + 8).append('>');
+                    open = closeDecorations(out, open);
                     i += 7;
                     continue;
                 }
@@ -68,12 +79,20 @@ public final class LegacyText {
                         out.append(input.charAt(digit));
                     }
                     out.append('>');
+                    open = closeDecorations(out, open);
                     i += PAIRED_HEX_LENGTH - 1;
                     continue;
                 }
                 String tag = CODES.get(next);
                 if (tag != null) {
                     out.append(tag);
+                    if (next >= 'k' && next <= 'o') {
+                        open |= 1 << (next - 'k');
+                    } else if (next == 'r') {
+                        open = 0;
+                    } else {
+                        open = closeDecorations(out, open);
+                    }
                     i++;
                     continue;
                 }
@@ -81,6 +100,18 @@ public final class LegacyText {
             out.append(c);
         }
         return out.toString();
+    }
+
+    /**
+     * Appends the negation tag of each decoration whose bit is set in {@code open}, and returns the empty set.
+     */
+    private static int closeDecorations(StringBuilder out, int open) {
+        for (int bit = 0; bit < DECORATIONS.length; bit++) {
+            if ((open & 1 << bit) != 0) {
+                out.append("<!").append(DECORATIONS[bit]).append('>');
+            }
+        }
+        return 0;
     }
 
     /** Whether six section-sign and hex-digit pairs follow the {@code §x} at {@code from}. */
