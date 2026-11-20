@@ -12,7 +12,8 @@ import java.util.regex.Pattern;
  * <ol>
  *   <li>a whole jdbc URL;</li>
  *   <li>the user name and password before the {@code @} of a URI of any scheme, such as
- *       {@code redis://default:hunter2@cache:6379}, when both are present;</li>
+ *       {@code redis://default:hunter2@cache:6379}, when both are present. The password runs to the last
+ *       {@code @} before the next {@code /} or whitespace, so a password that holds a {@code /} stays;</li>
  *   <li>an email address;</li>
  *   <li>a bearer token;</li>
  *   <li>an AWS access key id;</li>
@@ -69,7 +70,7 @@ final class Anonymizers {
      */
     static final String[][] RULES = {
         {"jdbc:[^\\s\"']+", "jdbc:[redacted]"},
-        {"(?i)([a-z][a-z0-9+.-]{0,31}://)[^/\\s:@]*:[^@\\s/]+@", "$1[credentials hidden]@"},
+        {"(?i)([a-z][a-z0-9+.-]{0,31}://)[^/\\s:@]*:[^\\s/]*@", "$1[credentials hidden]@"},
         {"(?<![\\w.-])[\\w.-]+@[\\w-][\\w.-]*\\.[\\w-]{2,4}", "[email hidden]"},
         {"Bearer [A-Za-z0-9._~+/=-]+", "Bearer [token hidden]"},
         {"AKIA[0-9A-Z]{16}", "[aws-key hidden]"},

@@ -66,6 +66,20 @@ class AnonymizersTest {
     }
 
     @Test
+    void aPasswordThatHoldsAnAtSignIsHiddenWhole() {
+        assertThat(apply(URI_CREDENTIALS, "redis://user:p@ss@cache:6379 refused"))
+            .isEqualTo("redis://[credentials hidden]@cache:6379 refused");
+        assertThat(apply(URI_CREDENTIALS, "redis://user:p@ss@cache:6379/0 and admin@host"))
+            .isEqualTo("redis://[credentials hidden]@cache:6379/0 and admin@host");
+    }
+
+    @Test
+    void aPasswordThatHoldsASlashIsLeftAsWritten() {
+        assertThat(apply(URI_CREDENTIALS, "redis://user:pa/ss@cache:6379 refused"))
+            .isEqualTo("redis://user:pa/ss@cache:6379 refused");
+    }
+
+    @Test
     void aUriWithoutAPasswordIsLeftAsWritten() {
         assertThat(apply(URI_CREDENTIALS, "redis://cache:6379 refused")).isEqualTo("redis://cache:6379 refused");
         assertThat(apply(URI_CREDENTIALS, "GET http://localhost:8080/users/a@b failed"))
