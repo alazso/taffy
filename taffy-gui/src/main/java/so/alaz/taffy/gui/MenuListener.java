@@ -29,7 +29,8 @@ import java.util.logging.Logger;
  *
  * <p>A click or drag in the menu view of any {@link Menus} is cancelled. A click is dispatched, and a close ends the
  * session, only for a session the menus of this listener opened, so two {@code Menus} over one viewer run a handler and
- * {@link Menu#closed(MenuSession, boolean)} once.
+ * {@link Menu#closed(MenuSession, boolean)} once. Once {@link Menus#shutdown()} ran, a click in a menu view is
+ * cancelled and reaches no button.
  *
  * <p>Only a click whose type is one of {@link ClickGuard#ANY_PLAIN}, by the viewer of an open session, on a raw slot
  * of the menu inventory that holds a button accepting that click type, reaches the button. The checks then run in this
@@ -96,7 +97,8 @@ final class MenuListener implements Listener {
         if (event.getClick().isShiftClick()) {
             resync(player);
         }
-        if (session.closed() || !player.getUniqueId().equals(session.viewer().getUniqueId())) {
+        if (menus.stopping() || session.closed()
+            || !player.getUniqueId().equals(session.viewer().getUniqueId())) {
             return;
         }
         int raw = event.getRawSlot();

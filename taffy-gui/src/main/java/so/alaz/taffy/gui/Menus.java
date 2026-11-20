@@ -804,7 +804,8 @@ public final class Menus {
      * {@link Player#updateInventory()}. The menus close even when ending the prompts throws. Nothing opens and nothing
      * is asked afterwards, and
      * a second call does nothing. The menu or prompt anvil of a viewer the calling thread does not own is forgotten
-     * without its closed step and stays open, and once the plugin is disabled no listener cancels its clicks. Its
+     * without its closed step and stays open. While the plugin is still enabled the listener keeps cancelling the
+     * clicks in that menu and runs no handler; once the plugin is disabled no listener cancels its clicks. Its
      * inventory is emptied from the calling thread, so such a viewer is left with an empty menu and has no copy to
      * take. On Paper the disabling thread owns every player, so this happens only on Folia.
      */

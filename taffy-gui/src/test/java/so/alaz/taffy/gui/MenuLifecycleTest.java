@@ -922,6 +922,18 @@ final class MenuLifecycleTest {
     }
 
     @Test
+    void aClickAfterShutdownRunsNoHandlerInAMenuLeftOpen() {
+        Sample sample = new Sample(folder);
+        sample.harness.owned = player -> player != sample.viewer.player;
+
+        sample.harness.menus.shutdown();
+
+        assertThat(sample.viewer.session()).isNotNull();
+        assertThat(sample.viewer.click(10, ClickType.LEFT).isCancelled()).isTrue();
+        assertThat(sample.acts).hasValue(0);
+    }
+
+    @Test
     void shutdownRunsTheClosedStepItselfWhenNoCloseEventArrives() {
         Sample sample = new Sample(folder);
         sample.harness.listening = false;

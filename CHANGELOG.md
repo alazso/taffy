@@ -148,7 +148,9 @@ All notable changes to Taffy are documented here. This project follows
 - `Menus.shutdown` empties the inventory of each open menu and prompt anvil whose viewer the disabling thread
   does not own, which happens only on Folia. Such a menu still stays open with no listener to cancel its clicks,
   but it now shows nothing, so its viewer has no menu copy to take. Before, it stayed fully stocked and a copy
-  taken from it was deleted only when a click met it after a later enable.
+  taken from it was deleted only when a click met it after a later enable. While the plugin stays enabled after
+  `Menus.shutdown`, as in a reload command, the listener still cancels the clicks in such a menu and no longer
+  runs the handler of the button the clicked slot held.
 - `Frame.Spec.exclusively()`, `Frame.Entry.exclusively()` and the footer's refresh guard their handler with no
   `session.busy(true)` in it. When the handler of an exclusive button returns with a load it started through
   `Menus.load` still in flight, the session stays busy until that load applies, fails or is cancelled, and every
