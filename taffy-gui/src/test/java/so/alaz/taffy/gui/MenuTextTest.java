@@ -22,7 +22,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -43,8 +42,7 @@ final class MenuTextTest {
 
     private static final MenuKind HOME = MenuKind.of("home", false, "browse", "history", "inbox", MenuKind.CLOSE);
 
-    private static final ItemLayout PLAIN = new ItemLayout("browse", List.of(10), Material.EMERALD, "browse", null,
-        true, null, null);
+    private static final ItemLayout PLAIN = ItemLayout.of("browse", List.of(10), Material.EMERALD).action("browse");
 
     @TempDir
     Path folder;
@@ -74,7 +72,7 @@ final class MenuTextTest {
 
     @Test
     void aFooterActionFallsBackToTheFooterKeys() {
-        ItemLayout close = new ItemLayout("close", List.of(53), Material.BARRIER, "close", null, true, null, null);
+        ItemLayout close = ItemLayout.of("close", List.of(53), Material.BARRIER).action("close");
         List<String> bases = HOME.textBases("close");
 
         assertThat(bases).containsExactly("gui.home.close", "gui.footer.close");
@@ -85,8 +83,8 @@ final class MenuTextTest {
 
     @Test
     void aLayoutNameAndLoreReplaceTheLangTextInEveryLanguage() {
-        ItemLayout named = new ItemLayout("browse", List.of(10), Material.EMERALD, "browse", null, true,
-            "<gold>Shop <count>", List.of("first <count>", "<red>second"));
+        ItemLayout named = ItemLayout.of("browse", List.of(10), Material.EMERALD).action("browse")
+            .name("<gold>Shop <count>").lore(List.of("first <count>", "<red>second"));
         List<String> bases = HOME.textBases("browse");
 
         for (Locale locale : List.of(Locale.ENGLISH, Locale.GERMAN)) {
@@ -100,8 +98,8 @@ final class MenuTextTest {
 
     @Test
     void namesAreNotItalicAndLoreIsGrayAndNotItalicUnlessColoured() {
-        ItemLayout named = new ItemLayout("x", List.of(0), Material.STONE, null, null, true, "Name",
-            List.of("plain", "<red>red", "<italic>leaning"));
+        ItemLayout named = ItemLayout.of("x", List.of(0), Material.STONE).name("Name")
+            .lore(List.of("plain", "<red>red", "<italic>leaning"));
 
         Component name = text.name(Locale.ENGLISH, named, List.of());
         List<Component> lore = text.lore(Locale.ENGLISH, named, List.of());
@@ -118,7 +116,7 @@ final class MenuTextTest {
 
     @Test
     void anItemWithoutKeyOrNameHasNoNameAndNoLore() {
-        ItemLayout bare = new ItemLayout("x", List.of(0), Material.STONE, null, null, true, null, null);
+        ItemLayout bare = ItemLayout.of("x", List.of(0), Material.STONE);
 
         assertThat(text.name(Locale.ENGLISH, bare, List.of())).isNull();
         assertThat(text.lore(Locale.ENGLISH, bare, List.of())).isEmpty();
@@ -127,7 +125,7 @@ final class MenuTextTest {
 
     @Test
     void aNameKeyNoBaseHoldsShowsTheMarkerOfTheLastBase() {
-        ItemLayout bare = new ItemLayout("x", List.of(0), Material.STONE, null, null, true, null, null);
+        ItemLayout bare = ItemLayout.of("x", List.of(0), Material.STONE);
 
         Component name = text.name(Locale.ENGLISH, bare, List.of("gui.home.nothing", "gui.footer.nothing"));
 
@@ -138,9 +136,9 @@ final class MenuTextTest {
 
     @Test
     void sectionSignCodesInLayoutTextAreConvertedAsInLangText() {
-        MenuLayout layout = new MenuLayout("legacy", 1, null, null, Map.of(), "\u00a76Shop <count>");
-        ItemLayout item = new ItemLayout("x", List.of(0), Material.STONE, null, null, true, "\u00a7cName",
-            List.of("\u00a7aLine"));
+        MenuLayout layout = MenuLayout.of("legacy", 1).title("\u00a76Shop <count>");
+        ItemLayout item = ItemLayout.of("x", List.of(0), Material.STONE).name("\u00a7cName")
+            .lore(List.of("\u00a7aLine"));
         TagResolver count = Placeholder.unparsed("count", "3");
 
         assertThat(text.title(Locale.ENGLISH, layout, "gui.legacy.title", count))
@@ -167,8 +165,8 @@ final class MenuTextTest {
 
     @Test
     void aTitleInTheLayoutWinsOverTheLangTitle() {
-        MenuLayout plain = new MenuLayout("home", 6, null, null, Map.of(), null);
-        MenuLayout titled = new MenuLayout("home", 6, null, null, Map.of(), "<red>Shop <count>");
+        MenuLayout plain = MenuLayout.of("home", 6);
+        MenuLayout titled = MenuLayout.of("home", 6).title("<red>Shop <count>");
 
         assertThat(plain(text.title(Locale.ENGLISH, plain, "gui.home.title"))).isEqualTo("Home");
         assertThat(plain(text.title(Locale.ENGLISH, titled, "gui.home.title", Placeholder.unparsed("count", "1"))))
@@ -177,8 +175,8 @@ final class MenuTextTest {
 
     @Test
     void bracesFillLangTextButNotTextWrittenInTheLayout() {
-        ItemLayout named = new ItemLayout("inbox", List.of(0), Material.CHEST, "inbox", null, true, "{count} in",
-            List.of("{count} out"));
+        ItemLayout named = ItemLayout.of("inbox", List.of(0), Material.CHEST).action("inbox").name("{count} in")
+            .lore(List.of("{count} out"));
 
         assertThat(plain(text.line(Locale.ENGLISH, "gui.home.inbox.ready", Placeholder.unparsed("count", "3"))))
             .isEqualTo("3 ready");

@@ -41,6 +41,25 @@ All notable changes to Taffy are documented here. This project follows
 - `EconomyProvider.vault(Plugin, ErrorReports, boolean, Scheduler.Mode, Integer)` is deprecated and a later
   release removes it. It still works and gives the same result as the overload with the `folia` flag. Pass
   `scheduler.mode() == Scheduler.Mode.FOLIA` in place of `scheduler.mode()`.
+- Breaking: `MenuSettings`, `ItemLayout`, `MenuLayout`, `PagerLayout` and `Menus.Parts` are final classes with no
+  public constructor and are no longer records, so a value added to one in a later release breaks no caller. Each
+  is built through a static factory that takes what has no default, and a method named after each other value
+  gives a copy with that value replaced: `MenuSettings.DEFAULTS.pageSize(28)`, `ItemLayout.of(id, slots,
+  material).action("buy")`, `PagerLayout.of(slots).emptySlot(22).emptyMaterial(Material.BARRIER)`,
+  `MenuLayout.of(menu, rows).filler(material).pager(pager).items(items).title(title)` and `Menus.Parts.of(server,
+  preview, logger, messages, tasks, entity,
+  errors).layouts(layouts).settings(settings).locales(locales).sounds(sounds).home(home)`. The methods that read a
+  value keep their names, `MenuSettings`, `ItemLayout`, `MenuLayout` and `PagerLayout` still compare by value, and
+  every check a constructor made is made by the factory or the method that takes the value. `Menus.Parts` compares
+  by identity, and a record pattern or `getRecordComponents()` over one of the five no longer works. Replace each
+  `new` of these types with its factory and the methods for the values that differ from the defaults: no action,
+  permission, name or lore and shown for an item, no empty state for a list, no filler, list, items or title for a
+  layout, and no layouts, `MenuSettings.DEFAULTS`, `Player::locale`, no sounds and no home menu for the parts.
+- Breaking: `MenuLayout.items(Collection<ItemLayout>)` takes the items themselves, in the order
+  `MenuLayout.items()` keeps, and keys each by its own id, where the constructor took a map and refused a key that
+  differed from its item's id. Two items with one id are refused with an `IllegalArgumentException` such as "item
+  buy is in the shop menu twice". `MenuLayout.item(ItemLayout)` adds one item, or replaces the item of the same id
+  in its place. `MenuLayout.items()` still returns the map. Pass `map.values()` where the plugin built a map.
 
 ### Fixed
 - A chat line that answers a `Prompts` ask is judged once. Paper posts the legacy `AsyncPlayerChatEvent` and then

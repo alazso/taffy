@@ -67,8 +67,8 @@ final class Sample {
     private static MenuLayout layout() {
         Map<String, ItemLayout> items = new LinkedHashMap<>();
         for (ItemLayout item : List.of(
-            new ItemLayout("deco", List.of(4), Material.STONE, null, null, true, "<red>Decoration", null),
-            new ItemLayout("act", List.of(10), Material.EMERALD, "act", null, true, "Act", null),
+            ItemLayout.of("deco", List.of(4), Material.STONE).name("<red>Decoration"),
+            ItemLayout.of("act", List.of(10), Material.EMERALD).action("act").name("Act"),
             MenuHarness.item("left", 11, Material.DIAMOND, "left"),
             MenuHarness.item("work-a", 12, Material.CLOCK, "work"),
             MenuHarness.item("work-b", 13, Material.CLOCK, "work"),
@@ -78,7 +78,7 @@ final class Sample {
             MenuHarness.item("close", 53, Material.BARRIER, MenuKind.CLOSE))) {
             items.put(item.id(), item);
         }
-        return new MenuLayout(KIND.id(), 6, null, null, items, "<gold>Sample");
+        return MenuLayout.of(KIND.id(), 6).items(items.values()).title("<gold>Sample");
     }
 
     MenuSession<?> session() {

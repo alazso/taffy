@@ -104,8 +104,7 @@ final class DebounceTest {
 
     @Test
     void theConfiguredWindowAppliesPerButton() {
-        Sample sample = new Sample(folder, new MenuSettings(45, MenuSettings.DEFAULTS.filler(),
-            Duration.ofMillis(500), MenuSettings.DEFAULTS.loadingItem()));
+        Sample sample = new Sample(folder, MenuSettings.DEFAULTS.clickDebounce(Duration.ofMillis(500)));
         sample.harness.advance(Duration.ofMillis(300));
 
         sample.viewer.click(10, ClickType.LEFT);

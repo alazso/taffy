@@ -2,11 +2,15 @@
  * Chest menus for Paper plugins.
  *
  * <p>A {@link so.alaz.taffy.gui.MenuLayout} describes how one menu looks: its rows, filler, the
- * {@link so.alaz.taffy.gui.PagerLayout} its list fills and the {@link so.alaz.taffy.gui.ItemLayout} items it places,
- * each built with {@code ItemLayout.of} and its withers. The plugin builds layouts in code or from files it reads
- * itself; the library reads no file. A {@link so.alaz.taffy.gui.MenuKind} names a menu's actions and the lang keys
- * their text reads, and {@link so.alaz.taffy.gui.Pager} gives the page to show for a requested page, a list size and
- * the number of entries a page holds.
+ * {@link so.alaz.taffy.gui.PagerLayout} its list fills and the {@link so.alaz.taffy.gui.ItemLayout} items it places.
+ * Each of these, the {@link so.alaz.taffy.gui.MenuSettings} and {@link so.alaz.taffy.gui.Menus.Parts} is built
+ * through a static factory that takes what has no default ({@code MenuLayout.of}, {@code PagerLayout.of},
+ * {@code ItemLayout.of}, {@code Menus.Parts.of}, and {@code MenuSettings.DEFAULTS} as the settings to start from)
+ * and methods named after each other value, which give a copy with that value replaced. None has a public
+ * constructor. The plugin builds layouts in code or from files it reads itself; the library reads no file. A
+ * {@link so.alaz.taffy.gui.MenuKind} names a menu's actions and the lang keys their text reads, and
+ * {@link so.alaz.taffy.gui.Pager} gives the page to show for a requested page, a list size and the number of entries
+ * a page holds.
  *
  * <p>An {@link so.alaz.taffy.gui.Icon} describes what one slot shows: a button, a filler, a copy of a real item or an
  * item drawn from its saved description. {@link so.alaz.taffy.gui.MenuText} gives a menu's title and each item's name
@@ -22,12 +26,13 @@
  * {@link so.alaz.taffy.gui.ViewMemory} keeps what each viewer last chose in each menu until they quit.
  *
  * <p>{@link so.alaz.taffy.gui.Menus} runs the menus. The plugin builds one at enable from
- * {@link so.alaz.taffy.gui.Menus.Parts}: the layout of each menu keyed by its id, the
- * {@link so.alaz.taffy.gui.MenuSettings}, its lang files, how a player's locale is chosen, the server, its preview key
- * ({@code new NamespacedKey(plugin, "preview")}), the entity-thread seams ({@code scheduler::entity} and
- * {@code EntityThread.on(scheduler, server)}), a supplier of the sounds, the id of the home menu (or {@code null}),
- * its logger and its {@code ErrorReports}. It then registers each {@link so.alaz.taffy.gui.Menu}; a menu with no
- * layout, or with a layout that does not fit its kind, is refused.
+ * {@link so.alaz.taffy.gui.Menus.Parts}. {@code Menus.Parts.of} takes the server, the plugin's preview key
+ * ({@code new NamespacedKey(plugin, "preview")}), its logger, its lang files, the entity-thread seams
+ * ({@code scheduler::entity} and {@code EntityThread.on(scheduler, server)}) and its {@code ErrorReports}; the
+ * layout of each menu keyed by its id, the {@link so.alaz.taffy.gui.MenuSettings}, how a player's locale is chosen, a
+ * supplier of the sounds and the id of the home menu are set on the result and default to no layouts,
+ * {@code MenuSettings.DEFAULTS}, {@code Player::locale}, no sounds and no home menu. It then registers each
+ * {@link so.alaz.taffy.gui.Menu}; a menu with no layout, or with a layout that does not fit its kind, is refused.
  *
  * <p>A menu opens on the viewer's entity thread: {@link so.alaz.taffy.gui.Menus#open(org.bukkit.entity.Player,
  * so.alaz.taffy.gui.Route)} opens it now, and {@code openLater} on the next tick, which is how a

@@ -63,7 +63,7 @@ final class MenuHarness {
     static final Map<String, MenuLayout> LAYOUTS = Map.of(
         MAIN.id(), layout(MAIN.id(), null, footer()),
         OPTIONS.id(), layout(OPTIONS.id(), null, footer()),
-        LIST.id(), layout(LIST.id(), new PagerLayout(IntStream.range(9, 45).boxed().toList(), 22, null), footer()));
+        LIST.id(), layout(LIST.id(), PagerLayout.of(IntStream.range(9, 45).boxed().toList()).emptySlot(22), footer()));
 
     static final String ENGLISH = """
         gui.error: "<red>Something went wrong. Try again in a moment."
@@ -137,8 +137,8 @@ final class MenuHarness {
         all.putAll(extra);
         layouts = Map.copyOf(all);
         errors.install((source, error) -> reports.add(new Report(source, error)));
-        menus = new Menus(new Menus.Parts(layouts, settings, this.messages, Player::locale, mock(Server.class),
-            new NamespacedKey("taffytest", "preview"), tasks, entity, () -> SOUNDS, home, log.logger, errors),
+        menus = new Menus(Menus.Parts.of(mock(Server.class), new NamespacedKey("taffytest", "preview"), log.logger,
+            this.messages, tasks, entity, errors).layouts(layouts).settings(settings).sounds(() -> SOUNDS).home(home),
             marker -> inventories, player -> owned.test(player), material -> !notItems.contains(material), clock);
         marker = menus.marker();
         menus.prompts(prompts);
@@ -147,13 +147,11 @@ final class MenuHarness {
 
     // A six-row layout with no filler and no title of its own, holding the items in the order given.
     static MenuLayout layout(String menu, @Nullable PagerLayout pager, List<ItemLayout> items) {
-        Map<String, ItemLayout> byId = new LinkedHashMap<>();
-        items.forEach(item -> byId.put(item.id(), item));
-        return new MenuLayout(menu, 6, null, pager, byId, null);
+        return MenuLayout.of(menu, 6).pager(pager).items(items);
     }
 
     static ItemLayout item(String id, int slot, Material material, @Nullable String action) {
-        return new ItemLayout(id, List.of(slot), material, action, null, true, null, null);
+        return ItemLayout.of(id, List.of(slot), material).action(action);
     }
 
     static List<ItemLayout> footer() {

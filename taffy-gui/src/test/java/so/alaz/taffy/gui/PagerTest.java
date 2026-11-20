@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.IntStream;
@@ -165,8 +164,7 @@ final class PagerTest {
 
     @Test
     void aSmallerPageSizeLeavesTheOtherListSlotsAsFiller() {
-        MenuHarness harness = new MenuHarness(folder, new MenuSettings(20, Material.GRAY_STAINED_GLASS_PANE,
-            Duration.ofMillis(250), Material.CLOCK), Map.of());
+        MenuHarness harness = new MenuHarness(folder, MenuSettings.DEFAULTS.pageSize(20), Map.of());
         list(harness, 30);
         MenuHarness.Viewer viewer = harness.viewer("Alex");
         harness.open(viewer, MenuHarness.LIST.id());

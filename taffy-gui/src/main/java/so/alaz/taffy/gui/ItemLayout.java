@@ -11,41 +11,37 @@ import java.util.Objects;
  * one is decoration, drawn as given. A name or lore set here is trusted MiniMessage from the owner and replaces the
  * lang text in every language.
  *
- * <p>Build an item with {@link #of(String, List, Material)} and the withers, which name each optional text; the
- * canonical constructor takes the three optional texts by position.
+ * <p>Build an item with {@link #of(String, List, Material)} and the methods that take a value, such as
+ * {@code ItemLayout.of("buy", List.of(13), Material.EMERALD).action("buy")}; each gives a copy and leaves this one
+ * unchanged.
  *
- * @param id the item's id within its menu
- * @param slots the slots the item fills; not empty
- * @param material the item shown; {@link Menus#register(Menu)} and {@link Menus#reload(java.util.Map)} refuse a
- *     material that is not an item, air included
- * @param action the menu action the item stands for, or {@code null} for decoration
- * @param permission the permission a viewer needs to see the item, or {@code null} for none. It decides only whether
- *     the item is drawn, each time the menu draws; a click is not checked against it, so a viewer who lost the
- *     permission since the last draw can still click the button, and a handler whose action needs a permission checks
- *     it itself
- * @param enabled whether the item is shown at all
- * @param name the name as MiniMessage, or {@code null} to read it from the lang file
- * @param lore the lore lines as MiniMessage, or {@code null} to read them from the lang file
+ * <p>Two items are equal when every value is equal.
  */
-public record ItemLayout(String id, List<Integer> slots, Material material, @Nullable String action,
-                         @Nullable String permission, boolean enabled, @Nullable String name,
-                         @Nullable List<String> lore) {
+public final class ItemLayout {
 
-    /**
-     * Copies the slots and lore and checks the slots.
-     *
-     * @throws NullPointerException if {@code id}, {@code material}, {@code slots}, a slot or a lore line is
-     *     {@code null}
-     * @throws IllegalArgumentException if {@code slots} is empty
-     */
-    public ItemLayout {
-        Objects.requireNonNull(id, "id");
-        Objects.requireNonNull(material, "material");
-        slots = List.copyOf(slots);
-        if (slots.isEmpty()) {
+    private final String id;
+    private final List<Integer> slots;
+    private final Material material;
+    private final @Nullable String action;
+    private final @Nullable String permission;
+    private final boolean enabled;
+    private final @Nullable String name;
+    private final @Nullable List<String> lore;
+
+    private ItemLayout(String id, List<Integer> slots, Material material, @Nullable String action,
+                       @Nullable String permission, boolean enabled, @Nullable String name,
+                       @Nullable List<String> lore) {
+        this.id = Objects.requireNonNull(id, "id");
+        this.material = Objects.requireNonNull(material, "material");
+        this.slots = List.copyOf(slots);
+        if (this.slots.isEmpty()) {
             throw new IllegalArgumentException("item " + id + " fills no slot");
         }
-        lore = lore == null ? null : List.copyOf(lore);
+        this.action = action;
+        this.permission = permission;
+        this.enabled = enabled;
+        this.name = name;
+        this.lore = lore == null ? null : List.copyOf(lore);
     }
 
     /**
@@ -53,13 +49,88 @@ public record ItemLayout(String id, List<Integer> slots, Material material, @Nul
      *
      * @param id the item's id within its menu
      * @param slots the slots the item fills; not empty
-     * @param material the item shown
+     * @param material the item shown; {@link Menus#register(Menu)} and {@link Menus#reload(java.util.Map)} refuse a
+     *     material that is not an item, air included
      * @return the item
      * @throws NullPointerException if {@code id}, {@code material}, {@code slots} or a slot is {@code null}
      * @throws IllegalArgumentException if {@code slots} is empty
      */
     public static ItemLayout of(String id, List<Integer> slots, Material material) {
         return new ItemLayout(id, slots, material, null, null, true, null, null);
+    }
+
+    /**
+     * Gives the item's id within its menu.
+     *
+     * @return the id
+     */
+    public String id() {
+        return id;
+    }
+
+    /**
+     * Gives the slots the item fills.
+     *
+     * @return the slots; not empty, unmodifiable
+     */
+    public List<Integer> slots() {
+        return slots;
+    }
+
+    /**
+     * Gives the item shown.
+     *
+     * @return the material
+     */
+    public Material material() {
+        return material;
+    }
+
+    /**
+     * Gives the menu action the item stands for.
+     *
+     * @return the action, or {@code null} for decoration
+     */
+    public @Nullable String action() {
+        return action;
+    }
+
+    /**
+     * Gives the permission a viewer needs to see the item. It decides only whether the item is drawn, each time the
+     * menu draws; a click is not checked against it, so a viewer who lost the permission since the last draw can
+     * still click the button, and a handler whose action needs a permission checks it itself.
+     *
+     * @return the permission, or {@code null} for none
+     */
+    public @Nullable String permission() {
+        return permission;
+    }
+
+    /**
+     * Tells whether the item is shown at all.
+     *
+     * @return whether the item is shown
+     */
+    public boolean enabled() {
+        return enabled;
+    }
+
+    /**
+     * Gives the item's own name.
+     *
+     * @return the name as MiniMessage, or {@code null} to read it from the lang file
+     */
+    public @Nullable String name() {
+        return name;
+    }
+
+    /**
+     * Gives the item's own lore.
+     *
+     * @return the lore lines as MiniMessage, unmodifiable, or {@code null} to read them from the lang file
+     */
+    public @Nullable List<String> lore() {
+        return lore;
     }
 
     /**
@@ -111,5 +182,24 @@ public record ItemLayout(String id, List<Integer> slots, Material material, @Nul
      */
     public ItemLayout enabled(boolean on) {
         return new ItemLayout(id, slots, material, action, permission, on, name, lore);
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        return other instanceof ItemLayout that && id.equals(that.id) && slots.equals(that.slots)
+            && material == that.material && Objects.equals(action, that.action)
+            && Objects.equals(permission, that.permission) && enabled == that.enabled
+            && Objects.equals(name, that.name) && Objects.equals(lore, that.lore);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(id, slots, material, action, permission, enabled, name, lore);
+    }
+
+    @Override
+    public String toString() {
+        return "ItemLayout[id=" + id + ", slots=" + slots + ", material=" + material + ", action=" + action
+            + ", permission=" + permission + ", enabled=" + enabled + ", name=" + name + ", lore=" + lore + "]";
     }
 }

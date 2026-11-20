@@ -20,12 +20,7 @@ import so.alaz.taffy.platform.EntityUnavailableException;
 import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.platform.Messages;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.RecordComponent;
 import java.nio.file.Path;
-import java.time.Duration;
-import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -99,12 +94,13 @@ final class MenuLifecycleTest {
     void aDecorationNeedsItsPermissionAndAnEnabledItem() {
         MenuKind kind = MenuKind.of("decor", false);
         Map<String, ItemLayout> items = new LinkedHashMap<>();
-        items.put("open", new ItemLayout("open", List.of(0), Material.STONE, null, null, true, "Open", null));
-        items.put("staff", new ItemLayout("staff", List.of(1), Material.STONE, null, "taffy.test.staff", true,
-            "Staff", null));
-        items.put("off", new ItemLayout("off", List.of(2), Material.STONE, null, null, false, "Off", null));
+        items.put("open", ItemLayout.of("open", List.of(0), Material.STONE).name("Open"));
+        items.put("staff", ItemLayout.of("staff", List.of(1), Material.STONE).permission("taffy.test.staff")
+            .name("Staff"));
+        items.put("off", ItemLayout.of("off", List.of(2), Material.STONE).enabled(false).name("Off"));
         MenuHarness harness = new MenuHarness(folder, MenuSettings.DEFAULTS, Map.of(kind.id(),
-            new MenuLayout(kind.id(), 1, Material.BLACK_STAINED_GLASS_PANE, null, items, "Decor")));
+            MenuLayout.of(kind.id(), 1).filler(Material.BLACK_STAINED_GLASS_PANE).items(items.values())
+                .title("Decor")));
         harness.menus.register(new TestMenu(kind));
         MenuHarness.Viewer allowed = harness.viewer("Alex");
         MenuHarness.Viewer denied = harness.viewer("Sam");
@@ -235,9 +231,9 @@ final class MenuLifecycleTest {
         assertThat(harness.menus.registered(PLAIN.id())).isFalse();
         harness.menus.register(new TestMenu(PLAIN));
         Map<String, ItemLayout> typo = new LinkedHashMap<>(PLAIN_LAYOUT.items());
-        typo.put("shw", new ItemLayout("shw", List.of(5), Material.PAPER, "shw", null, true, null, null));
+        typo.put("shw", ItemLayout.of("shw", List.of(5), Material.PAPER).action("shw"));
         Map<String, MenuLayout> layouts = new LinkedHashMap<>(harness.layouts);
-        layouts.put(PLAIN.id(), new MenuLayout(PLAIN.id(), 3, null, null, typo, null));
+        layouts.put(PLAIN.id(), MenuLayout.of(PLAIN.id(), 3).items(typo.values()));
 
         assertThatThrownBy(() -> harness.menus.reload(layouts))
             .isInstanceOf(IllegalArgumentException.class)
@@ -251,10 +247,11 @@ final class MenuLifecycleTest {
     void aLayoutMaterialThatIsNotAnItemIsRefusedAtRegisterAndAtReload() {
         Map<String, ItemLayout> wall = new LinkedHashMap<>(PLAIN_LAYOUT.items());
         wall.put("torch", MenuHarness.item("torch", 5, Material.WALL_TORCH, null).enabled(false));
-        MenuLayout badItem = new MenuLayout(PLAIN.id(), 3, null, null, wall, null);
-        MenuLayout badFiller = new MenuLayout(PLAIN.id(), 3, Material.WATER, null, PLAIN_LAYOUT.items(), null);
-        MenuLayout badEmpty = new MenuLayout(PLAIN.id(), 3, null, new PagerLayout(List.of(9), 9, Material.AIR),
-            PLAIN_LAYOUT.items(), null);
+        MenuLayout badItem = MenuLayout.of(PLAIN.id(), 3).items(wall.values());
+        MenuLayout badFiller = MenuLayout.of(PLAIN.id(), 3).filler(Material.WATER).items(PLAIN_LAYOUT.items().values());
+        MenuLayout badEmpty = MenuLayout.of(PLAIN.id(), 3)
+            .pager(PagerLayout.of(List.of(9)).emptySlot(9).emptyMaterial(Material.AIR))
+            .items(PLAIN_LAYOUT.items().values());
         MenuHarness refused = new MenuHarness(folder, MenuSettings.DEFAULTS, Map.of(PLAIN.id(), badItem));
 
         assertThatThrownBy(() -> refused.menus.register(new TestMenu(PLAIN)))
@@ -284,10 +281,10 @@ final class MenuLifecycleTest {
 
     @Test
     void aSettingsMaterialThatIsNotAnItemIsRefusedWhenAMenuRegisters() {
-        MenuHarness filler = new MenuHarness(folder, new MenuSettings(45, Material.WATER, Duration.ofMillis(250),
-            Material.CLOCK), Map.of(PLAIN.id(), PLAIN_LAYOUT));
-        MenuHarness loading = new MenuHarness(folder, new MenuSettings(45, Material.STONE, Duration.ofMillis(250),
-            Material.AIR), Map.of(PLAIN.id(), PLAIN_LAYOUT));
+        MenuHarness filler = new MenuHarness(folder, MenuSettings.DEFAULTS.filler(Material.WATER),
+            Map.of(PLAIN.id(), PLAIN_LAYOUT));
+        MenuHarness loading = new MenuHarness(folder, MenuSettings.DEFAULTS.filler(Material.STONE)
+            .loadingItem(Material.AIR), Map.of(PLAIN.id(), PLAIN_LAYOUT));
 
         assertThatThrownBy(() -> filler.menus.register(new TestMenu(PLAIN)))
             .isInstanceOf(IllegalArgumentException.class)
@@ -371,30 +368,67 @@ final class MenuLifecycleTest {
     }
 
     @Test
-    void everyPartButHomeIsRequired() throws Exception {
-        RecordComponent[] components = Menus.Parts.class.getRecordComponents();
-        Constructor<Menus.Parts> canonical = Menus.Parts.class.getDeclaredConstructor(
-            Arrays.stream(components).map(RecordComponent::getType).toArray(Class<?>[]::new));
-        Function<Player, Locale> locales = Player::locale;
-        Supplier<Map<Cue, Sound>> sounds = Map::of;
-        Object[] valid = {Map.of(), MenuSettings.DEFAULTS, mock(Messages.class), locales, mock(Server.class),
-            new NamespacedKey("taffytest", "preview"), new GuiFakes.FakeTasks(), mock(EntityThread.class), sounds,
-            "main", Logger.getAnonymousLogger(), new ErrorReports()};
+    void everyPartButHomeIsRequired() {
+        Server server = mock(Server.class);
+        NamespacedKey preview = new NamespacedKey("taffytest", "preview");
+        Logger logger = Logger.getAnonymousLogger();
+        Messages messages = mock(Messages.class);
+        GuiFakes.FakeTasks tasks = new GuiFakes.FakeTasks();
+        EntityThread entity = mock(EntityThread.class);
+        ErrorReports errors = new ErrorReports();
+        Menus.Parts parts = Menus.Parts.of(server, preview, logger, messages, tasks, entity, errors);
 
-        for (int i = 0; i < components.length; i++) {
-            Object[] args = valid.clone();
-            args[i] = null;
-            String name = components[i].getName();
-            if (name.equals("home")) {
-                assertThat(canonical.newInstance(args).home()).isNull();
-                continue;
-            }
-            assertThatThrownBy(() -> canonical.newInstance(args)).isInstanceOf(InvocationTargetException.class)
-                .cause().isInstanceOf(NullPointerException.class);
-            if (!name.equals("layouts")) {
-                assertThatThrownBy(() -> canonical.newInstance(args)).cause().hasMessage(name);
-            }
-        }
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(null, preview, logger, messages, tasks,
+            entity, errors)).withMessage("server");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, null, logger, messages, tasks,
+            entity, errors)).withMessage("preview");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, null, messages, tasks,
+            entity, errors)).withMessage("logger");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, null, tasks,
+            entity, errors)).withMessage("messages");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, messages, null,
+            entity, errors)).withMessage("tasks");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, messages, tasks,
+            null, errors)).withMessage("entity");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, messages, tasks,
+            entity, null)).withMessage("errors");
+        assertThatNullPointerException().isThrownBy(() -> parts.layouts(null));
+        assertThatNullPointerException().isThrownBy(() -> parts.settings(null)).withMessage("settings");
+        assertThatNullPointerException().isThrownBy(() -> parts.locales(null)).withMessage("locales");
+        assertThatNullPointerException().isThrownBy(() -> parts.sounds(null)).withMessage("sounds");
+        assertThat(parts.home("main").home(null).home()).isNull();
+    }
+
+    @Test
+    void partsStartFromTheDefaultsAndEachMethodReplacesOnlyItsOwnPart() {
+        Server server = mock(Server.class);
+        Menus.Parts parts = parts(server);
+        Supplier<Map<Cue, Sound>> sounds = () -> MenuHarness.SOUNDS;
+        Function<Player, Locale> locales = player -> Locale.GERMAN;
+        MenuSettings settings = MenuSettings.DEFAULTS.pageSize(9);
+        Player player = mock(Player.class);
+        when(player.locale()).thenReturn(Locale.FRENCH);
+
+        Menus.Parts changed = parts.layouts(MenuHarness.LAYOUTS).settings(settings).locales(locales).sounds(sounds);
+
+        assertThat(parts.layouts()).isEmpty();
+        assertThat(parts.settings()).isEqualTo(MenuSettings.DEFAULTS);
+        assertThat(parts.locales().apply(player)).isEqualTo(Locale.FRENCH);
+        assertThat(parts.sounds().get()).isEmpty();
+        assertThat(parts.home()).isEqualTo("main");
+        assertThat(parts(server).home(null).home()).isNull();
+        assertThat(changed.layouts()).isEqualTo(MenuHarness.LAYOUTS);
+        assertThat(changed.settings()).isSameAs(settings);
+        assertThat(changed.locales()).isSameAs(locales);
+        assertThat(changed.sounds()).isSameAs(sounds);
+        assertThat(changed.home()).isEqualTo("main");
+        assertThat(changed.server()).isSameAs(server);
+        assertThat(changed.preview()).isEqualTo(parts.preview());
+        assertThat(changed.logger()).isSameAs(parts.logger());
+        assertThat(changed.messages()).isSameAs(parts.messages());
+        assertThat(changed.tasks()).isSameAs(parts.tasks());
+        assertThat(changed.entity()).isSameAs(parts.entity());
+        assertThat(changed.errors()).isSameAs(parts.errors());
     }
 
     @Test
@@ -435,10 +469,10 @@ final class MenuLifecycleTest {
         Map<Cue, Sound> sounds = new EnumMap<>(Cue.class);
         sounds.put(Cue.SUCCESS, MenuHarness.SOUNDS.get(Cue.SUCCESS));
         MenuHarness harness = new MenuHarness(folder);
-        Menus menus = new Menus(new Menus.Parts(harness.layouts, MenuSettings.DEFAULTS, harness.messages,
-            Player::locale, mock(Server.class), new NamespacedKey("taffytest", "preview"), harness.tasks,
-            harness.entity, () -> sounds, null, harness.log.logger, harness.errors), marker -> harness.inventories,
-            player -> true, material -> true, harness.clock);
+        Menus menus = new Menus(Menus.Parts.of(mock(Server.class), new NamespacedKey("taffytest", "preview"),
+            harness.log.logger, harness.messages, harness.tasks, harness.entity, harness.errors)
+            .layouts(harness.layouts).sounds(() -> sounds), marker -> harness.inventories, player -> true,
+            material -> true, harness.clock);
         MenuHarness.Viewer viewer = harness.viewer("Alex");
 
         menus.play(viewer.player, Cue.SUCCESS);
@@ -494,10 +528,8 @@ final class MenuLifecycleTest {
     }
 
     private static Menus.Parts parts(Server server) {
-        Function<Player, Locale> locales = Player::locale;
-        return new Menus.Parts(Map.of(), MenuSettings.DEFAULTS, mock(Messages.class), locales, server,
-            new NamespacedKey("taffytest", "preview"), new GuiFakes.FakeTasks(), mock(EntityThread.class), Map::of,
-            "main", Logger.getAnonymousLogger(), new ErrorReports());
+        return Menus.Parts.of(server, new NamespacedKey("taffytest", "preview"), Logger.getAnonymousLogger(),
+            mock(Messages.class), new GuiFakes.FakeTasks(), mock(EntityThread.class), new ErrorReports()).home("main");
     }
 
     @Test
@@ -854,11 +886,10 @@ final class MenuLifecycleTest {
         MenuLayout old = sample.harness.layouts.get(Sample.KIND.id());
         Map<String, ItemLayout> items = new LinkedHashMap<>(old.items());
         ItemLayout act = items.get("act");
-        items.put("act", new ItemLayout("act", List.of(19), act.material(), act.action(), null, true, act.name(),
-            null));
+        items.put("act", ItemLayout.of("act", List.of(19), act.material()).action(act.action()).name(act.name()));
         Map<String, MenuLayout> layouts = new LinkedHashMap<>(sample.harness.layouts);
-        layouts.put(Sample.KIND.id(), new MenuLayout(old.menu(), old.rows(), old.filler(), old.pager(), items,
-            old.title()));
+        layouts.put(Sample.KIND.id(), MenuLayout.of(old.menu(), old.rows()).filler(old.filler()).pager(old.pager())
+            .items(items.values()).title(old.title()));
 
         sample.harness.menus.reload(layouts);
         sample.harness.menus.rerender(open);
@@ -963,13 +994,13 @@ final class MenuLifecycleTest {
 
     private static MenuLayout plainLayout() {
         Map<String, ItemLayout> items = new LinkedHashMap<>();
-        items.put("show", new ItemLayout("show", List.of(0), Material.PAPER, "show", null, true, "Shown <count>",
-            null));
-        items.put("secret", new ItemLayout("secret", List.of(1), Material.PAPER, "show", "taffy.test.secret", true,
-            null, null));
-        items.put("hidden", new ItemLayout("hidden", List.of(2), Material.PAPER, "show", null, false, null, null));
+        items.put("show", ItemLayout.of("show", List.of(0), Material.PAPER).action("show").name("Shown <count>"));
+        items.put("secret", ItemLayout.of("secret", List.of(1), Material.PAPER).action("show")
+            .permission("taffy.test.secret"));
+        items.put("hidden", ItemLayout.of("hidden", List.of(2), Material.PAPER).action("show").enabled(false));
         items.put("close", MenuHarness.item("close", 26, Material.BARRIER, MenuKind.CLOSE));
-        return new MenuLayout(PLAIN.id(), 3, Material.BLACK_STAINED_GLASS_PANE, null, items, "Plain");
+        return MenuLayout.of(PLAIN.id(), 3).filler(Material.BLACK_STAINED_GLASS_PANE).items(items.values())
+            .title("Plain");
     }
 
     // The plain menu open for Alex with one load in flight; show (slot 0) has the loaded value as its lore.

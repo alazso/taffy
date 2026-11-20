@@ -67,47 +67,237 @@ public final class Menus {
     public static final String ERROR = "gui.error";
 
     /**
-     * What the menus are built from.
-     *
-     * @param layouts the layout of each menu, keyed by menu id; each key equals its layout's {@link MenuLayout#menu()}
-     * @param settings the limits and items every menu shares
-     * @param messages the plugin's lang files
-     * @param locales the locale a player's menu and prompt text renders in, such as {@code Player::locale}
-     * @param server the server, which creates each menu inventory and tells whether the calling thread owns a player
-     * @param preview the key every stack a menu or prompt anvil shows carries, such as
-     *     {@code new NamespacedKey(plugin, "preview")}; a plugin that must recognise a menu copy in its own checks
-     *     keeps it
-     * @param tasks runs work on a player's entity thread on the next tick, and nothing once the player is gone or the
-     *     plugin is disabling, such as {@code scheduler::entity}
-     * @param entity runs a load's result, and a prompt's answer, cancel and timeout, on the player's entity thread
-     * @param sounds the sound of each {@link Cue}, read each time one plays; a cue it does not map plays nothing
-     * @param home the id of the menu the back button opens when a menu has no back route, or {@code null} for none
-     * @param logger the plugin's logger
-     * @param errors where handled failures are reported
+     * What the menus are built from. Build the parts with
+     * {@link #of(Server, NamespacedKey, Logger, Messages, BiConsumer, EntityThread, ErrorReports)} and the methods
+     * that take a value, such as {@code Parts.of(...).layouts(layouts).home("main")}; each gives a copy and leaves
+     * these parts unchanged.
      */
-    public record Parts(Map<String, MenuLayout> layouts, MenuSettings settings, Messages messages,
-                        Function<Player, Locale> locales, Server server, NamespacedKey preview,
-                        BiConsumer<Player, Runnable> tasks, EntityThread entity, Supplier<Map<Cue, Sound>> sounds,
-                        @Nullable String home, Logger logger, ErrorReports errors) {
+    public static final class Parts {
+
+        private final Map<String, MenuLayout> layouts;
+        private final MenuSettings settings;
+        private final Messages messages;
+        private final Function<Player, Locale> locales;
+        private final Server server;
+        private final NamespacedKey preview;
+        private final BiConsumer<Player, Runnable> tasks;
+        private final EntityThread entity;
+        private final Supplier<Map<Cue, Sound>> sounds;
+        private final @Nullable String home;
+        private final Logger logger;
+        private final ErrorReports errors;
+
+        private Parts(Map<String, MenuLayout> layouts, MenuSettings settings, Messages messages,
+                      Function<Player, Locale> locales, Server server, NamespacedKey preview,
+                      BiConsumer<Player, Runnable> tasks, EntityThread entity, Supplier<Map<Cue, Sound>> sounds,
+                      @Nullable String home, Logger logger, ErrorReports errors) {
+            this.layouts = layouts;
+            this.settings = Objects.requireNonNull(settings, "settings");
+            this.messages = Objects.requireNonNull(messages, "messages");
+            this.locales = Objects.requireNonNull(locales, "locales");
+            this.server = Objects.requireNonNull(server, "server");
+            this.preview = Objects.requireNonNull(preview, "preview");
+            this.tasks = Objects.requireNonNull(tasks, "tasks");
+            this.entity = Objects.requireNonNull(entity, "entity");
+            this.sounds = Objects.requireNonNull(sounds, "sounds");
+            this.home = home;
+            this.logger = Objects.requireNonNull(logger, "logger");
+            this.errors = Objects.requireNonNull(errors, "errors");
+        }
 
         /**
-         * Copies the layouts and checks their keys.
+         * Gives the parts of menus with no layouts, {@link MenuSettings#DEFAULTS}, each player's own client locale
+         * ({@code Player::locale}), no sounds and no home menu.
          *
-         * @throws NullPointerException if a part other than {@code home}, a layout key or a layout is {@code null}
+         * @param server the server, which creates each menu inventory and tells whether the calling thread owns a
+         *     player
+         * @param preview the key every stack a menu or prompt anvil shows carries, such as
+         *     {@code new NamespacedKey(plugin, "preview")}; a plugin that must recognise a menu copy in its own
+         *     checks keeps it
+         * @param logger the plugin's logger
+         * @param messages the plugin's lang files
+         * @param tasks runs work on a player's entity thread on the next tick, and nothing once the player is gone
+         *     or the plugin is disabling, such as {@code scheduler::entity}
+         * @param entity runs a load's result, and a prompt's answer, cancel and timeout, on the player's entity
+         *     thread
+         * @param errors where handled failures are reported
+         * @return the parts
+         * @throws NullPointerException if an argument is {@code null}
+         */
+        public static Parts of(Server server, NamespacedKey preview, Logger logger, Messages messages,
+                               BiConsumer<Player, Runnable> tasks, EntityThread entity, ErrorReports errors) {
+            return new Parts(Map.of(), MenuSettings.DEFAULTS, messages, Player::locale, server, preview, tasks,
+                entity, Map::of, null, logger, errors);
+        }
+
+        /**
+         * Gives the layout of each menu, keyed by menu id.
+         *
+         * @return the layouts; unmodifiable
+         */
+        public Map<String, MenuLayout> layouts() {
+            return layouts;
+        }
+
+        /**
+         * Gives the limits and items every menu shares.
+         *
+         * @return the settings
+         */
+        public MenuSettings settings() {
+            return settings;
+        }
+
+        /**
+         * Gives the plugin's lang files.
+         *
+         * @return the messages
+         */
+        public Messages messages() {
+            return messages;
+        }
+
+        /**
+         * Gives the locale a player's menu and prompt text renders in.
+         *
+         * @return the locale function
+         */
+        public Function<Player, Locale> locales() {
+            return locales;
+        }
+
+        /**
+         * Gives the server, which creates each menu inventory and tells whether the calling thread owns a player.
+         *
+         * @return the server
+         */
+        public Server server() {
+            return server;
+        }
+
+        /**
+         * Gives the key every stack a menu or prompt anvil shows carries.
+         *
+         * @return the preview key
+         */
+        public NamespacedKey preview() {
+            return preview;
+        }
+
+        /**
+         * Gives what runs work on a player's entity thread on the next tick.
+         *
+         * @return the next-tick tasks
+         */
+        public BiConsumer<Player, Runnable> tasks() {
+            return tasks;
+        }
+
+        /**
+         * Gives what runs a load's result, and a prompt's answer, cancel and timeout, on the player's entity thread.
+         *
+         * @return the entity thread
+         */
+        public EntityThread entity() {
+            return entity;
+        }
+
+        /**
+         * Gives the sound of each {@link Cue}, read each time one plays.
+         *
+         * @return the supplier of the sounds
+         */
+        public Supplier<Map<Cue, Sound>> sounds() {
+            return sounds;
+        }
+
+        /**
+         * Gives the id of the menu the back button opens when a menu has no back route.
+         *
+         * @return the home menu, or {@code null} for none
+         */
+        public @Nullable String home() {
+            return home;
+        }
+
+        /**
+         * Gives the plugin's logger.
+         *
+         * @return the logger
+         */
+        public Logger logger() {
+            return logger;
+        }
+
+        /**
+         * Gives where handled failures are reported.
+         *
+         * @return the error reports
+         */
+        public ErrorReports errors() {
+            return errors;
+        }
+
+        /**
+         * Gives these parts with other layouts.
+         *
+         * @param layouts the layout of each menu, keyed by menu id; each key equals its layout's
+         *     {@link MenuLayout#menu()}
+         * @return a copy of these parts with {@code layouts} replaced by a copy of the map
+         * @throws NullPointerException if {@code layouts}, a key or a layout is {@code null}
          * @throws IllegalArgumentException if a key differs from its layout's {@link MenuLayout#menu()}
          */
-        public Parts {
-            layouts = checked(layouts);
-            Objects.requireNonNull(settings, "settings");
-            Objects.requireNonNull(messages, "messages");
-            Objects.requireNonNull(locales, "locales");
-            Objects.requireNonNull(server, "server");
-            Objects.requireNonNull(preview, "preview");
-            Objects.requireNonNull(tasks, "tasks");
-            Objects.requireNonNull(entity, "entity");
-            Objects.requireNonNull(sounds, "sounds");
-            Objects.requireNonNull(logger, "logger");
-            Objects.requireNonNull(errors, "errors");
+        public Parts layouts(Map<String, MenuLayout> layouts) {
+            return new Parts(checked(layouts), settings, messages, locales, server, preview, tasks, entity, sounds,
+                home, logger, errors);
+        }
+
+        /**
+         * Gives these parts with other settings.
+         *
+         * @param settings the limits and items every menu shares
+         * @return a copy of these parts with {@code settings} replaced
+         * @throws NullPointerException if {@code settings} is {@code null}
+         */
+        public Parts settings(MenuSettings settings) {
+            return new Parts(layouts, settings, messages, locales, server, preview, tasks, entity, sounds, home,
+                logger, errors);
+        }
+
+        /**
+         * Gives these parts with another locale function.
+         *
+         * @param locales the locale a player's menu and prompt text renders in
+         * @return a copy of these parts with {@code locales} replaced
+         * @throws NullPointerException if {@code locales} is {@code null}
+         */
+        public Parts locales(Function<Player, Locale> locales) {
+            return new Parts(layouts, settings, messages, locales, server, preview, tasks, entity, sounds, home,
+                logger, errors);
+        }
+
+        /**
+         * Gives these parts with other sounds.
+         *
+         * @param sounds the sound of each {@link Cue}, read each time one plays; a cue it does not map plays nothing
+         * @return a copy of these parts with {@code sounds} replaced
+         * @throws NullPointerException if {@code sounds} is {@code null}
+         */
+        public Parts sounds(Supplier<Map<Cue, Sound>> sounds) {
+            return new Parts(layouts, settings, messages, locales, server, preview, tasks, entity, sounds, home,
+                logger, errors);
+        }
+
+        /**
+         * Gives these parts with another home menu.
+         *
+         * @param home the id of the menu the back button opens when a menu has no back route, or {@code null} for
+         *     none
+         * @return a copy of these parts with {@code home} replaced
+         */
+        public Parts home(@Nullable String home) {
+            return new Parts(layouts, settings, messages, locales, server, preview, tasks, entity, sounds, home,
+                logger, errors);
         }
     }
 

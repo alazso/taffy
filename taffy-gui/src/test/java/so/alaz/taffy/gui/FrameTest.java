@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -25,9 +24,9 @@ final class FrameTest {
 
     // The shelf shows its empty state as a barrier in slot 9 and has no lang text for it; the rack has no empty slot.
     private static final Map<String, MenuLayout> EXTRA = Map.of(
-        SHELF.id(), MenuHarness.layout(SHELF.id(), new PagerLayout(List.of(9, 10, 11), 9, Material.BARRIER),
-            List.of()),
-        RACK.id(), MenuHarness.layout(RACK.id(), new PagerLayout(List.of(9, 10, 11), null, null), List.of()));
+        SHELF.id(), MenuHarness.layout(SHELF.id(),
+            PagerLayout.of(List.of(9, 10, 11)).emptySlot(9).emptyMaterial(Material.BARRIER), List.of()),
+        RACK.id(), MenuHarness.layout(RACK.id(), PagerLayout.of(List.of(9, 10, 11)), List.of()));
 
     private static final Icon ROW = new Icon.Button(Material.STONE, 1, Component.text("Row"), List.of(), false);
 
@@ -66,8 +65,7 @@ final class FrameTest {
 
     @Test
     void loadingFillsTheFirstCapacitySlotsAndTakesNoClick() {
-        MenuHarness harness = new MenuHarness(folder, new MenuSettings(20, Material.GRAY_STAINED_GLASS_PANE,
-            Duration.ofMillis(250), Material.CLOCK), Map.of());
+        MenuHarness harness = new MenuHarness(folder, MenuSettings.DEFAULTS.pageSize(20), Map.of());
         List<Integer> capacities = new ArrayList<>();
         TestMenu menu = new TestMenu(MenuHarness.LIST);
         menu.render = frame -> {
