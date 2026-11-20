@@ -160,7 +160,7 @@ public final class MetricsBuilder {
         started = true;
         if (!enabled) {
             errors.clear();
-            return new Metrics(null, null, null, errors);
+            return new Metrics(null, null, null, errors, owner.getLogger());
         }
         Logger logger = owner.getLogger();
         org.bstats.bukkit.Metrics bStats = bStatsServiceId > 0
@@ -172,7 +172,7 @@ public final class MetricsBuilder {
         BukkitContext fastStats = fastStatsToken != null
             ? startFastStats(owner, fastStatsToken, charts, true, logger, FASTSTATS_FAILED) : null;
         TaffyUsage usage = TaffyUsage.start(owner, bStats != null, fastStats != null);
-        Metrics handle = new Metrics(bStats, fastStats, usage, errors);
+        Metrics handle = new Metrics(bStats, fastStats, usage, errors, logger);
         if (handle.sources != null) {
             errors.install(handle::report);
         } else {

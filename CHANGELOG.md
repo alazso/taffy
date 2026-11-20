@@ -20,6 +20,16 @@ All notable changes to Taffy are documented here. This project follows
     `[host hidden]`. A class name such as `org.apache.commons.io.FileUtils` and a host name of one label stay.
 
   Reports whose messages differ only in such a value now merge into one kind.
+- `taffy-metrics` counts an IPv4 address, an IPv6 address and a run of digits in an error message as the same
+  whatever their value when it decides whether two reports are of one kind. `timeout after 5003ms` and
+  `timeout after 71ms`, or `Connection refused: 10.0.0.5:3306` for two addresses, now merge into one error with a
+  count, where each took one of the 32 kinds its source may send. The error is sent with the message of the
+  first report, and what is hidden in a sent message is unchanged. Messages that differ in a name or other text
+  still count as separate kinds.
+- The first time a source of error reports holds 32 kinds, `taffy-metrics` logs one warning on the plugin's
+  logger that names the source and states that a report of any further kind is not sent until metrics start
+  again. The sources past the first 64, which share one limit, log one such warning together. Such reports were
+  dropped with no log line.
 
 ### Fixed
 - A jdbc URL with a user name before an `@`, such as `jdbc:mysql://root@db.example.com/game?password=x`, is

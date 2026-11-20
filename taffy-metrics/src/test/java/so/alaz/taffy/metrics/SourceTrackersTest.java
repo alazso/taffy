@@ -52,7 +52,7 @@ class SourceTrackersTest {
             .errorTrackerService(ErrorTracker.contextUnaware())
             .create();
         context.ready();
-        trackers = new SourceTrackers(context.errorTrackerService().orElseThrow());
+        trackers = new SourceTrackers(context.errorTrackerService().orElseThrow(), fixture.log.logger);
     }
 
     @AfterEach
@@ -152,7 +152,7 @@ class SourceTrackersTest {
     @Test
     void reportsThatDifferInAnUnhiddenPartStaySeparate() {
         for (int i = 0; i < 3; i++) {
-            trackers.report("storage", new IllegalStateException("could not save item " + i));
+            trackers.report("storage", new IllegalStateException("could not save item " + word(i)));
         }
 
         String body = errorBody();
@@ -164,15 +164,84 @@ class SourceTrackersTest {
     void aSourceSendsAtMostTheBoundOfKindsAndAKnownKindStillCounts() {
         int[] failures = IntStream.concat(IntStream.range(0, SourceTrackers.MAX_KINDS + 5), IntStream.of(0)).toArray();
         for (int i : failures) {
-            trackers.report("storage", new IllegalStateException("failure " + i));
+            trackers.report("storage", new IllegalStateException("failure " + word(i)));
         }
-        trackers.report("hook.example", new IllegalStateException("failure 99"));
+        trackers.report("hook.example", new IllegalStateException("failure " + word(40)));
 
         assertThat(SourceTrackers.MAX_KINDS).isEqualTo(32);
         String body = errorBody();
         assertThat(count(body, "\"source\":\"storage\"")).isEqualTo(32);
-        assertThat(body).contains("failure 31").doesNotContain("failure 32").contains("\"count\":2")
-            .contains("\"source\":\"hook.example\"");
+        assertThat(body).contains("failure " + word(31)).doesNotContain("failure " + word(32))
+            .contains("\"count\":2").contains("\"source\":\"hook.example\"");
+    }
+
+    @Test
+    void theKindThatFillsASourceLogsOneWarningThatNamesIt() {
+        for (int i = 0; i < SourceTrackers.MAX_KINDS - 1; i++) {
+            trackers.report("storage.save", new IllegalStateException("failure " + word(i)));
+        }
+        trackers.report("hook.example", new IllegalStateException("failure"));
+        assertThat(fixture.log.lines()).isEmpty();
+
+        for (int i = SourceTrackers.MAX_KINDS - 1; i < SourceTrackers.MAX_KINDS + 5; i++) {
+            trackers.report("storage.save", new IllegalStateException("failure " + word(i)));
+        }
+        trackers.report("storage.save", new IllegalStateException("failure " + word(0)));
+
+        assertThat(fixture.log.lines()).containsExactly("WARNING Error reports from the source 'storage.save'"
+            + " reached 32 kinds. A report of any further kind from there is not sent to FastStats until metrics"
+            + " start again.");
+    }
+
+    @Test
+    void theKindThatFillsTheSourcesPastTheBoundLogsOneWarning() {
+        IllegalStateException error = new IllegalStateException("storage offline");
+        for (int i = 0; i < SourceTrackers.MAX_SOURCES; i++) {
+            trackers.report("source_" + i, error);
+        }
+
+        for (int i = 0; i < SourceTrackers.MAX_KINDS + 5; i++) {
+            trackers.report("late_" + i, new IllegalStateException("late " + word(i)));
+        }
+
+        assertThat(fixture.log.lines()).containsExactly("WARNING Error reports from the sources past the first 64"
+            + " reached 32 kinds. A report of any further kind from there is not sent to FastStats until metrics"
+            + " start again.");
+    }
+
+    @Test
+    void reportsWhoseMessagesDifferOnlyInDigitsOrAddressesMergeAndCarryTheFirstMessage() {
+        String[] waits = {"timeout after 5003ms", "timeout after 71ms", "timeout after 12ms"};
+        String[] hosts = {"10.0.0.5:3306", "192.168.1.20:3307", "172.16.4.9:25565"};
+        String[] routes = {"2001:db8::8a2e:370:7334", "fe80::1", "::1"};
+        for (int i = 0; i < 3; i++) {
+            trackers.report("storage.save", new IllegalStateException(waits[i],
+                new IllegalArgumentException("Connection refused: " + hosts[i] + " through " + routes[i])));
+        }
+        for (int i = 0; i < SourceTrackers.MAX_KINDS + 5; i++) {
+            trackers.report("storage.load", new IllegalStateException("could not load row " + i));
+        }
+
+        String body = errorBody();
+        assertThat(count(body, "\"error\":\"java.lang.IllegalStateException\"")).isEqualTo(2);
+        assertThat(body).contains("timeout after 5003ms").doesNotContain("timeout after 71ms")
+            .contains("could not load row 0").contains("\"count\":3").contains("\"count\":37");
+        assertThat(fixture.log.lines()).isEmpty();
+    }
+
+    @Test
+    void aMessageKeyReplacesAddressesAndDigitRunsAfterTheAnonymizeRules() {
+        assertThat(SourceTrackers.messageKey("Connection refused: 10.0.0.5:3306"))
+            .isEqualTo("Connection refused: [address]:[number]");
+        assertThat(SourceTrackers.messageKey("no route to fe80::1a2b, ::1 or 2001:0db8:85a3:0:0:8a2e:370:7334"))
+            .isEqualTo("no route to [address], [address] or [address]");
+        assertThat(SourceTrackers.messageKey("timeout after 5003ms for shop 12"))
+            .isEqualTo("timeout after [number]ms for shop [number]");
+        assertThat(SourceTrackers.messageKey("player 123e4567-e89b-12d3-a456-426614174000 has 3 items"))
+            .isEqualTo("player [uuid hidden] has [number] items");
+        assertThat(SourceTrackers.messageKey("Reward::give failed: no item named ruby"))
+            .isEqualTo("Reward::give failed: no item named ruby");
+        assertThat(SourceTrackers.messageKey(null)).isNull();
     }
 
     @Test
@@ -183,12 +252,12 @@ class SourceTrackersTest {
         }
 
         for (int i = 0; i < SourceTrackers.MAX_KINDS + 5; i++) {
-            trackers.report("late_" + i, new IllegalStateException("late " + i));
+            trackers.report("late_" + i, new IllegalStateException("late " + word(i)));
         }
 
         String body = errorBody();
         assertThat(count(body, "\"handled\":true")).isEqualTo(SourceTrackers.MAX_SOURCES + SourceTrackers.MAX_KINDS);
-        assertThat(body).contains("late 31").doesNotContain("late 32");
+        assertThat(body).contains("late " + word(31)).doesNotContain("late " + word(32));
     }
 
     @Test
@@ -262,6 +331,11 @@ class SourceTrackersTest {
             .filter(request -> request.path().equals("/v1/error"))
             .map(LoopbackSink.Request::body)
             .toList();
+    }
+
+    /** A word of letters that differs for each {@code index} below 52. */
+    private static String word(int index) {
+        return "kind" + "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".charAt(index);
     }
 
     private static int count(String text, String part) {

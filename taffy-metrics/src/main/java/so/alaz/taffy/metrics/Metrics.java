@@ -7,6 +7,7 @@ import so.alaz.taffy.platform.ErrorReports;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
+import java.util.logging.Logger;
 
 /**
  * A live metrics submission, returned by {@link MetricsBuilder#start()}. Wraps the providers that started.
@@ -20,9 +21,12 @@ import java.util.function.Predicate;
  * {@link ErrorReports} to {@link #report}, and each report goes to FastStats error tracking: reports of one kind from
  * one source merge into one error with a count, and each error carries its source as the {@code source} attribute.
  * Two reports are of one kind when their exception classes, stack frames and messages match once the anonymize
- * rules have hidden addresses, UUIDs and the like, through the whole cause chain. Each source sends at most 32
- * kinds for the life of this handle, and a report of any further kind from that source is dropped; a handle from a
- * new {@link MetricsBuilder#start()} starts with none. The first 64 sources get a tracker of their own; reports from
+ * rules have hidden addresses, UUIDs and the like, through the whole cause chain. An IPv4 address, an IPv6 address
+ * and a run of digits in a message each count as the same whatever their value, so {@code timeout after 5003ms}
+ * and {@code timeout after 71ms} are one kind, sent with the message of the first report. Each source sends at
+ * most 32 kinds for the life of this handle, and a report of any further kind from that source is dropped; a handle
+ * from a new {@link MetricsBuilder#start()} starts with none. When a source holds its 32nd kind, one warning that
+ * names the source is logged on the plugin's logger. The first 64 sources get a tracker of their own; reports from
  * any further source are sent without a source, and those sources share one limit of 32 kinds. Once the first
  * report has arrived, every scheduled error submission (every 30 minutes) and the final send in {@link #shutdown()}
  * post an {@code errors} array, even when it is empty.
@@ -54,12 +58,12 @@ public final class Metrics {
     private final AtomicBoolean shutDown = new AtomicBoolean();
 
     Metrics(org.bstats.bukkit.@Nullable Metrics bStats, @Nullable BukkitContext fastStats,
-            @Nullable TaffyUsage usage, ErrorReports errors) {
+            @Nullable TaffyUsage usage, ErrorReports errors, Logger logger) {
         this.bStats = bStats;
         this.fastStats = fastStats;
         this.usage = usage;
         this.sources = fastStats == null ? null
-            : fastStats.errorTrackerService().map(SourceTrackers::new).orElse(null);
+            : fastStats.errorTrackerService().map(service -> new SourceTrackers(service, logger)).orElse(null);
         this.errors = errors;
     }
 

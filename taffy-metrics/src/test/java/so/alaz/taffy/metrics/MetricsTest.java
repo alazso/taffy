@@ -25,6 +25,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.logging.Logger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -47,7 +48,7 @@ class MetricsTest {
     private final List<String> delivered = new ArrayList<>();
     private final List<Metrics> started = new ArrayList<>();
 
-    private final Metrics neither = new Metrics(null, null, null, errors);
+    private final Metrics neither = new Metrics(null, null, null, errors, Logger.getAnonymousLogger());
 
     @BeforeEach
     void setUp() throws IOException {
@@ -113,7 +114,7 @@ class MetricsTest {
         org.bstats.bukkit.Metrics bStats = MetricsBuilder.startBStats(fixture.plugin,
             MetricsFixture.BSTATS_SERVICE_ID, List.of(), fixture.log.logger, MetricsBuilder.BSTATS_FAILED);
         assertThat(bStats).isNotNull();
-        Metrics metrics = new Metrics(bStats, null, null, errors);
+        Metrics metrics = new Metrics(bStats, null, null, errors, fixture.log.logger);
 
         assertThat(metrics.bStatsStarted()).isTrue();
         assertThatCode(metrics::shutdown).doesNotThrowAnyException();
@@ -125,7 +126,7 @@ class MetricsTest {
     @Test
     void shutdownStopsBStatsOnce() {
         RecordingBStats bStats = new RecordingBStats(fixture.plugin, null);
-        Metrics metrics = new Metrics(bStats, null, null, errors);
+        Metrics metrics = new Metrics(bStats, null, null, errors, fixture.log.logger);
 
         metrics.shutdown();
         metrics.shutdown();
@@ -137,7 +138,7 @@ class MetricsTest {
     void aBStatsShutdownThatThrowsDoesNotEscape() {
         for (Throwable failure : List.of(new IllegalStateException("broken"), new NoClassDefFoundError("gone"))) {
             RecordingBStats bStats = new RecordingBStats(fixture.plugin, failure);
-            Metrics metrics = new Metrics(bStats, null, null, errors);
+            Metrics metrics = new Metrics(bStats, null, null, errors, fixture.log.logger);
 
             assertThatCode(metrics::shutdown).doesNotThrowAnyException();
             assertThat(bStats.shutdowns).isEqualTo(1);
@@ -501,7 +502,7 @@ class MetricsTest {
             MetricsBuilder.FASTSTATS_FAILED);
         assertThat(usage.fastStats).isNotNull();
         assertThat(owner).isNotNull();
-        Metrics metrics = new Metrics(null, owner, usage, errors);
+        Metrics metrics = new Metrics(null, owner, usage, errors, fixture.log.logger);
         started.add(metrics);
 
         metrics.shutdown();
@@ -519,7 +520,7 @@ class MetricsTest {
         fixture.writeFastStatsConfig(true, true, true);
         TaffyUsage usage = TaffyUsage.start(fixture.plugin, MetricsFixture.BSTATS_SERVICE_ID,
             MetricsFixture.FASTSTATS_TOKEN);
-        Metrics metrics = new Metrics(null, null, usage, errors);
+        Metrics metrics = new Metrics(null, null, usage, errors, fixture.log.logger);
 
         metrics.shutdown();
         metrics.shutdown();
