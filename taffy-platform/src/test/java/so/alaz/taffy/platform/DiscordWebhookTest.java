@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -319,6 +320,92 @@ final class DiscordWebhookTest {
         release.countDown();
         closed.get(WAIT_SECONDS, TimeUnit.SECONDS);
         assertThat(errors).isEmpty();
+    }
+
+    @Test
+    void closeWithAWaitAbortsARequestStillInFlightWhenTheWaitEnds() throws Exception {
+        CompletableFuture<String> error = new CompletableFuture<>();
+        webhook.post(url("/held/204"), "hi", error::complete);
+        nextRequest();
+
+        long start = System.nanoTime();
+        webhook.close(Duration.ofMillis(200));
+        Duration took = Duration.ofNanos(System.nanoTime() - start);
+
+        assertThat(release.getCount()).isEqualTo(1);
+        assertThat(took).isBetween(Duration.ofMillis(150), Duration.ofSeconds(4));
+        assertThat(error.get(WAIT_SECONDS, TimeUnit.SECONDS)).startsWith("java.io.IOException");
+    }
+
+    @Test
+    void closeWithAWaitReturnsAsSoonAsTheRequestsHaveFinished() throws Exception {
+        webhook.post(url("/204"), "hi", errors::add);
+        nextRequest();
+
+        long start = System.nanoTime();
+        webhook.close(Duration.ofSeconds(WAIT_SECONDS));
+
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(4));
+        assertThat(errors).isEmpty();
+    }
+
+    @Test
+    void closeWithAZeroWaitAbortsAtOnce() throws Exception {
+        CompletableFuture<String> error = new CompletableFuture<>();
+        webhook.post(url("/held/204"), "hi", error::complete);
+        nextRequest();
+
+        long start = System.nanoTime();
+        webhook.close(Duration.ZERO);
+
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(4));
+        assertThat(error.get(WAIT_SECONDS, TimeUnit.SECONDS)).startsWith("java.io.IOException");
+    }
+
+    @Test
+    void closeWithoutAWaitGivesUpOnAStalledRequestAfterFiveSeconds() throws Exception {
+        CompletableFuture<String> error = new CompletableFuture<>();
+        webhook.post(url("/held/204"), "hi", error::complete);
+        nextRequest();
+
+        long start = System.nanoTime();
+        webhook.close();
+        Duration took = Duration.ofNanos(System.nanoTime() - start);
+
+        assertThat(release.getCount()).isEqualTo(1);
+        assertThat(took).isBetween(Duration.ofMillis(4900), Duration.ofSeconds(9));
+        assertThat(error.get(WAIT_SECONDS, TimeUnit.SECONDS)).startsWith("java.io.IOException");
+    }
+
+    @Test
+    void anInterruptEndsTheWaitOfCloseAndStaysSet() throws Exception {
+        CompletableFuture<String> error = new CompletableFuture<>();
+        webhook.post(url("/held/204"), "hi", error::complete);
+        nextRequest();
+
+        CompletableFuture<Boolean> interrupted = new CompletableFuture<>();
+        long start = System.nanoTime();
+        Thread closer = new Thread(() -> {
+            Thread.currentThread().interrupt();
+            webhook.close(Duration.ofSeconds(WAIT_SECONDS));
+            interrupted.complete(Thread.currentThread().isInterrupted());
+        });
+        closer.start();
+
+        assertThat(interrupted.get(WAIT_SECONDS, TimeUnit.SECONDS)).isTrue();
+        assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofSeconds(4));
+        assertThat(error.get(WAIT_SECONDS, TimeUnit.SECONDS)).startsWith("java.io.IOException");
+    }
+
+    @Test
+    void aPostAfterCloseWithAWaitIsReportedBeforeThePostReturns() {
+        webhook.close(Duration.ofSeconds(1));
+
+        webhook.post(url("/204"), "hi", errors::add);
+
+        assertThat(errors).hasSize(1);
+        assertThat(errors.get(0)).startsWith("java.io.IOException").contains("closed");
+        assertThat(received).isEmpty();
     }
 
     @Test

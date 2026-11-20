@@ -19,6 +19,9 @@ All notable changes to Taffy are documented here. This project follows
   types of its options allowed to ping. `DiscordWebhook.PostOptions` is a record of a `Set<DiscordWebhook.Mention>`
   (`EVERYONE` for `@everyone` and `@here`, `ROLES`, `USERS`), built with `PostOptions.allowing(Mention...)` or
   `PostOptions.noMentions()`. The body carries the named types as the `allowed_mentions.parse` list.
+- `DiscordWebhook.close(Duration)` closes the client and waits at most the given time for the posts still in
+  flight. The posts unfinished when the wait ends are aborted and fail through their callbacks. An interrupt
+  ends the wait the same way and stays set.
 
 ### Changed
 - Breaking: Taffy compiles against paper-api 26.3 and supports Paper 26.2 build 135 or newer and Folia 26.3 build 8
@@ -51,10 +54,23 @@ All notable changes to Taffy are documented here. This project follows
   `post(url, content, PostOptions.allowing(Mention.ROLES), onError)` with the mention types to allow, or give
   the payload template its own `allowed_mentions` object, such as `allowed_mentions: {parse: [roles]}` in the
   server owner's config.
+- Breaking: `DiscordWebhook.close()` waits at most 5 seconds for the posts still in flight and then aborts them,
+  so each fails through its callback. In 0.1 it had no upper bound, and a Discord that sent its response headers
+  and then stalled kept the disabling thread blocked. Migration: call `close(Duration)` with a longer wait where
+  a plugin must give its last posts more than 5 seconds.
+- Breaking: `WebhookPayload.render` throws `IllegalArgumentException` for a template value that is not a
+  `String`, `Number`, `Boolean`, `null`, `Map`, `List` or Bukkit `ConfigurationSection`. The message names the
+  value by its key path, such as `embeds[0].timestamp`. In 0.1 such a value was handed to Gson, which wrote
+  whatever its reflection found. Migration: turn the value into a `String`, `Number` or `Boolean` before the
+  template is given to `render`.
 - `taffy-gui`: the package-private `CancelLink.link` returns `ClickEvent<?>`, the generic type Adventure 5 gives
   `ClickEvent`. Its erasure is the same, and no public signature changes.
 
 ### Fixed
+- `WebhookPayload.render` reads a Bukkit `ConfigurationSection` in the template as the map of its own keys, at
+  any depth. A payload read with `getConfigurationSection("payload").getValues(false)` holds a section for each
+  nested object, such as `thumbnail` or `author`, and in 0.1 such a section was handed to Gson as an arbitrary
+  object, so the body did not carry it as the config wrote it.
 - `LegacyText.toMiniMessage`, `LegacyText.sectionToMiniMessage` and every `Text` and `Messages` render: a legacy
   colour code ends the format codes before it, as it does in legacy text. `&c&lADMIN &7Steve` becomes
   `<red><bold>ADMIN <gray><!bold>Steve`, so `Steve` is gray and not bold; before, `<bold>` stayed open and the

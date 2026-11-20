@@ -95,6 +95,8 @@ public final class DiscordWebhook {
     private static final Pattern WEBHOOK_URL = Pattern.compile(
         "https://(?:canary\\.|ptb\\.)?discord(?:app)?\\.com/api(?:/v\\d+)?/webhooks/\\d+/\\S+");
 
+    private static final Duration CLOSE_WAIT = Duration.ofSeconds(5);
+
     private static final Gson GSON = new Gson();
 
     private final HttpClient client = HttpClient.newBuilder()
@@ -168,17 +170,34 @@ public final class DiscordWebhook {
     }
 
     /**
-     * Closes the client and its executor. Blocks the calling thread until every in-flight request
-     * has finished, so this is meant to be the last step of a shutdown. A request fails when no
-     * response headers arrive within 15 seconds, which is not an upper bound on this call: a server
-     * that sends its headers and then stalls can keep it blocked for longer.
+     * Closes the client as {@link #close(Duration)} does, waiting at most 5 seconds for the in-flight
+     * requests.
+     */
+    public void close() {
+        close(CLOSE_WAIT);
+    }
+
+    /**
+     * Closes the client and its executor. Blocks the calling thread until every in-flight request has
+     * finished or {@code wait} has passed, whichever comes first, so this is meant to be the last step
+     * of a shutdown. The requests still in flight when the wait ends are aborted and fail through their
+     * callbacks. With a zero or negative {@code wait} that happens at once. A post after this call fails
+     * through its callback.
      *
      * <p>An interrupt, also one already set on the calling thread when this is called, ends the wait:
      * the in-flight requests are then aborted and fail through their callbacks, and the interrupt stays
      * set.
      */
-    public void close() {
-        client.close();
+    public void close(Duration wait) {
+        client.shutdown();
+        try {
+            if (!client.awaitTermination(wait)) {
+                client.shutdownNow();
+            }
+        } catch (InterruptedException ex) {
+            client.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static String truncate(String content) {

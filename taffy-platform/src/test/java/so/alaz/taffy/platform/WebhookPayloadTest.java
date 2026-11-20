@@ -2,13 +2,19 @@ package so.alaz.taffy.platform;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.MemoryConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class WebhookPayloadTest {
 
@@ -88,5 +94,92 @@ class WebhookPayloadTest {
         JsonObject root = JsonParser.parseString(WebhookPayload.render(template, s -> s)).getAsJsonObject();
 
         assertThat(root.getAsJsonObject("allowed_mentions").toString()).isEqualTo("{\"parse\":[]}");
+    }
+
+    @Test
+    void readsAConfigurationSectionAsTheMapOfItsKeys() throws Exception {
+        YamlConfiguration config = new YamlConfiguration();
+        config.loadFromString("""
+            payload:
+              username: Shop
+              thumbnail:
+                url: 'https://example.com/%player%.png'
+              embeds:
+                - title: '%player% won'
+                  color: 5814783
+                  footer:
+                    text: bye
+            """);
+        Map<String, Object> template = config.getConfigurationSection("payload").getValues(false);
+        assertThat(template.get("thumbnail")).isInstanceOf(ConfigurationSection.class);
+
+        String json = WebhookPayload.render(template, s -> s.replace("%player%", "Steve"));
+
+        assertThat(json).isEqualTo("{\"username\":\"Shop\","
+            + "\"thumbnail\":{\"url\":\"https://example.com/Steve.png\"},"
+            + "\"embeds\":[{\"title\":\"Steve won\",\"color\":5814783,\"footer\":{\"text\":\"bye\"}}],"
+            + "\"allowed_mentions\":{\"parse\":[]}}");
+    }
+
+    @Test
+    void readsAConfigurationSectionInsideAListAndASection() {
+        MemoryConfiguration config = new MemoryConfiguration();
+        config.set("outer.inner.text", "%arg%");
+        Map<String, Object> template = new LinkedHashMap<>();
+        template.put("embeds", List.of(config.getConfigurationSection("outer")));
+        template.put("allowed_mentions", config.createSection("mentions", Map.of("parse", List.of("users"))));
+
+        String json = WebhookPayload.render(template, s -> s.replace("%arg%", "hi"));
+
+        assertThat(json).isEqualTo("{\"embeds\":[{\"inner\":{\"text\":\"hi\"}}],"
+            + "\"allowed_mentions\":{\"parse\":[\"users\"]}}");
+    }
+
+    @Test
+    void passesNumbersBooleansAndNullThrough() {
+        Map<String, Object> template = new LinkedHashMap<>();
+        template.put("tts", false);
+        template.put("flags", 4096L);
+        template.put("ratio", 0.5);
+        template.put("avatar_url", null);
+        template.put("list", Arrays.asList(1, null, true));
+
+        String json = WebhookPayload.render(template, s -> {
+            throw new AssertionError("no string to resolve");
+        });
+
+        assertThat(json).isEqualTo("{\"tts\":false,\"flags\":4096,\"ratio\":0.5,\"list\":[1,null,true],"
+            + "\"allowed_mentions\":{\"parse\":[]}}");
+    }
+
+    @Test
+    void refusesAnyOtherTypeAndNamesItsKeyPath() {
+        Map<String, Object> embed = new LinkedHashMap<>();
+        embed.put("title", "hi");
+        embed.put("timestamp", Instant.EPOCH);
+        Map<String, Object> template = new LinkedHashMap<>();
+        template.put("embeds", List.of(Map.of("title", "first"), embed));
+
+        assertThatThrownBy(() -> WebhookPayload.render(template, s -> s))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("Webhook payload value at embeds[1].timestamp is a java.time.Instant; a value must be a"
+                + " String, Number, Boolean, null, Map, List or ConfigurationSection");
+    }
+
+    @Test
+    void namesTheKeyPathThroughAConfigurationSection() {
+        MemoryConfiguration config = new MemoryConfiguration();
+        config.set("author.icon", 'x');
+        Map<String, Object> template = new LinkedHashMap<>();
+        template.put("embed", config);
+        template.put("top", new String[] {"a"});
+
+        assertThatThrownBy(() -> WebhookPayload.render(template, s -> s))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageStartingWith("Webhook payload value at embed.author.icon is a java.lang.Character;");
+        template.remove("embed");
+        assertThatThrownBy(() -> WebhookPayload.render(template, s -> s))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageStartingWith("Webhook payload value at top is a [Ljava.lang.String;;");
     }
 }

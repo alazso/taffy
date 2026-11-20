@@ -19,7 +19,8 @@
  *   <li>{@link so.alaz.taffy.platform.PendingSettlements#settleAll}, which settles the work no callback
  *       started;</li>
  *   <li>the close of whatever the settlements write to, such as storage;</li>
- *   <li>{@link so.alaz.taffy.platform.DiscordWebhook#close()}, which waits for the posts still in flight;</li>
+ *   <li>{@link so.alaz.taffy.platform.DiscordWebhook#close()}, which waits up to 5 seconds for the posts still in
+ *       flight;</li>
  *   <li>the shutdown of the plugin's metrics, {@code Metrics.shutdown} of {@code taffy-metrics}, which stops
  *       reporting and makes the final send, so the reports raised by the steps before it are sent.</li>
  * </ol>
