@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
-// A menu whose state is a page number and whose render, open and close steps a test sets.
+// A menu whose state is a page number and whose render, open and close steps and state type a test sets.
 final class TestMenu implements Menu<Integer> {
 
     private final MenuKind kind;
@@ -16,6 +16,7 @@ final class TestMenu implements Menu<Integer> {
     };
     Consumer<Boolean> closing = left -> {
     };
+    Class<? super Integer> stateType = Object.class;
     final List<Boolean> closes = new ArrayList<>();
     final List<MenuSession<Integer>> sessions = new ArrayList<>();
     int renders;
@@ -32,6 +33,11 @@ final class TestMenu implements Menu<Integer> {
     @Override
     public Integer initial(Player viewer) {
         return 0;
+    }
+
+    @Override
+    public Class<? super Integer> stateType() {
+        return stateType;
     }
 
     @Override

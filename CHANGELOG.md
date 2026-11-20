@@ -16,6 +16,12 @@ All notable changes to Taffy are documented here. This project follows
   that fails or completes with `null` is logged, reported under `gui.prompt`, tells the player `gui.error` and
   opens the origin, as an answer function that throws does; a cancelled future opens the origin with no message.
   A plugin's own `switch` over the sealed `Answer` needs a case for `Later` to compile.
+- `Menu.stateType()` names a type every state of the menu is an instance of. `Menus.open(Player, Route)` and
+  `Menus.openLater(Player, Route)` throw an `IllegalArgumentException` that names the menu, that type and the
+  type given for a route whose state is no instance of it, before anything opens or is scheduled. The default is
+  `Object`, which accepts every state as before, so a wrong state then still fails inside `render` with a
+  `ClassCastException`; a menu overrides it, such as `return Integer.class;` in a `Menu<Integer>`, to get the
+  check.
 
 ### Fixed
 - A chat line that answers a `Prompts` ask is judged once. Paper posts the legacy `AsyncPlayerChatEvent` and then

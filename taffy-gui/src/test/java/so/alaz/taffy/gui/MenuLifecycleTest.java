@@ -122,6 +122,39 @@ final class MenuLifecycleTest {
     }
 
     @Test
+    void aRouteWhoseStateIsNotOfTheMenusStateTypeIsRefusedBeforeAnythingOpens() {
+        Sample sample = new Sample(folder);
+        sample.menu.stateType = Integer.class;
+        Route wrong = new Route(Sample.KIND.id(), "seven", null);
+        int created = sample.harness.inventories.created.size();
+
+        assertThatThrownBy(() -> sample.harness.menus.open(sample.viewer.player, wrong))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the sample menu shows a state of the type java.lang.Integer, not java.lang.String");
+        assertThatThrownBy(() -> sample.harness.menus.openLater(sample.viewer.player, wrong))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the sample menu shows a state of the type java.lang.Integer, not java.lang.String");
+
+        assertThat(sample.harness.tasks.queue).isEmpty();
+        assertThat(sample.harness.inventories.created).hasSize(created);
+        assertThat(sample.menu.closes).isEmpty();
+        sample.harness.menus.open(sample.viewer.player, new Route(Sample.KIND.id(), 7, null));
+        assertThat(sample.session().state()).isEqualTo(7);
+    }
+
+    @Test
+    void aMenuWithoutAStateTypeAcceptsEveryRouteAndFailsInItsRender() {
+        Sample sample = new Sample(folder);
+        sample.menu.render = frame -> {
+            Integer page = frame.state();
+            frame.footer(null, null, null);
+        };
+
+        assertThatThrownBy(() -> sample.harness.menus.open(sample.viewer.player,
+            new Route(Sample.KIND.id(), "seven", null))).isInstanceOf(ClassCastException.class);
+    }
+
+    @Test
     void theTitleComesFromTheLangFileWithoutAnOverride() {
         MenuHarness harness = new MenuHarness(folder);
         harness.menus.register(new TestMenu(MenuHarness.MAIN));

@@ -238,10 +238,11 @@ public final class Menus {
      *
      * @param viewer the player to show the menu to
      * @param route the menu, its state and its back route
-     * @throws IllegalArgumentException if no menu is registered under the route's menu
+     * @throws IllegalArgumentException if no menu is registered under the route's menu, or the route's state is not
+     *     an instance of that menu's {@link Menu#stateType()}
      */
     public void open(Player viewer, Route route) {
-        reopen(viewer, menu(route.menu()), route);
+        reopen(viewer, menu(route), route);
     }
 
     /**
@@ -249,10 +250,11 @@ public final class Menus {
      *
      * @param viewer the player to show the menu to
      * @param route the menu, its state and its back route
-     * @throws IllegalArgumentException if no menu is registered under the route's menu
+     * @throws IllegalArgumentException if no menu is registered under the route's menu, or the route's state is not
+     *     an instance of that menu's {@link Menu#stateType()}
      */
     public void openLater(Player viewer, Route route) {
-        menu(route.menu());
+        menu(route);
         later(viewer, () -> open(viewer, route));
     }
 
@@ -627,6 +629,16 @@ public final class Menus {
         Menu<?> menu = menus.get(id);
         if (menu == null) {
             throw new IllegalArgumentException("no menu is registered as " + id);
+        }
+        return menu;
+    }
+
+    private Menu<?> menu(Route route) {
+        Menu<?> menu = menu(route.menu());
+        Class<?> type = menu.stateType();
+        if (!type.isInstance(route.state())) {
+            throw new IllegalArgumentException("the " + route.menu() + " menu shows a state of the type "
+                + type.getName() + ", not " + route.state().getClass().getName());
         }
         return menu;
     }

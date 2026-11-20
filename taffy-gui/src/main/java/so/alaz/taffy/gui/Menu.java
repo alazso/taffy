@@ -27,6 +27,18 @@ public interface Menu<S> {
     S initial(Player viewer);
 
     /**
+     * Gives a type every state of the menu is an instance of. {@link Menus#open(Player, Route)} and
+     * {@link Menus#openLater(Player, Route)} refuse a route whose state is not an instance of it. By default it is
+     * {@link Object}, which accepts every state; a state of another type than {@code S} then fails inside
+     * {@link #render(Frame)} with a {@link ClassCastException}.
+     *
+     * @return the type, such as {@code Integer.class} for a {@code Menu<Integer>}; not a primitive type
+     */
+    default Class<? super S> stateType() {
+        return Object.class;
+    }
+
+    /**
      * Gives the title of the inventory. By default it is the layout's own title, or the lang key
      * {@code gui.<id>.title}. The title is read once, when the menu opens; a redraw keeps it, so a new title takes a
      * new open, such as {@link Menus#openLater(Player, Route)} with {@link MenuSession#route()}.
