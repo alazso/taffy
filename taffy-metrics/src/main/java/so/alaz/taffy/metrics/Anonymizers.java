@@ -33,9 +33,12 @@ import java.util.regex.Pattern;
  *       {@code DELETE FROM}, {@code REPLACE INTO}, {@code MERGE INTO}, {@code CREATE TABLE},
  *       {@code ALTER TABLE} or {@code DROP TABLE} in either letter case, with what follows that start on the
  *       line, up to 200 characters. One of these verbs without the rest, as in
- *       {@code Failed to update balance for shop 12}, stays, and so does a statement of another shape;</li>
+ *       {@code Failed to update balance for shop 12}, stays, and so does a statement of another shape. A
+ *       sentence that holds one of these starts, such as {@code Please select a kit from the list}, is hidden
+ *       from that word on;</li>
  *   <li>a Windows path that starts with a drive letter and a backslash;</li>
- *   <li>an absolute Unix path of two or more segments;</li>
+ *   <li>an absolute Unix path of one segment and a further slash or more, such as {@code /home/} or
+ *       {@code /etc/hosts}. {@code /home} alone stays;</li>
  *   <li>the id and token of a Discord webhook URL that starts with {@code https://} on {@code discord.com} or
  *       {@code discordapp.com}, also with a {@code canary} or {@code ptb} label or an API version, and its
  *       query;</li>
@@ -43,7 +46,9 @@ import java.util.regex.Pattern;
  *       {@code gg}, {@code dev}, {@code me}, {@code co}, {@code xyz}, {@code eu}, {@code de}, {@code uk},
  *       {@code us}, {@code fr}, {@code nl}, {@code ca}, {@code au}, {@code ru}, {@code br}, {@code pl},
  *       {@code internal}, {@code local} or {@code lan}. A name that a further label follows, such as the class
- *       name {@code org.apache.commons.io.FileUtils}, stays.</li>
+ *       name {@code org.apache.commons.io.FileUtils}, stays. Any dotted name whose last label is one of these
+ *       endings is hidden, a class or file name included, such as {@code com.example.Me} or
+ *       {@code messages.de}.</li>
  * </ol>
  *
  * <p>A host name of one label, such as {@code cache} or {@code localhost}, stays, and so does a host name with

@@ -35,10 +35,13 @@ All notable changes to Taffy are documented here. This project follows
     `password authentication failed for user "mc_prod"`, as `user [user hidden]`;
   - the value after `=` or `:` of a key that holds `password`, `passwd`, `pwd`, `secret`, `token`, `api_key`,
     `access_key` or `private_key`, as in `password=[redacted]`. `(using password: YES)` stays as written;
-  - an absolute Unix path of two or more segments, as `[path hidden]`;
+  - an absolute Unix path of one segment and a further slash or more, such as `/etc/hosts`, as `[path hidden]`.
+    `/home` alone stays;
   - a host name of two or more labels that ends in `com`, `net`, `org`, `io`, `gg`, `dev`, `me`, `co`, `xyz`,
     `eu`, `de`, `uk`, `us`, `fr`, `nl`, `ca`, `au`, `ru`, `br`, `pl`, `internal`, `local` or `lan`, as
     `[host hidden]`. A class name such as `org.apache.commons.io.FileUtils` and a host name of one label stay.
+    Any dotted name whose last label is one of these endings is hidden, a class or file name included, such as
+    `com.example.Me` or `messages.de`.
     The id and token of a Discord webhook URL stay hidden beside it:
     `https://discord.com/api/webhooks/<id>/<token>` is sent as
     `https://[host hidden]/api/webhooks/[id hidden]/[token hidden]`.
@@ -74,8 +77,9 @@ All notable changes to Taffy are documented here. This project follows
   `INSERT INTO` (also `INSERT IGNORE INTO` and `INSERT OR REPLACE INTO`), `UPDATE ... SET`, `DELETE FROM`,
   `REPLACE INTO`, `MERGE INTO`, `CREATE TABLE`, `ALTER TABLE` or `DROP TABLE`, in either letter case. It matched
   the bare words `select`, `insert`, `update` and `delete`, so `Failed to update balance for shop 12: timeout
-  after 5003ms` was sent as `Failed to [sql hidden]`; such a message is now sent as written. A statement of
-  another shape, such as `SELECT 1`, is no longer hidden.
+  after 5003ms` was sent as `Failed to [sql hidden]`; such a message is now sent as written. A sentence that
+  holds one of these starts, such as `Please select a kit from the list`, is still hidden from that word on. A
+  statement of another shape, such as `SELECT 1`, is no longer hidden.
 - `Metrics.shutdown()` waits at most 5 seconds for the final FastStats send. The send runs on a daemon thread
   named `taffy-metrics-final-send`, and when it has not finished after 5 seconds `shutdown()` returns while the
   send goes on, on that thread. It ran on the disabling thread with no limit, so a stalled name lookup or a

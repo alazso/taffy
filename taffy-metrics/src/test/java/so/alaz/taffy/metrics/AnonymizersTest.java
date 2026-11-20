@@ -269,6 +269,12 @@ class AnonymizersTest {
     }
 
     @Test
+    void aSentenceThatHoldsTheStartOfAStatementIsHiddenFromThatWordOn() {
+        assertThat(apply(SQL, "Please select a kit from the list")).isEqualTo("Please [sql hidden]");
+        assertThat(apply(SQL, "Could not delete from disk cache")).isEqualTo("Could not [sql hidden]");
+    }
+
+    @Test
     void anSqlStatementIsHiddenForAtMost200CharactersPastItsStart() {
         assertThat(apply(SQL, "DELETE FROM " + "a".repeat(200) + "tail")).isEqualTo("[sql hidden]tail");
     }
@@ -306,6 +312,12 @@ class AnonymizersTest {
             .isEqualTo("cannot read [path hidden] now");
         assertThat(apply(UNIX_PATH, "open(/etc/passwd) and '/var/lib/mysql/'"))
             .isEqualTo("open([path hidden]) and '[path hidden]'");
+    }
+
+    @Test
+    void oneSegmentIsHiddenOnlyWithAFurtherSlash() {
+        assertThat(apply(UNIX_PATH, "open /home/ failed")).isEqualTo("open [path hidden] failed");
+        assertThat(apply(UNIX_PATH, "open /home failed")).isEqualTo("open /home failed");
     }
 
     @Test
@@ -375,6 +387,12 @@ class AnonymizersTest {
         assertThat(apply(HOST, "GET https://api.example.com/v1/items failed"))
             .isEqualTo("GET https://[host hidden]/v1/items failed");
         assertThat(apply(HOST, "no route to cache-1.internal.")).isEqualTo("no route to [host hidden].");
+    }
+
+    @Test
+    void aDottedNameWhoseLastLabelIsAHostEndingIsHidden() {
+        assertThat(apply(HOST, "Could not load class com.example.Me")).isEqualTo("Could not load class [host hidden]");
+        assertThat(apply(HOST, "file messages.de missing")).isEqualTo("file [host hidden] missing");
     }
 
     @Test
