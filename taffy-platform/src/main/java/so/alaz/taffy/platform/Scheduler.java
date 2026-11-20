@@ -10,12 +10,15 @@ import org.bukkit.plugin.Plugin;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -31,7 +34,8 @@ import java.util.function.Supplier;
  * {@link #asyncOrRun} runs the task on the calling thread.
  *
  * <p>A task Paper accepted but has not run by the time the owning plugin disables may never run: an entity
- * task then runs neither its task nor its retired callback, and a delayed task is cancelled. Work that must
+ * task then runs neither its task nor its retired callback, and a delayed task is cancelled. {@link #close}
+ * completes the future of a {@link #dispatch} whose task has not started, as a refused call does. Work that must
  * settle is tracked by its caller in {@link PendingSettlements} before it is scheduled, and settled while
  * the plugin disables. {@link PendingSettlements#settleAll} does not see an entry tracked after it began, so a
  * caller whose scheduling call is refused starts the entry itself.
@@ -73,6 +77,7 @@ public final class Scheduler implements Dispatcher {
     private final Server server;
     private final Mode mode;
     private final List<ScheduledTask> repeating = new CopyOnWriteArrayList<>();
+    private final Set<Dispatch<?>> dispatches = ConcurrentHashMap.newKeySet();
 
     /**
      * A scheduler whose tasks are owned by {@code plugin} and run on that plugin's server. A task Paper runs that
@@ -184,12 +189,14 @@ public final class Scheduler implements Dispatcher {
     }
 
     /**
-     * Cancels every task {@link #repeatingAsync} started through this instance, whichever class started it. A
-     * run already in progress finishes. One-shot tasks are left to Paper. The owning plugin calls this first
-     * in {@code onDisable}. The instance stays usable: a repeating task started after the call, or while it
-     * runs, is cancelled by the next call. It completes no future that {@link #dispatch} returned: one whose
-     * task Paper accepted and then dropped at disable stays incomplete. Work that must settle is tracked in
-     * {@link PendingSettlements} before it is dispatched.
+     * Cancels every task {@link #repeatingAsync} started through this instance, whichever class started it, and
+     * completes every future {@link #dispatch} returned whose task has not started, as a refused call does: with
+     * {@link RejectedExecutionException} for {@link ThreadTag#GLOBAL} and {@link ThreadTag#ASYNC}, and with
+     * {@link EntityUnavailableException} for an entity tag. A task whose future is completed here never runs,
+     * also when Paper still runs what it accepted. A run already in progress finishes, and the future of a
+     * dispatched task that has started completes with what the task returns or throws. Other one-shot tasks are
+     * left to Paper. The owning plugin calls this first in {@code onDisable}. The instance stays usable: a
+     * repeating task started, or a dispatch made, after the call or while it runs is handled by the next call.
      */
     public void close() {
         // A task tracked during this pass is not in the snapshot being iterated and stays tracked.
@@ -197,6 +204,7 @@ public final class Scheduler implements Dispatcher {
             task.cancel();
             repeating.remove(task);
         }
+        dispatches.forEach(Dispatch::refuse);
     }
 
     /**
@@ -243,41 +251,75 @@ public final class Scheduler implements Dispatcher {
      * <p>{@link ThreadTag#GLOBAL} and {@link ThreadTag#ASYNC} complete with
      * {@link RejectedExecutionException} when the plugin is disabling. An entity tag names an online player
      * and completes with {@link EntityUnavailableException} when the player is offline, retires before the
-     * task runs, or the plugin is disabling. A task still scheduled when the plugin disables may leave the
-     * future incomplete. Every tag queues the task, also when the caller is already on that thread.
+     * task runs, or the plugin is disabling. A task that has not started when {@link #close} runs, or that Paper
+     * accepted as the plugin stopped being enabled, never runs, and its future completes the same way. Every tag
+     * queues the task, also when the caller is already on that thread.
      */
     @Override
     public <T> CompletableFuture<T> dispatch(ThreadTag tag, Supplier<T> task) {
-        CompletableFuture<T> result = new CompletableFuture<>();
-        Runnable work = () -> {
+        Dispatch<T> dispatch = new Dispatch<>(tag, task);
+        CompletableFuture<T> result = dispatch.result;
+        dispatches.add(dispatch);
+        result.whenComplete((value, failure) -> dispatches.remove(dispatch));
+        switch (tag) {
+            case ThreadTag.Global _ -> {
+                if (!global(dispatch)) {
+                    dispatch.refuse();
+                }
+            }
+            case ThreadTag.Async _ -> {
+                if (!async(dispatch)) {
+                    dispatch.refuse();
+                }
+            }
+            case ThreadTag.Entity(UUID id) -> {
+                Player player = server.getPlayer(id);
+                if (player == null) {
+                    dispatch.refuse();
+                } else {
+                    entity(player, dispatch, dispatch::refuse);
+                }
+            }
+        }
+        // close() may have finished its pass before the dispatch was tracked, so the dispatch is refused directly.
+        if (!plugin.isEnabled()) {
+            dispatch.refuse();
+        }
+        return result;
+    }
+
+    /** A dispatched task and its future. The task runs or the future is refused, never both. */
+    private final class Dispatch<T> implements Runnable {
+
+        private final ThreadTag tag;
+        private final Supplier<T> task;
+        private final CompletableFuture<T> result = new CompletableFuture<>();
+        private final AtomicBoolean claimed = new AtomicBoolean();
+
+        Dispatch(ThreadTag tag, Supplier<T> task) {
+            this.tag = tag;
+            this.task = task;
+        }
+
+        @Override
+        public void run() {
+            if (!claimed.compareAndSet(false, true)) {
+                return;
+            }
             try {
                 result.complete(task.get());
             } catch (Throwable failure) {
                 result.completeExceptionally(failure);
             }
-        };
-        switch (tag) {
-            case ThreadTag.Global _ -> {
-                if (!global(work)) {
-                    result.completeExceptionally(disabling(tag));
-                }
-            }
-            case ThreadTag.Async _ -> {
-                if (!async(work)) {
-                    result.completeExceptionally(disabling(tag));
-                }
-            }
-            case ThreadTag.Entity(UUID id) -> {
-                Runnable retired = () -> result.completeExceptionally(new EntityUnavailableException(id));
-                Player player = server.getPlayer(id);
-                if (player == null) {
-                    retired.run();
-                } else {
-                    entity(player, work, retired);
-                }
+        }
+
+        void refuse() {
+            if (claimed.compareAndSet(false, true)) {
+                result.completeExceptionally(tag instanceof ThreadTag.Entity(UUID id)
+                    ? new EntityUnavailableException(id)
+                    : disabling(tag));
             }
         }
-        return result;
     }
 
     private Consumer<ScheduledTask> reported(String source, Runnable task) {

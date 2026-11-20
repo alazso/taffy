@@ -15,11 +15,13 @@ public interface EntityThread {
      * {@link EntityUnavailableException}, and {@code task} never runs, when the player is offline, the
      * server retired the task, or the task could not be scheduled because the owning plugin is disabling.
      *
-     * <p>The future may stay incomplete for good when the task was scheduled and the owning plugin disables
-     * before it runs. Work that must settle is therefore tracked in {@link PendingSettlements} before the
-     * call, or the future is bounded with {@link CompletableFuture#orTimeout}. The task is queued even when
-     * the caller is already on the player's thread, so waiting for the future on a server thread can block
-     * that thread for good.
+     * <p>When the task was scheduled and the owning plugin disables before it runs, an entity thread over a
+     * {@link Scheduler} completes the future with {@link EntityUnavailableException} at
+     * {@link Scheduler#close()}, and {@code task} never runs. Over another {@link Dispatcher} the future may
+     * stay incomplete for good, so it is bounded with {@link CompletableFuture#orTimeout}. Work that must settle
+     * is tracked in {@link PendingSettlements} before the call. The task is queued even when the caller is
+     * already on the player's thread, so waiting for the future on a server thread can block that thread for
+     * good.
      */
     <T> CompletableFuture<T> call(UUID player, Function<Player, T> task);
 

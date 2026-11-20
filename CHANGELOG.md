@@ -24,6 +24,14 @@ All notable changes to Taffy are documented here. This project follows
   ends the wait the same way and stays set.
 
 ### Changed
+- Breaking: `Scheduler.close()` completes every future `Scheduler.dispatch` returned whose task has not started,
+  as a refused call does: with `RejectedExecutionException` for `ThreadTag.GLOBAL` and `ThreadTag.ASYNC`, and with
+  `EntityUnavailableException` for an entity tag, which covers `EntityThread.call` over a `Scheduler`. In 0.1 such
+  a future stayed incomplete for good when Paper accepted the task and dropped it as the plugin disabled, so a
+  caller waiting on it never returned. A task refused this way never runs, also when Paper still runs what it
+  accepted, and a task that has started completes its future with its own result. A dispatch Paper accepts as the
+  plugin stops being enabled is refused the same way. Migration: call `Scheduler.close()` in `onDisable`, handle
+  the refusal where a dispatched future is awaited, and drop an `orTimeout` that was there only for this case.
 - Breaking: Taffy compiles against paper-api 26.3 and supports Paper 26.2 build 135 or newer and Folia 26.3 build 8
   or newer; Paper 26.1.2 is no longer supported. The `paper` version of the `alaz` catalog moves from
   `26.1.2.build.66-stable` to `26.3.build.256-stable`, so a plugin that declares `alaz.paper.api` compiles against

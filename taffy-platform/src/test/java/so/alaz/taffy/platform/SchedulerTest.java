@@ -387,15 +387,87 @@ final class SchedulerTest {
     }
 
     @Test
-    void closeLeavesAnAcceptedButUnrunDispatchIncomplete() {
-        CompletableFuture<Integer> result = scheduler.dispatch(ThreadTag.GLOBAL, taskRuns::incrementAndGet);
+    void closeRefusesAnAcceptedButUnrunGlobalOrAsyncDispatch() {
+        CompletableFuture<Integer> global = scheduler.dispatch(ThreadTag.GLOBAL, taskRuns::incrementAndGet);
+        CompletableFuture<Integer> async = scheduler.dispatch(ThreadTag.ASYNC, taskRuns::incrementAndGet);
         when(plugin.isEnabled()).thenReturn(false);
+        assertThat(global).isNotDone();
+        assertThat(async).isNotDone();
 
         scheduler.close();
 
-        verify(globalScheduler).run(eq(plugin), any());
-        assertThat(queued).hasSize(1);
+        assertThat(queued).hasSize(2);
+        assertThat(global.exceptionNow()).isInstanceOf(RejectedExecutionException.class)
+            .hasMessage(PLUGIN_NAME + " is disabling, so GLOBAL accepts no work");
+        assertThat(async.exceptionNow()).isInstanceOf(RejectedExecutionException.class)
+            .hasMessage(PLUGIN_NAME + " is disabling, so ASYNC accepts no work");
+    }
+
+    @Test
+    void closeRefusesAnAcceptedButUnrunEntityDispatchAsUnavailable() {
+        CompletableFuture<Integer> result = scheduler.dispatch(ThreadTag.entity(playerId), taskRuns::incrementAndGet);
         assertThat(result).isNotDone();
+
+        scheduler.close();
+
+        assertThat(result.exceptionNow()).isInstanceOf(EntityUnavailableException.class);
+        assertThat(((EntityUnavailableException) result.exceptionNow()).id()).isEqualTo(playerId);
+    }
+
+    @Test
+    void closeCompletesAnEntityThreadCallWhoseTaskNeverRan() {
+        CompletableFuture<String> result = EntityThread.on(scheduler, server).call(playerId, Player::getName);
+        assertThat(result).isNotDone();
+
+        scheduler.close();
+
+        assertThat(result.exceptionNow()).isInstanceOf(EntityUnavailableException.class);
+        verify(player, never()).getName();
+    }
+
+    @Test
+    void aDispatchRefusedByCloseNeverRunsWhenPaperRunsItLater() {
+        CompletableFuture<Integer> result = scheduler.dispatch(ThreadTag.GLOBAL, taskRuns::incrementAndGet);
+
+        scheduler.close();
+        runQueued();
+
+        assertThat(taskRuns).hasValue(0);
+        assertThat(result.exceptionNow()).isInstanceOf(RejectedExecutionException.class);
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
+    void closeLeavesADispatchThatHasStartedToCompleteWithItsResult() {
+        CompletableFuture<String> result = scheduler.dispatch(ThreadTag.ASYNC, () -> {
+            scheduler.close();
+            return "written";
+        });
+
+        runQueued();
+
+        assertThat(result).isCompletedWithValue("written");
+    }
+
+    @Test
+    void closeLeavesACompletedDispatchAsItIs() {
+        CompletableFuture<Integer> result = scheduler.dispatch(ThreadTag.GLOBAL, taskRuns::incrementAndGet);
+        runQueued();
+
+        scheduler.close();
+
+        assertThat(result).isCompletedWithValue(1);
+    }
+
+    @Test
+    void aDispatchPaperAcceptsAsThePluginStopsBeingEnabledIsRefused() {
+        when(plugin.isEnabled()).thenReturn(true, false);
+
+        CompletableFuture<Integer> result = scheduler.dispatch(ThreadTag.GLOBAL, taskRuns::incrementAndGet);
+        runQueued();
+
+        verify(globalScheduler).run(eq(plugin), any());
+        assertThat(result.exceptionNow()).isInstanceOf(RejectedExecutionException.class);
         assertThat(taskRuns).hasValue(0);
     }
 
