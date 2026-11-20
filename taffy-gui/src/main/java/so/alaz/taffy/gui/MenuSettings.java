@@ -69,7 +69,8 @@ public final class MenuSettings {
     }
 
     /**
-     * Gives how long a second click on the same button, or any click right after a menu opens, is dropped.
+     * Gives how long a second click on the same button, any click right after a menu opens, and a click on a slot
+     * right after a redraw put another button in it, is dropped.
      *
      * @return the click debounce, from {@link #MIN_DEBOUNCE} to {@link #MAX_DEBOUNCE}
      */
@@ -111,8 +112,9 @@ public final class MenuSettings {
     /**
      * Gives these settings with another click debounce.
      *
-     * @param clickDebounce how long a second click on the same button, or any click right after a menu opens, is
-     *     dropped, from {@link #MIN_DEBOUNCE} to {@link #MAX_DEBOUNCE}
+     * @param clickDebounce how long a second click on the same button, any click right after a menu opens, and a
+     *     click on a slot right after a redraw put another button in it, is dropped, from {@link #MIN_DEBOUNCE} to
+     *     {@link #MAX_DEBOUNCE}
      * @return a copy of these settings with {@code clickDebounce} replaced
      * @throws NullPointerException if {@code clickDebounce} is {@code null}
      * @throws IllegalArgumentException if {@code clickDebounce} is outside its range
