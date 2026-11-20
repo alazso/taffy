@@ -56,12 +56,20 @@ All notable changes to Taffy are documented here. This project follows
   prefix of `Messages.render(Text, ...)` and `Messages.renderTemplate`. Section-sign colour and format codes in the
   output still apply, to that output only: a colour a placeholder returns no longer colours the template after it.
   Each run between two `%` signs is given to PlaceholderAPI on its own, so a placeholder inside a tag argument
-  that MiniMessage does not parse, such as a click value, is no longer filled in. `Text.resolve` is unchanged and
-  returns what PlaceholderAPI gave, tags included. Migration: where an expansion returns MiniMessage formatting
+  that MiniMessage does not parse, such as a click value or an insertion, is no longer filled in and stays as
+  written: `<click:run_command:'/msg %player_name%'>` runs `/msg %player_name%`. A placeholder written as an
+  unquoted tag argument, such as `<color:%team_color%>`, or inside the URL of `<click:open_url:...>`, no longer
+  forms the tag, which is then shown as text. A placeholder inside hover text is still filled in. Tag names that
+  start with `taffy_papi_` are reserved for the render. `Text.resolve` is unchanged and returns what
+  PlaceholderAPI gave, tags included. Migration: where an expansion returns MiniMessage formatting
   on purpose, such as a rank prefix with a gradient, render through `text.withPlaceholderFormatting()`, a `Text`
   that parses colour tags, decoration tags, `<gradient>`, `<rainbow>` and `<reset>` in placeholder output and
   shows every other tag as written. No option brings back click, hover or any other tag from placeholder output:
-  write those in the template, around the placeholder.
+  write those in the template, around the placeholder. Where a click value or a tag argument needs a
+  placeholder, build that part in code and supply it as a value: resolve the placeholder with `Text.resolve`
+  where it comes from PlaceholderAPI, then pass
+  `Placeholder.styling("msg", ClickEvent.runCommand("/msg " + name))` with `<msg>` in the template, or
+  `Placeholder.styling("team", color)` with `<team>`.
 - Breaking: `DiscordWebhook.post(String, String, Consumer<String>)` sends `"allowed_mentions": {"parse": []}`
   with the content, and `WebhookPayload.render` adds the same key to the top level of a template that has no
   `allowed_mentions` key of its own or sets it to null. In 0.1 neither sent the key, so Discord's default applied and player text

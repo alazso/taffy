@@ -263,14 +263,58 @@ class TextTest {
     }
 
     @Test
-    void aPlaceholderInsideAClickValueIsNotFilledInAndOneInsideHoverTextIs() {
+    void aPlaceholderInsideAClickValueStaysAsWrittenAndOneInsideHoverTextIsFilledIn() {
         Text text = new Text(log.logger, pass, null);
 
         Component click = text.render("<click:run_command:'/pay %x%'>x</click>", viewer);
         Component hover = text.render("<hover:show_text:'%x%'>x</hover>", viewer);
 
-        assertThat(MINI.serialize(click)).isEqualTo("<click:run_command:'/pay <taffy_papi_0>'>x");
+        assertThat(MINI.serialize(click)).isEqualTo("<click:run_command:'/pay %x%'>x");
         assertThat(MINI.serialize(hover)).isEqualTo("<hover:show_text:'1'>x");
+    }
+
+    @Test
+    void aPlaceholderInsideAnUnparsedTagArgumentStaysAsWrittenBesideOneThatIsFilledIn() {
+        Text text = new Text(log.logger, pass, null);
+
+        assertThat(MINI.serialize(text.render("%x% <click:suggest_command:'/msg %x% '>p</click>", viewer)))
+            .isEqualTo("1 <click:suggest_command:'/msg %x% '>p");
+        assertThat(MINI.serialize(text.render("<click:copy_to_clipboard:'%x% and %rank%'>p</click>", viewer)))
+            .isEqualTo("<click:copy_to_clipboard:'%x% and %rank%'>p");
+        assertThat(MINI.serialize(text.render("<insert:'%x%'>p</insert>", viewer))).isEqualTo("<insert:%x%>p");
+        assertThat(MINI.serialize(text.render(
+            "<hover:show_text:\"<click:run_command:'/pay %x%'>%x%</click>\">p</hover>", viewer)))
+            .isEqualTo("<hover:show_text:\"<click:run_command:'/pay %x%'>1\">p");
+    }
+
+    @Test
+    void aPlaceholderAfterAnEscapingBackslashStaysAsWritten() {
+        Text text = new Text(log.logger, pass, null);
+
+        assertThat(plain(text.render("%x% \\%x%", viewer))).isEqualTo("1 %x%");
+    }
+
+    @Test
+    void aPlaceholderInsideAUrlOrAsAnUnquotedTagArgumentLeavesATagShownAsText() {
+        Text text = new Text(log.logger, pass, null);
+
+        assertThat(plain(text.render("<click:open_url:'https://x/u/%x%'>p</click>", viewer)))
+            .isEqualTo("<click:open_url:'https://x/u/%x%'>p</click>");
+
+        assertThat(plain(text.render("<color:%x%>p", viewer))).doesNotContain("taffy_papi");
+        assertThat(plain(text.render("<gradient:%x%:%x%>p", viewer))).doesNotContain("taffy_papi");
+    }
+
+    @Test
+    void aPlaceholderInsideAClickValueOfThePrefixStaysAsWritten() {
+        Text text = new Text(log.logger, pass, null);
+
+        Component rendered = text.renderWithPrefix(
+            "<prefix> <click:run_command:'/b %rank%'>%x%</click>", "<click:run_command:'/a %x%'>[P]</click>",
+            viewer, TagResolver.empty());
+
+        assertThat(MINI.serialize(rendered))
+            .isEqualTo("<click:run_command:'/a %x%'>[P]</click> <click:run_command:'/b %rank%'>1");
     }
 
     @Test

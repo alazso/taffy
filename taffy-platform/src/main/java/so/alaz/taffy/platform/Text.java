@@ -2,6 +2,10 @@ package so.alaz.taffy.platform;
 
 import io.github.miniplaceholders.api.MiniPlaceholders;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TextComponent;
+import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
+import net.kyori.adventure.text.format.Style;
 import net.kyori.adventure.text.minimessage.Context;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.ParsingException;
@@ -21,6 +25,7 @@ import java.util.List;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -36,8 +41,13 @@ import java.util.regex.Pattern;
  * as {@code <click:run_command:'/pay Ann 100'>} or the {@code <name>} of a supplied value, is shown as written.
  * Section-sign colour and format codes in it still apply, to that output only: they do not colour the template
  * after the placeholder. A placeholder inside a tag argument that MiniMessage does not parse, such as a click
- * value, is not filled in. {@link #withPlaceholderFormatting()} gives a {@code Text} that also reads formatting
- * tags in what a placeholder returns.
+ * value or an insertion, stays as written, {@code %} signs included, and so does one after an escaping backslash.
+ * A placeholder written as an unquoted tag argument, as in {@code <color:%team_color%>} or
+ * {@code <gradient:%a%:%b%>}, or inside the URL of {@code <click:open_url:...>}, leaves a tag MiniMessage cannot
+ * read, which is then shown as text.
+ * {@link #withPlaceholderFormatting()} gives a {@code Text} that also reads formatting tags in what a placeholder
+ * returns. Tag names that start with {@code taffy_papi_} are reserved for the render: a supplied value of such a
+ * name may be shadowed, and such a tag written in the input may be replaced.
  *
  * <p>MiniMessage refuses a section sign followed by a legacy code character. Every render therefore converts such
  * a code to its tag, as {@link LegacyText#sectionToMiniMessage} does: in the input and in each value supplied as
@@ -64,6 +74,7 @@ public final class Text {
         "MiniPlaceholders failed, so the text is shown without its placeholders.";
 
     private static final String OUTPUT_TAG = "taffy_papi_";
+    private static final Pattern OUTPUT_NAME = Pattern.compile("<" + OUTPUT_TAG + "(\\d+)>");
     private static final LegacyComponentSerializer LEGACY =
         LegacyComponentSerializer.builder().character(LegacyComponentSerializer.SECTION_CHAR).hexColors().build();
     private static final MiniMessage FORMATTING = MiniMessage.builder()
@@ -184,14 +195,15 @@ public final class Text {
         TagResolver values
     ) {
         List<Component> outputs = new ArrayList<>();
+        List<String> tokens = new ArrayList<>();
         TagResolver supplied = values;
         if (prefix != null) {
             String filled = LegacyText.sectionToMiniMessage(
-                insertPlaceholders(aliasBraces(prefix, values), viewer, outputs));
+                insertPlaceholders(aliasBraces(prefix, values), viewer, outputs, tokens));
             // The later resolver answers first, so a supplied value named prefix wins.
             supplied = TagResolver.resolver(Placeholder.parsed("prefix", filled), values);
         }
-        String filled = insertPlaceholders(aliasBraces(template, supplied), viewer, outputs);
+        String filled = insertPlaceholders(aliasBraces(template, supplied), viewer, outputs, tokens);
         if (outputs.isEmpty()) {
             return deserialize(filled, viewer, supplied);
         }
@@ -199,7 +211,66 @@ public final class Text {
         for (int i = 0; i < outputs.size(); i++) {
             tags.resolver(Placeholder.component(OUTPUT_TAG + i, outputs.get(i)));
         }
-        return deserialize(filled, viewer, tags.build());
+        return restoreTokens(deserialize(filled, viewer, tags.build()), tokens);
+    }
+
+    /**
+     * Returns {@code component} with each generated tag that is still text in it replaced by the placeholder
+     * the tag stood for, taken from {@code tokens} at the index the tag names. Text content, insertions, the
+     * string value of a click event and the component of a show-text hover event are looked at, at every depth.
+     * The same instance is returned when it holds no generated tag.
+     */
+    private static Component restoreTokens(Component component, List<String> tokens) {
+        Component out = component;
+        if (out instanceof TextComponent text) {
+            String content = restore(text.content(), tokens);
+            if (!content.equals(text.content())) {
+                out = text.content(content);
+            }
+        }
+        Style style = out.style();
+        String insertion = style.insertion();
+        if (insertion != null && !restore(insertion, tokens).equals(insertion)) {
+            out = out.insertion(restore(insertion, tokens));
+        }
+        ClickEvent<?> click = style.clickEvent();
+        if (click != null && click.payload() instanceof ClickEvent.Payload.Text payload
+            && !restore(payload.value(), tokens).equals(payload.value())) {
+            out = out.clickEvent(withValue(click, restore(payload.value(), tokens)));
+        }
+        HoverEvent<?> hover = style.hoverEvent();
+        if (hover != null && hover.value() instanceof Component shown && restoreTokens(shown, tokens) != shown) {
+            out = out.hoverEvent(HoverEvent.showText(restoreTokens(shown, tokens)));
+        }
+        List<Component> children = out.children();
+        List<Component> restored = null;
+        for (int i = 0; i < children.size(); i++) {
+            Component child = restoreTokens(children.get(i), tokens);
+            if (child != children.get(i)) {
+                if (restored == null) {
+                    restored = new ArrayList<>(children);
+                }
+                restored.set(i, child);
+            }
+        }
+        return restored == null ? out : out.children(restored);
+    }
+
+    private static String restore(String value, List<String> tokens) {
+        if (!value.contains(OUTPUT_TAG)) {
+            return value;
+        }
+        return OUTPUT_NAME.matcher(value).replaceAll(match -> {
+            String index = match.group(1);
+            boolean known = index.length() < 10 && Integer.parseInt(index) < tokens.size();
+            return Matcher.quoteReplacement(known ? tokens.get(Integer.parseInt(index)) : match.group());
+        });
+    }
+
+    /** A click event of the action of {@code click} whose string value is {@code value}. */
+    @SuppressWarnings("unchecked")
+    private static <T extends ClickEvent.Payload> ClickEvent<T> withValue(ClickEvent<T> click, String value) {
+        return ClickEvent.clickEvent(click.action(), (T) ClickEvent.Payload.string(value));
     }
 
     /** Renders each line as {@link #render(String, Player)} does, in order. */
@@ -308,12 +379,17 @@ public final class Text {
 
     /**
      * Replaces each run between two {@code %} signs that PlaceholderAPI resolves for {@code viewer} with a
-     * generated tag, and adds what the placeholder returned to {@code outputs} at the index the tag names. A run
-     * PlaceholderAPI returns unchanged stays as written, and its closing {@code %} may open the next run. When
-     * PlaceholderAPI is absent or throws, which is logged, or the viewer is null, the input is returned unchanged
-     * and {@code outputs} is left as it was.
+     * generated tag, and adds what the placeholder returned to {@code outputs}, and the run as written to
+     * {@code tokens}, at the index the tag names. A run PlaceholderAPI returns unchanged stays as written, and its
+     * closing {@code %} may open the next run. When PlaceholderAPI is absent or throws, which is logged, or the
+     * viewer is null, the input is returned unchanged and both lists are left as they were.
      */
-    private String insertPlaceholders(String input, @Nullable Player viewer, List<Component> outputs) {
+    private String insertPlaceholders(
+        String input,
+        @Nullable Player viewer,
+        List<Component> outputs,
+        List<String> tokens
+    ) {
         int open = input.indexOf('%');
         if (viewer == null || placeholderApi == null || open < 0) {
             return input;
@@ -331,6 +407,7 @@ public final class Text {
                 }
                 out.append(input, copied, open).append('<').append(OUTPUT_TAG).append(outputs.size()).append('>');
                 outputs.add(output(result));
+                tokens.add(token);
                 copied = close + 1;
                 open = input.indexOf('%', copied);
                 if (open < 0) {
@@ -339,6 +416,7 @@ public final class Text {
             }
         } catch (LinkageError | RuntimeException ex) {
             outputs.subList(before, outputs.size()).clear();
+            tokens.subList(before, tokens.size()).clear();
             failures.warn(PLACEHOLDER_API,
                 "PlaceholderAPI failed while resolving placeholders, so the text is shown without them.", ex);
             return input;
