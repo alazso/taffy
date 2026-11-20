@@ -91,7 +91,7 @@ final class AbsentIntegrationsTest {
         "dev.lone.itemsadder.api.Events.ItemsAdderLoadDataEvent", "com.nexomc.nexo.api.NexoItems",
         "com.nexomc.nexo.api.events.NexoItemsLoadedEvent", "com.nexomc.nexo.items.ItemBuilder",
         "io.th0rgal.oraxen.api.OraxenItems", "io.th0rgal.oraxen.api.events.OraxenItemsLoadedEvent",
-        "io.th0rgal.oraxen.items.ItemBuilder",
+        "io.th0rgal.oraxen.items.ItemBuilder", "me.arcaniax.hdb.api.DatabaseLoadEvent",
         "me.arcaniax.hdb.api.HeadDatabaseAPI", VAULT_ECONOMY, "net.milkbowl.vault.economy.EconomyResponse", LUCKPERMS,
         "net.luckperms.api.LuckPermsProvider", "net.luckperms.api.model.user.User", "net.luckperms.api.node.NodeType",
         WORLDGUARD_API[0], WORLDGUARD_API[1], WORLDGUARD_API[2], WORLDGUARD_API[3], WORLDGUARD_API[4],

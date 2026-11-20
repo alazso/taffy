@@ -2,6 +2,7 @@ package so.alaz.taffy.hooks;
 
 import dev.lone.itemsadder.api.ItemsAdder;
 import io.papermc.paper.plugin.configuration.PluginMeta;
+import me.arcaniax.hdb.api.DatabaseLoadEvent;
 import me.arcaniax.hdb.api.HeadDatabaseAPI;
 import org.bukkit.Material;
 import org.bukkit.Server;
@@ -888,6 +889,7 @@ final class CustomItemsTest {
 
         try (MockedStatic<ItemsAdder> itemsAdder = mockStatic(ItemsAdder.class);
              MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class, (api, context) -> {
+                 when(api.getRandomHead()).thenReturn(head);
                  when(api.isHead("1234")).thenReturn(true);
                  when(api.getItemHead("1234")).thenReturn(head);
              })) {
@@ -904,10 +906,11 @@ final class CustomItemsTest {
                 + " plugins: ItemsAdder on, waiting for its items to load; Nexo on, waiting for its items to load;"
                 + " Oraxen on, waiting for its items to load; HeadDatabase on.");
             assertThat(listeners).extracting(listener -> (Object) listener.getClass())
-                .containsExactly(ItemsAdderProvider.class, NexoProvider.class, OraxenProvider.class);
+                .containsExactly(ItemsAdderProvider.class, NexoProvider.class, OraxenProvider.class,
+                    HeadDatabaseProvider.class);
             assertThat(items.ready()).isFalse();
             assertThat(items.create("hdb:1234")).isSameAs(head);
-            assertThat(apis.constructed()).hasSize(1);
+            assertThat(apis.constructed()).hasSize(2);
         }
     }
 
@@ -962,24 +965,25 @@ final class CustomItemsTest {
     }
 
     @Test
-    void closeUnregistersTheListenersOfNexoAndOraxen() {
+    void closeUnregistersTheListenersOfNexoOraxenAndHeadDatabase() {
         PluginManager manager = server();
         install(manager, CustomItemPlugin.NEXO);
         install(manager, CustomItemPlugin.ORAXEN);
+        install(manager, CustomItemPlugin.HEADDATABASE);
         HandlerList handlers = registering(manager);
 
         try {
             CustomItems items = CustomItems.detect(owner, errors,
-                EnumSet.of(CustomItemPlugin.NEXO, CustomItemPlugin.ORAXEN));
+                EnumSet.of(CustomItemPlugin.NEXO, CustomItemPlugin.ORAXEN, CustomItemPlugin.HEADDATABASE));
             assertThat(handlers.getRegisteredListeners())
                 .extracting(registered -> (Object) registered.getListener().getClass())
-                .containsExactly(NexoProvider.class, OraxenProvider.class);
+                .containsExactly(NexoProvider.class, OraxenProvider.class, HeadDatabaseProvider.class);
 
             items.close();
 
             assertThat(handlers.getRegisteredListeners()).isEmpty();
             assertThat(items.statuses()).extracting(HookStatus::state).containsExactly(HookState.SWITCHED_OFF,
-                HookState.LOADING, HookState.LOADING, HookState.SWITCHED_OFF);
+                HookState.LOADING, HookState.LOADING, HookState.LOADING);
         } finally {
             HandlerList.unregisterAll(owner);
         }
@@ -1022,7 +1026,43 @@ final class CustomItemsTest {
             assertThat(items.resolve(dirt)).isEqualTo(new CustomItems.Resolution(null, false));
             when(headDatabase.isEnabled()).thenReturn(false);
             assertThat(items.resolve(dirt)).isEqualTo(new CustomItems.Resolution(null, false));
-            assertThat(apis.constructed()).isEmpty();
+            assertThat(apis.constructed()).hasSize(1);
+        }
+    }
+
+    @Test
+    void headDatabaseBuildsNoHeadUntilItsDatabaseLoaded() {
+        PluginManager manager = server();
+        install(manager, CustomItemPlugin.HEADDATABASE);
+        List<Listener> listeners = new ArrayList<>();
+        doAnswer(call -> listeners.add(call.getArgument(0)))
+            .when(manager).registerEvents(any(Listener.class), eq(owner));
+        ItemStack head = mock(ItemStack.class);
+        CustomItems.Built notReady = new CustomItems.Built(null, CustomItems.Built.Reason.NOT_READY);
+        HookStatus loading = new HookStatus("HeadDatabase", HookState.LOADING, "2.0", null);
+
+        try (MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class, (api, context) -> {
+            when(api.isHead("1234")).thenReturn(true);
+            when(api.getItemHead("1234")).thenReturn(head);
+        })) {
+            CustomItems items = CustomItems.detect(owner, errors, EnumSet.of(CustomItemPlugin.HEADDATABASE));
+
+            assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder switched off; Nexo switched"
+                + " off; Oraxen switched off; HeadDatabase on, waiting for its items to load.");
+            assertThat(items.ready()).isFalse();
+            assertThat(items.statuses().getLast()).isEqualTo(loading);
+            assertThat(items.create("hdb:1234")).isNull();
+            assertThat(items.build("hdb:1234")).isEqualTo(notReady);
+            assertThat(items.build("1234")).isEqualTo(notReady);
+            assertThat(items.resolve(dirt)).isEqualTo(new CustomItems.Resolution(null, false));
+            assertThat(apis.constructed()).hasSize(1);
+
+            ((HeadDatabaseProvider) listeners.getFirst()).loaded(new DatabaseLoadEvent(3));
+
+            assertThat(items.ready()).isTrue();
+            assertThat(items.statuses().getLast()).isEqualTo(new HookStatus("HeadDatabase", HookState.ON, "2.0", null));
+            assertThat(items.create("hdb:1234")).isSameAs(head);
+            assertThat(items.build("1234").item()).isSameAs(head);
         }
     }
 }

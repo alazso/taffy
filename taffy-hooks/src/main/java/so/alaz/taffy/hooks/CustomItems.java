@@ -126,11 +126,18 @@ public final class CustomItems {
      * visible to it and the plugin is enabled first when it is installed. A plugin that is not listed is
      * {@link HookState#NOT_VISIBLE}.
      *
-     * <p>Call on the server thread while the owner is enabled, normally from its {@code onEnable}: the integration
-     * of ItemsAdder, Nexo or Oraxen that is on registers a listener for the owner, which hears the event that ends
-     * the plugin's load and which the server refuses while the owner is not enabled. Those listeners stay registered
-     * until {@link #close} is called on the result or the owner disables, so a plugin that detects again, such as
-     * from its own reload command, closes the result it holds first.
+     * <p>Call on the server thread while the owner is enabled, normally from its {@code onEnable}: each integration
+     * that is on registers a listener for the owner, which hears the event that ends the plugin's load and which the
+     * server refuses while the owner is not enabled. Those listeners stay registered until {@link #close} is called
+     * on the result or the owner disables, so a plugin that detects again, such as from its own reload command,
+     * closes the result it holds first.
+     *
+     * <p>A plugin that had loaded its items before this call is {@link HookState#ON} at once. HeadDatabase has no
+     * query for whether its database is loaded, so it is asked for a random head and is on at once when it gives
+     * one. A HeadDatabase whose database holds no head gives none, as one that is still loading does, so it is
+     * {@link HookState#LOADING} until its next {@code DatabaseLoadEvent}. Nexo and Oraxen are on at once when they
+     * know an item name, so one that loaded with no item at all is {@link HookState#LOADING} until its next
+     * items-loaded event.
      *
      * @param owner the plugin that uses the integrations: its server's plugin manager is searched, its logger
      *     receives every log line, and the integrations register their listeners for it
@@ -147,7 +154,7 @@ public final class CustomItems {
         factories.put(CustomItemPlugin.ITEMSADDER, plugin -> ItemsAdderProvider.create(owner));
         factories.put(CustomItemPlugin.NEXO, plugin -> NexoProvider.create(owner));
         factories.put(CustomItemPlugin.ORAXEN, plugin -> OraxenProvider.create(owner));
-        factories.put(CustomItemPlugin.HEADDATABASE, plugin -> HeadDatabaseProvider.create());
+        factories.put(CustomItemPlugin.HEADDATABASE, plugin -> HeadDatabaseProvider.create(owner));
         return detect(owner, errors, switchedOn,
             new PluginPresence(owner.getServer().getPluginManager(), owner.getLogger()), factories);
     }

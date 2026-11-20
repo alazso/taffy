@@ -43,6 +43,14 @@ All notable changes to Taffy are documented here. This project follows
   `CustomItems.close()` unregisters, so `detect` runs while the owner is enabled, as it already does for
   ItemsAdder. A Nexo or Oraxen that loaded with no item at all reads `LOADING` after a later `detect` until its
   next items-loaded event.
+- `CustomItems` waits for HeadDatabase to load its database before it builds a head. HeadDatabase knows no head
+  until that load ends shortly after startup, so `create("hdb:1234")` in `onEnable` returned `null` as for an
+  unknown id while `ready()` read `true` and `statuses()` read `ON`. HeadDatabase is now `LOADING` until
+  `DatabaseLoadEvent`: `create` skips it, `build` gives `NOT_READY` and `ready()` is `false` until then. Its
+  integration registers a listener for the owner, which `CustomItems.close()` unregisters. HeadDatabase has no
+  query for whether its database is loaded, so a `detect` after the load asks it for a random head and reads `ON`
+  at once when it gives one. A database that holds no head gives none, so it reads `LOADING` until its next
+  `DatabaseLoadEvent`.
 
 ## [0.3.0] - 2026-11-20
 
