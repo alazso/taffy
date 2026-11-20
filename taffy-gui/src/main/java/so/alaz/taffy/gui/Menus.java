@@ -800,7 +800,9 @@ public final class Menus {
      * Ends every ask of the prompts built over these menus without a message, then closes every open menu now, on the
      * calling thread, for each viewer that thread owns, and runs each menu's closed step with {@code left = false}
      * itself: Paper marks the plugin disabled before {@code onDisable} and skips its listeners, so no close event
-     * arrives. The menus close even when ending the prompts throws. Nothing opens and nothing is asked afterwards, and
+     * arrives. Each viewer whose menu it closed is sent their inventory again through
+     * {@link Player#updateInventory()}. The menus close even when ending the prompts throws. Nothing opens and nothing
+     * is asked afterwards, and
      * a second call does nothing. The menu or prompt anvil of a viewer the calling thread does not own is forgotten
      * without its closed step and stays open, and once the plugin is disabled no listener cancels its clicks. Its
      * inventory is emptied from the calling thread, so such a viewer is left with an empty menu and has no copy to
@@ -822,6 +824,7 @@ public final class Menus {
                 if (viewer.isOnline() && ownedHere.test(viewer)) {
                     viewer.closeInventory(InventoryCloseEvent.Reason.PLUGIN);
                     closed(session);
+                    viewer.updateInventory();
                 } else {
                     session.getInventory().clear();
                 }

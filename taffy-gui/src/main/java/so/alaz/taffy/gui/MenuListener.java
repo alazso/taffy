@@ -44,6 +44,13 @@ import java.util.logging.Logger;
  * leaves the event cancelled, is logged with its stack, reported to {@link ErrorReports} under {@code gui.click},
  * clears {@link MenuSession#busy()} and plays {@link Cue#FAIL}.
  *
+ * <p>The client moves a stack on its own screen before the server answers, so after a cancelled shift-click, and
+ * after a menu closed, it can show a stack where the server has none. The listener of the menus that opened the
+ * session therefore sends the player's inventory again through {@link Player#updateInventory()}, on the next tick on
+ * the player's entity thread: to the player whose shift-click in the menu view was cancelled, and to the viewer whose
+ * menu closed, unless another inventory opened in its place, which the server sends in full. {@link Menus#shutdown()}
+ * sends it itself to each viewer whose menu it closes.
+ *
  * <p>In any view that is not a menu, a stack carrying the menus' preview key found on the clicked slot, the
  * cursor, a number key's hotbar slot or, for an offhand swap, the offhand is deleted, the click is cancelled and a
  * {@code preview.leak} warning is logged. A drag outside menus with a marked cursor is cancelled and, for a player, the
@@ -83,8 +90,13 @@ final class MenuListener implements Listener {
             return;
         }
         event.setCancelled(true);
-        if (session.owner() != menus || session.closed() || !(event.getWhoClicked() instanceof Player player)
-            || !player.getUniqueId().equals(session.viewer().getUniqueId())) {
+        if (session.owner() != menus || !(event.getWhoClicked() instanceof Player player)) {
+            return;
+        }
+        if (event.getClick().isShiftClick()) {
+            resync(player);
+        }
+        if (session.closed() || !player.getUniqueId().equals(session.viewer().getUniqueId())) {
             return;
         }
         int raw = event.getRawSlot();
@@ -182,7 +194,9 @@ final class MenuListener implements Listener {
     }
 
     /**
-     * Ends the session of a menu view of these menus its own viewer closed, for any reason.
+     * Ends the session of a menu view of these menus its own viewer closed, for any reason, and sends the viewer's
+     * inventory again on the next tick unless another inventory opens in place of the menu or the menus are stopping,
+     * when {@link Menus#shutdown()} sends it.
      *
      * @param event the close
      */
@@ -191,6 +205,10 @@ final class MenuListener implements Listener {
         if (event.getView().getTopInventory().getHolder(false) instanceof MenuSession<?> session
             && session.owner() == menus && event.getPlayer().getUniqueId().equals(session.viewer().getUniqueId())) {
             menus.closed(session);
+            if (event.getReason() != InventoryCloseEvent.Reason.OPEN_NEW && !menus.stopping()
+                && event.getPlayer() instanceof Player player) {
+                resync(player);
+            }
         }
     }
 
@@ -203,6 +221,12 @@ final class MenuListener implements Listener {
     public void onQuit(PlayerQuitEvent event) {
         menus.forget(event.getPlayer().getUniqueId());
         menus.prompts().quit(event.getPlayer().getUniqueId());
+    }
+
+    // The close event runs while the closing menu is still the player's container, and updateInventory sends the
+    // container the player has at the call.
+    private void resync(Player player) {
+        menus.tasks().accept(player, player::updateInventory);
     }
 
     private void leak(InventoryClickEvent event) {

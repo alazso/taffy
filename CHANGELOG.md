@@ -158,6 +158,12 @@ All notable changes to Taffy are documented here. This project follows
   until `busy(false)`, a load that ends or a handler that throws, which is how a handler whose work runs outside
   `Menus.load`, such as a claim that calls back on the viewer's thread, holds the session and releases it in the
   callback. `MenuSession.busy()` still reads `false` inside the handler of the first click.
+- The menu listener sends a player's inventory again, through `Player.updateInventory()` on the next tick on the
+  player's entity thread, after it cancelled the player's shift-click in a menu view and after the viewer's menu
+  closed, and `Menus.shutdown` sends it to each viewer whose menu it closes. The client moves a stack on its own
+  screen before the server answers, so it could keep showing a stack the server never moved until the next
+  inventory update. A menu that another inventory replaces sends nothing more, since the server sends the new
+  inventory in full.
 - The `Menu.closed` and `Menus` Javadoc state what `left = false` covers: these menus opened another menu in
   place of the session, a prompt took over through `Prompts.ask`, or the menus are stopping. They also state
   that a session never opens again once `closed` ran, since the menu a prompt opens afterwards is a new session,
