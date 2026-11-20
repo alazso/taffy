@@ -9,13 +9,16 @@ import org.bukkit.inventory.meta.SkullMeta;
 import org.jetbrains.annotations.Nullable;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 /**
@@ -28,17 +31,34 @@ import java.util.function.Supplier;
  * on the calling thread when the texture is already cached, so inventory or entity work must be
  * scheduled back onto the owning thread.
  *
- * <p>Resolved textures are cached per instance; failed lookups are not. A lookup the executor accepted
- * but never runs, as can happen to a task scheduled just before the owning plugin disables, leaves its
- * future and every later future for the same name or uuid from this instance incomplete. A lookup that
- * throws an {@link Error} completes its future exceptionally.
+ * <p>Lookups are cached per instance. A resolved texture is reused for 60 minutes from the moment its
+ * lookup completed, then the next call looks the skin up again. A failed lookup, one that found no texture
+ * or threw, is remembered for 2 minutes: calls for the same name or uuid in that time start no lookup and
+ * complete with a blank head, or exceptionally when the lookup threw an {@link Error}. A lookup the executor
+ * rejected is not remembered. The cache holds at most 1000 names and uuids, and a new one past that drops
+ * the one whose lookup started longest ago.
+ *
+ * <p>A lookup the executor accepted but never runs, as can happen to a task scheduled just before the owning
+ * plugin disables, leaves its future and every later future for the same name or uuid from this instance
+ * incomplete. A lookup that throws an {@link Error} completes its future exceptionally.
  *
  * <p>{@link #fromName} and {@link #fromUuid} may be called from any thread.
  */
 public final class SkullBuilder {
 
+    static final Duration RESOLVED_TTL = Duration.ofMinutes(60);
+    static final Duration FAILED_TTL = Duration.ofMinutes(2);
+    static final int MAX_CACHED = 1000;
+
     private final Executor lookups;
-    private final ConcurrentHashMap<String, CompletableFuture<String>> textureCache = new ConcurrentHashMap<>();
+    private final LongSupplier nanoClock;
+    // Insertion order is the order the lookups started in. Guarded by itself.
+    private final Map<String, Lookup> textureCache = new LinkedHashMap<>() {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Lookup> eldest) {
+            return size() > MAX_CACHED;
+        }
+    };
 
     /**
      * A builder whose {@link #fromName} and {@link #fromUuid} lookups run on {@code lookups}. A lookup
@@ -47,7 +67,13 @@ public final class SkullBuilder {
      * {@link Scheduler#asyncExecutor()} does: the lookup then completes with a blank head.
      */
     public SkullBuilder(Executor lookups) {
+        this(lookups, System::nanoTime);
+    }
+
+    /** As {@link #SkullBuilder(Executor)}, with the age of a cached lookup measured on {@code nanoClock}. */
+    SkullBuilder(Executor lookups, LongSupplier nanoClock) {
         this.lookups = lookups;
+        this.nanoClock = nanoClock;
     }
 
     /** A head carrying the given base64 {@code textures} property value (the {@code eyJ0ZXh0...} form). */
@@ -72,8 +98,9 @@ public final class SkullBuilder {
     }
 
     /**
-     * A head for the name's current skin, resolved from Mojang on the lookup executor and cached.
-     * Completes with a blank head if the name cannot be resolved or the executor rejects the lookup.
+     * A head for the name's skin, resolved from Mojang on the lookup executor and cached for 60 minutes.
+     * Completes with a blank head if the name cannot be resolved, a lookup of it failed in the last 2 minutes,
+     * or the executor rejects the lookup.
      */
     public CompletableFuture<ItemStack> fromName(String name) {
         return resolveTexture("name:" + name.toLowerCase(Locale.ROOT), () -> {
@@ -84,8 +111,9 @@ public final class SkullBuilder {
     }
 
     /**
-     * A head for the uuid's current skin, resolved from Mojang on the lookup executor and cached.
-     * Completes with a blank head if the uuid cannot be resolved or the executor rejects the lookup.
+     * A head for the uuid's skin, resolved from Mojang on the lookup executor and cached for 60 minutes.
+     * Completes with a blank head if the uuid cannot be resolved, a lookup of it failed in the last 2 minutes,
+     * or the executor rejects the lookup.
      */
     public CompletableFuture<ItemStack> fromUuid(UUID uuid) {
         return resolveTexture("uuid:" + uuid, () -> {
@@ -117,27 +145,60 @@ public final class SkullBuilder {
         return Base64.getEncoder().encodeToString(json.getBytes(StandardCharsets.UTF_8));
     }
 
+    /** The number of names and uuids in the cache, expired ones included. */
+    int cached() {
+        synchronized (textureCache) {
+            return textureCache.size();
+        }
+    }
+
     private CompletableFuture<String> resolveTexture(String key, Supplier<String> loader) {
-        CompletableFuture<String> lookup = textureCache.computeIfAbsent(key, cacheKey -> {
-            try {
-                return CompletableFuture.supplyAsync(() -> {
-                    try {
-                        return loader.get();
-                    } catch (RuntimeException ex) {
-                        return null;
-                    }
-                }, lookups);
-            } catch (RejectedExecutionException rejected) {
-                return CompletableFuture.completedFuture(null);
+        Lookup lookup = new Lookup();
+        synchronized (textureCache) {
+            Lookup cached = textureCache.get(key);
+            if (cached != null && !cached.expired(nanoClock.getAsLong())) {
+                return cached.texture;
             }
-        });
-        // Evicts a failed lookup so the next request retries it. Must stay outside computeIfAbsent: a
-        // lookup that already completed runs this immediately, and a removal inside computeIfAbsent throws.
-        lookup.whenComplete((value, error) -> {
-            if (value == null) {
+            // A put on a present key keeps its place in the insertion order.
+            textureCache.remove(key);
+            textureCache.put(key, lookup);
+        }
+        try {
+            lookups.execute(() -> {
+                String texture;
+                try {
+                    texture = loader.get();
+                } catch (RuntimeException ex) {
+                    texture = null;
+                } catch (Throwable error) {
+                    lookup.expireAfter(FAILED_TTL, nanoClock.getAsLong());
+                    lookup.texture.completeExceptionally(error);
+                    return;
+                }
+                lookup.expireAfter(texture != null ? RESOLVED_TTL : FAILED_TTL, nanoClock.getAsLong());
+                lookup.texture.complete(texture);
+            });
+        } catch (RejectedExecutionException rejected) {
+            synchronized (textureCache) {
                 textureCache.remove(key, lookup);
             }
-        });
-        return lookup;
+            lookup.texture.complete(null);
+        }
+        return lookup.texture;
+    }
+
+    private static final class Lookup {
+
+        final CompletableFuture<String> texture = new CompletableFuture<>();
+        // Written before texture completes.
+        private volatile long expiryNanos;
+
+        void expireAfter(Duration ttl, long nowNanos) {
+            expiryNanos = nowNanos + ttl.toNanos();
+        }
+
+        boolean expired(long nowNanos) {
+            return texture.isDone() && nowNanos - expiryNanos >= 0;
+        }
     }
 }

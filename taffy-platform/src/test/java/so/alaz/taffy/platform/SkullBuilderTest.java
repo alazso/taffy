@@ -15,6 +15,7 @@ import org.mockito.MockedStatic;
 import so.alaz.taffy.test.JvmDefaults;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.IdentityHashMap;
@@ -27,11 +28,13 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
@@ -53,6 +56,8 @@ final class SkullBuilderTest {
     private final Map<SkullMeta, Skin> metaSkins = new IdentityHashMap<>();
     private final Map<ItemStack, Skin> headSkins = new IdentityHashMap<>();
     private final UUID playerId = UUID.randomUUID();
+    // System.nanoTime may return any value and overflow: every test that moves the clock crosses Long.MAX_VALUE.
+    private final AtomicLong nanos = new AtomicLong(Long.MAX_VALUE - Duration.ofSeconds(1).toNanos());
     private MockedConstruction<ItemStack> stacks;
     private MockedStatic<Bukkit> bukkit;
 
@@ -119,6 +124,14 @@ final class SkullBuilderTest {
 
     private void uuidResolvesTo(UUID id, PlayerProfile first, PlayerProfile... next) {
         bukkit.<PlayerProfile>when(() -> Bukkit.createProfile(id)).thenReturn(first, next);
+    }
+
+    private SkullBuilder clockedSkulls() {
+        return new SkullBuilder(SAME_THREAD, nanos::get);
+    }
+
+    private void advance(Duration time) {
+        nanos.addAndGet(time.toNanos());
     }
 
     private static Skin skinOf(String texture) {
@@ -223,57 +236,79 @@ final class SkullBuilderTest {
     }
 
     @Test
-    void aNameWithoutASkinGivesABlankHeadAndIsLookedUpAgain() {
+    void aNameWithoutASkinGivesABlankHeadAndIsLookedUpAgainAfterTwoMinutes() {
         nameResolvesTo("Notch", resolvable(null), resolvable(TEXTURE));
-        SkullBuilder skulls = new SkullBuilder(SAME_THREAD);
+        SkullBuilder skulls = clockedSkulls();
 
         assertBlank(skulls.fromName("Notch").join());
-        assertTextured(skulls.fromName("Notch").join(), TEXTURE);
-    }
+        advance(SkullBuilder.FAILED_TTL.minusNanos(1));
+        assertBlank(skulls.fromName("Notch").join());
+        bukkit.verify(() -> Bukkit.createProfile("Notch"), times(1));
 
-    @Test
-    void aNameLookupThatThrowsGivesABlankHeadAndIsRetried() {
-        PlayerProfile resolved = resolvable(TEXTURE);
-        bukkit.when(() -> Bukkit.createProfile("Notch"))
-            .thenThrow(new IllegalStateException("no route to host"))
-            .thenReturn(resolved);
-        SkullBuilder skulls = new SkullBuilder(SAME_THREAD);
-
-        CompletableFuture<ItemStack> failed = skulls.fromName("Notch");
-        assertThat(failed).isCompleted();
-        assertBlank(failed.join());
-
+        advance(Duration.ofNanos(1));
         assertTextured(skulls.fromName("Notch").join(), TEXTURE);
         bukkit.verify(() -> Bukkit.createProfile("Notch"), times(2));
     }
 
     @Test
-    void aUuidLookupThatThrowsGivesABlankHeadAndIsRetried() {
+    void aNameLookupThatThrowsGivesABlankHeadAndIsRetriedAfterTwoMinutes() {
+        PlayerProfile resolved = resolvable(TEXTURE);
+        bukkit.when(() -> Bukkit.createProfile("Notch"))
+            .thenThrow(new IllegalStateException("no route to host"))
+            .thenReturn(resolved);
+        SkullBuilder skulls = clockedSkulls();
+
+        CompletableFuture<ItemStack> failed = skulls.fromName("Notch");
+        assertThat(failed).isCompleted();
+        assertBlank(failed.join());
+
+        advance(SkullBuilder.FAILED_TTL.minusNanos(1));
+        assertBlank(skulls.fromName("Notch").join());
+        bukkit.verify(() -> Bukkit.createProfile("Notch"), times(1));
+
+        advance(Duration.ofNanos(1));
+        assertTextured(skulls.fromName("Notch").join(), TEXTURE);
+        bukkit.verify(() -> Bukkit.createProfile("Notch"), times(2));
+    }
+
+    @Test
+    void aUuidLookupThatThrowsGivesABlankHeadAndIsRetriedAfterTwoMinutes() {
         PlayerProfile unreachable = mock(PlayerProfile.class);
         when(unreachable.complete(true)).thenThrow(new IllegalStateException("no route to host"));
         uuidResolvesTo(playerId, unreachable, resolvable(TEXTURE));
-        SkullBuilder skulls = new SkullBuilder(SAME_THREAD);
+        SkullBuilder skulls = clockedSkulls();
 
         CompletableFuture<ItemStack> failed = skulls.fromUuid(playerId);
         assertThat(failed).isCompleted();
         assertBlank(failed.join());
 
+        advance(SkullBuilder.FAILED_TTL.minusNanos(1));
+        assertBlank(skulls.fromUuid(playerId).join());
+        bukkit.verify(() -> Bukkit.createProfile(playerId), times(1));
+
+        advance(Duration.ofNanos(1));
         assertTextured(skulls.fromUuid(playerId).join(), TEXTURE);
         bukkit.verify(() -> Bukkit.createProfile(playerId), times(2));
     }
 
     @Test
-    void aLookupThatThrowsAnErrorCompletesExceptionallyAndIsRetried() {
+    void aLookupThatThrowsAnErrorCompletesExceptionallyAndIsRetriedAfterTwoMinutes() {
         PlayerProfile broken = mock(PlayerProfile.class);
         when(broken.complete(true)).thenThrow(new NoClassDefFoundError("com/mojang/authlib/GameProfile"));
         uuidResolvesTo(playerId, broken, resolvable(TEXTURE));
-        SkullBuilder skulls = new SkullBuilder(SAME_THREAD);
+        SkullBuilder skulls = clockedSkulls();
 
         CompletableFuture<ItemStack> failed = skulls.fromUuid(playerId);
 
         assertThat(failed).isCompletedExceptionally();
         assertThatThrownBy(failed::join).hasCauseInstanceOf(NoClassDefFoundError.class);
+
+        advance(SkullBuilder.FAILED_TTL.minusNanos(1));
+        assertThatThrownBy(skulls.fromUuid(playerId)::join).hasCauseInstanceOf(NoClassDefFoundError.class);
         assertThat(stacks.constructed()).isEmpty();
+        bukkit.verify(() -> Bukkit.createProfile(playerId), times(1));
+
+        advance(Duration.ofNanos(1));
         assertTextured(skulls.fromUuid(playerId).join(), TEXTURE);
         bukkit.verify(() -> Bukkit.createProfile(playerId), times(2));
     }
@@ -301,6 +336,107 @@ final class SkullBuilderTest {
         assertTextured(skulls.fromUuid(playerId).join(), TEXTURE);
 
         bukkit.verify(() -> Bukkit.createProfile(playerId), times(1));
+    }
+
+    @Test
+    void aResolvedTextureIsLookedUpAgainAfterSixtyMinutes() {
+        String changed = TEXTURE + "x";
+        nameResolvesTo("Notch", resolvable(TEXTURE), resolvable(changed));
+        SkullBuilder skulls = clockedSkulls();
+
+        assertTextured(skulls.fromName("Notch").join(), TEXTURE);
+        advance(SkullBuilder.RESOLVED_TTL.minusNanos(1));
+        assertTextured(skulls.fromName("Notch").join(), TEXTURE);
+        bukkit.verify(() -> Bukkit.createProfile("Notch"), times(1));
+
+        advance(Duration.ofNanos(1));
+        assertTextured(skulls.fromName("Notch").join(), changed);
+        assertTextured(skulls.fromName("Notch").join(), changed);
+        bukkit.verify(() -> Bukkit.createProfile("Notch"), times(2));
+    }
+
+    @Test
+    void theSixtyMinutesAreCountedFromTheMomentTheLookupCompleted() {
+        uuidResolvesTo(playerId, resolvable(TEXTURE), resolvable(TEXTURE));
+        List<Runnable> submitted = new ArrayList<>();
+        SkullBuilder skulls = new SkullBuilder(submitted::add, nanos::get);
+
+        CompletableFuture<ItemStack> head = skulls.fromUuid(playerId);
+        advance(Duration.ofMinutes(10));
+        submitted.getFirst().run();
+        assertTextured(head.join(), TEXTURE);
+
+        advance(SkullBuilder.RESOLVED_TTL.minusNanos(1));
+        assertThat(skulls.fromUuid(playerId)).isCompleted();
+        assertThat(submitted).hasSize(1);
+
+        advance(Duration.ofNanos(1));
+        assertThat(skulls.fromUuid(playerId)).isNotDone();
+        assertThat(submitted).hasSize(2);
+    }
+
+    @Test
+    void aLookupThatHasNotCompletedIsSharedHoweverLongItTakes() {
+        nameResolvesTo("Notch", resolvable(TEXTURE));
+        List<Runnable> submitted = new ArrayList<>();
+        SkullBuilder skulls = new SkullBuilder(submitted::add, nanos::get);
+
+        skulls.fromName("Notch");
+        advance(SkullBuilder.RESOLVED_TTL.multipliedBy(2));
+        skulls.fromName("Notch");
+
+        assertThat(submitted).hasSize(1);
+    }
+
+    @Test
+    void theCacheHoldsNoMoreThanItsBoundAndDropsTheLookupThatStartedLongestAgo() {
+        List<String> lookedUp = new ArrayList<>();
+        bukkit.when(() -> Bukkit.createProfile(anyString())).thenAnswer(call -> {
+            lookedUp.add(call.getArgument(0));
+            return resolvable(TEXTURE);
+        });
+        SkullBuilder skulls = clockedSkulls();
+
+        for (int player = 0; player < SkullBuilder.MAX_CACHED; player++) {
+            skulls.fromName("player" + player).join();
+        }
+        assertThat(skulls.cached()).isEqualTo(SkullBuilder.MAX_CACHED);
+
+        skulls.fromName("newcomer").join();
+        assertThat(skulls.cached()).isEqualTo(SkullBuilder.MAX_CACHED);
+
+        lookedUp.clear();
+        skulls.fromName("player1").join();
+        skulls.fromName("newcomer").join();
+        assertThat(lookedUp).isEmpty();
+
+        skulls.fromName("player0").join();
+        assertThat(lookedUp).containsExactly("player0");
+        assertThat(skulls.cached()).isEqualTo(SkullBuilder.MAX_CACHED);
+    }
+
+    @Test
+    void aLookupRepeatedAfterItExpiredCountsAsTheNewestInTheCache() {
+        List<String> lookedUp = new ArrayList<>();
+        bukkit.when(() -> Bukkit.createProfile(anyString())).thenAnswer(call -> {
+            lookedUp.add(call.getArgument(0));
+            return resolvable(TEXTURE);
+        });
+        SkullBuilder skulls = clockedSkulls();
+
+        skulls.fromName("first").join();
+        skulls.fromName("second").join();
+        advance(SkullBuilder.RESOLVED_TTL);
+        skulls.fromName("first").join();
+        for (int player = 2; player < SkullBuilder.MAX_CACHED + 1; player++) {
+            skulls.fromName("player" + player).join();
+        }
+
+        lookedUp.clear();
+        skulls.fromName("first").join();
+        assertThat(lookedUp).isEmpty();
+        skulls.fromName("second").join();
+        assertThat(lookedUp).containsExactly("second");
     }
 
     @Test

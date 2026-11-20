@@ -63,6 +63,18 @@ All notable changes to Taffy are documented here. This project follows
   value by its key path, such as `embeds[0].timestamp`. In 0.1 such a value was handed to Gson, which wrote
   whatever its reflection found. Migration: turn the value into a `String`, `Number` or `Boolean` before the
   template is given to `render`.
+- Breaking: `SkullBuilder.fromName` and `SkullBuilder.fromUuid` remember a failed lookup for 2 minutes and reuse a
+  resolved texture for 60 minutes, and one `SkullBuilder` caches at most 1000 names and uuids. In 0.1 a failed
+  lookup was not cached, so the next call for the same name or uuid looked it up again at once, and a page of
+  unresolvable names blocked one lookup per head on every menu open. Now a lookup that found no texture or threw
+  is kept for 2 minutes from the moment it completed: calls in that time start no lookup and complete with a
+  blank head, or exceptionally when the lookup threw an `Error`. A lookup the executor rejected is still not
+  remembered. In 0.1 a resolved texture stayed for the life of the instance, so a skin change was never seen
+  and the cache grew with every player shown. Now it is looked up again once 60 minutes have passed since its
+  lookup completed, and past 1000 entries the one whose lookup started longest ago is dropped. Migration: a
+  plugin that called `fromName` or `fromUuid` again right after a blank head to retry gets the same blank head
+  for 2 minutes; show the blank head and ask again later, or use a new `SkullBuilder`, which starts with an
+  empty cache.
 - `taffy-gui`: the package-private `CancelLink.link` returns `ClickEvent<?>`, the generic type Adventure 5 gives
   `ClickEvent`. Its erasure is the same, and no public signature changes.
 
