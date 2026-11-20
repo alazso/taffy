@@ -5,6 +5,15 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+- `YamlFileProvider.apply` compares the whole proposal with the values the file held when the provider was built,
+  so an apply that changes only live fields still returns `savedRestartRequired` naming every `restartRequired()`
+  field whose value differs from its startup value. Before, such an apply returned `applied` while a restart-only
+  change of an earlier apply, or of an edit of the file, still waited. Once the file holds the startup value
+  again, the result is `applied`. An item of an object list is compared with the startup item of the same item
+  key, or of the same index where the list declares no item key. A provider built while the file could not be
+  read reports, as before, only the restart-only changes of the apply itself.
+
 ## [0.2.1] - 2026-11-19
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

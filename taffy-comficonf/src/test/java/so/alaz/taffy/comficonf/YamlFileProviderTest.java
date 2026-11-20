@@ -474,6 +474,79 @@ class YamlFileProviderTest {
     }
 
     @Test
+    void aLaterLiveOnlyApplyStillNamesTheWaitingRestartOnlyChange() throws Exception {
+        ApplyResult first = provider.apply(changing(provider, "mode", "safe", ApplyMode.RESTART));
+        TestApplyContext liveOnly = changing(provider, "greeting", "Hi", ApplyMode.LIVE);
+
+        ApplyResult second = provider.apply(liveOnly);
+
+        assertThat(first.status()).isEqualTo(ApplyStatus.SAVED_RESTART_REQUIRED);
+        assertThat(first.restartRequired()).containsExactly("mode");
+        assertThat(liveOnly.requiresRestart()).isFalse();
+        assertThat(second.status()).isEqualTo(ApplyStatus.SAVED_RESTART_REQUIRED);
+        assertThat(second.restartRequired()).containsExactly("mode");
+        assertThat(second.message()).isEqualTo("Saved. Settings marked Restart required take effect after a server "
+            + "restart; all other changes are active.");
+        assertThat(second.newRevision()).isEqualTo(Revisions.of(Files.readAllBytes(file)));
+        assertThat(loaded.get().getString("greeting")).isEqualTo("Hi");
+        assertThat(activations).hasValue(2);
+    }
+
+    @Test
+    void aLiveOnlyApplyIsAppliedOnceTheFileHoldsTheStartupValueAgain() throws Exception {
+        provider.apply(changing(provider, "mode", "safe", ApplyMode.RESTART));
+        provider.apply(changing(provider, "mode", "fast", ApplyMode.RESTART));
+
+        ApplyResult result = provider.apply(changing(provider, "greeting", "Hi", ApplyMode.LIVE));
+
+        assertThat(result.status()).isEqualTo(ApplyStatus.APPLIED);
+        assertThat(result.restartRequired()).isEmpty();
+    }
+
+    @Test
+    void aLiveOnlyApplyNamesARestartOnlyValueEditedInTheFile() throws Exception {
+        Files.writeString(file, SETTINGS.replace("host: localhost", "host: db.example.net"));
+
+        ApplyResult result = provider.apply(changing(provider, "greeting", "Hi", ApplyMode.LIVE));
+
+        assertThat(result.status()).isEqualTo(ApplyStatus.SAVED_RESTART_REQUIRED);
+        assertThat(result.restartRequired()).containsExactly("database.host");
+    }
+
+    @Test
+    void aLaterLiveOnlyApplyStillNamesTheWaitingChangeOfAListItemByItsItemKey() throws Exception {
+        Path servers = file.resolveSibling("servers.yml");
+        Files.writeString(servers, """
+            servers:
+            - id: a
+              port: 1
+            - id: b
+              port: 2
+            """);
+        YamlFileProvider listed = YamlFileProvider.builder(servers, serversMapper(), () -> true)
+            .build(log.logger);
+        ConfigSnapshot current = listed.read();
+        Map<String, Object> changed = new LinkedHashMap<>();
+        changed.put("id", "b");
+        changed.put("port", 1L);
+        listed.apply(new TestApplyContext(current.revision(), current.values(),
+            current.values().with("servers", List.of(changed)), List.of(
+                new FieldChange("servers[0]", ChangeKind.REMOVED, ApplyMode.LIVE, false, "a", null, null),
+                new FieldChange("servers[0].port", ChangeKind.MODIFIED, ApplyMode.RESTART, false, "b", 2L, 1L))));
+        ConfigSnapshot saved = listed.read();
+        Map<String, Object> restored = new LinkedHashMap<>();
+        restored.put("id", "a");
+        restored.put("port", 1L);
+
+        ApplyResult result = listed.apply(new TestApplyContext(saved.revision(), saved.values(),
+            saved.values().with("servers", List.of(restored, changed)), List.of(
+                new FieldChange("servers[0]", ChangeKind.ADDED, ApplyMode.LIVE, false, "a", null, null))));
+
+        assertThat(result.status()).isEqualTo(ApplyStatus.SAVED_RESTART_REQUIRED);
+        assertThat(result.restartRequired()).containsExactly("servers[1].port");
+    }
+
+    @Test
     void keepsEveryRestartOnlyChangeWaitingWhenTheFileWasUnreadableAtBuild() throws Exception {
         Files.writeString(file, "greeting: [unclosed\n");
         YamlFileProvider unreadable = providerActivatedBy(() -> true);
@@ -484,6 +557,18 @@ class YamlFileProviderTest {
 
         assertThat(result.status()).isEqualTo(ApplyStatus.SAVED_RESTART_REQUIRED);
         assertThat(result.restartRequired()).containsExactly("mode");
+    }
+
+    @Test
+    void aLiveOnlyApplyNamesNoEarlierChangeWhenTheFileWasUnreadableAtBuild() throws Exception {
+        Files.writeString(file, "greeting: [unclosed\n");
+        YamlFileProvider unreadable = providerActivatedBy(() -> true);
+        Files.writeString(file, SETTINGS);
+        unreadable.apply(changing(unreadable, "mode", "safe", ApplyMode.RESTART));
+
+        ApplyResult result = unreadable.apply(changing(unreadable, "greeting", "Hi", ApplyMode.LIVE));
+
+        assertThat(result.status()).isEqualTo(ApplyStatus.APPLIED);
     }
 
     @Test

@@ -14,8 +14,11 @@ import com.comficonf.api.io.RevisionConflictException;
 import com.comficonf.api.io.Revisions;
 import com.comficonf.api.io.SafeFileWriter;
 import com.comficonf.api.schema.ApplyMode;
+import com.comficonf.api.schema.ConfigField;
 import com.comficonf.api.schema.ConfigSchema;
+import com.comficonf.api.schema.FieldType;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.config.ConfigLoadException;
 
 import java.io.IOException;
@@ -69,14 +72,24 @@ import java.util.logging.Logger;
  *
  * <h2>Restart-only fields</h2>
  *
- * <p>A changed field declared {@code restartRequired()} is reported as waiting for a restart unless its new value
- * equals the value the file held when the provider was built. A change inside an object list has a path through the
- * index of its item, which names another item once an item was added, removed or moved, so such a change may be
- * reported as waiting even when its new value equals its value at startup. A restart-only change is never reported as
- * in effect while its value differs from the value at startup. The report is true only when the code using a
- * restart-only value reads the settings of the first load, {@link so.alaz.taffy.config.ConfigHolder#startup()}; code
- * reading the settings in effect sees the new value at once, and the {@code savedRestartRequired} result is then
- * untrue.
+ * <p>Each apply compares the whole proposal with the values the file held when the provider was built. Every field
+ * declared {@code restartRequired()} whose value differs from its value at startup is reported as waiting for a
+ * restart, whether this apply changed it or an earlier apply or an edit of the file did, so an apply that changes
+ * only live fields still gives {@code savedRestartRequired} with the waiting paths. A field is no longer reported
+ * once the file holds its startup value again. A field declared {@code restartRequired()} that holds other fields
+ * is reported under its own path when a value inside it differs.
+ *
+ * <p>An item of an object list is compared with the item of the same item key at startup, and with the item at the
+ * same index where the list declares no item key; an item with no such item at startup has no startup values. A
+ * change of this apply inside an object list has a path through the index of its item, which names another item
+ * once an item was added, removed or moved, so such a change is reported as waiting even when its new value equals
+ * its value at startup. A restart-only change is never reported as in effect while its value differs from the value
+ * at startup. When the file could not be read as the provider was built, there are no startup values, and each
+ * apply reports the restart-only changes it makes itself and no others.
+ *
+ * <p>The report is true only when the code using a restart-only value reads the settings of the first load,
+ * {@link so.alaz.taffy.config.ConfigHolder#startup()}; code reading the settings in effect sees the new value at
+ * once, and the {@code savedRestartRequired} result is then untrue.
  *
  * <h2>The plugin's own writes</h2>
  *
@@ -110,7 +123,7 @@ public final class YamlFileProvider implements ConfigProvider {
     private final Callable<Boolean> activation;
     private final SectionMapper mapper;
     private final Function<ConfigValues, ValidationResult> rules;
-    private final ConfigValues startup;
+    private final @Nullable ConfigValues startup;
 
     private YamlFileProvider(Builder builder, Logger logger) {
         this.file = builder.file;
@@ -241,20 +254,20 @@ public final class YamlFileProvider implements ConfigProvider {
     }
 
     /**
-     * Changed restart-only paths whose new value differs from the value in effect since startup, and every changed
-     * restart-only path inside a list: its index may name another item at startup, so such a path is listed even when
-     * its new value equals its value at startup. A path whose value differs from its value at startup is always
-     * listed.
+     * Restart-only paths of the whole proposal whose value differs from the value in effect since startup, then every
+     * restart-only path inside a list that this apply changed: its index may name another item at startup, so such a
+     * path is listed even when its new value equals its value at startup. Without startup values, every restart-only
+     * path this apply changed.
      */
     private List<String> restartPending(ApplyContext context) {
-        if (!context.requiresRestart()) {
-            return List.of();
-        }
         List<String> waiting = new ArrayList<>();
+        if (startup != null) {
+            collectWaiting(mapper.schema().fields(), context.proposed().asMap(), startup.asMap(), "", waiting);
+        }
         for (FieldChange change : context.changes()) {
             String path = change.path();
-            if (change.applyMode() == ApplyMode.RESTART && (path.indexOf('[') >= 0
-                || !Objects.equals(context.proposed().get(path), startup.get(path)))) {
+            if (change.applyMode() == ApplyMode.RESTART && (startup == null || path.indexOf('[') >= 0)
+                && !waiting.contains(path)) {
                 waiting.add(path);
             }
         }
@@ -262,14 +275,67 @@ public final class YamlFileProvider implements ConfigProvider {
     }
 
     /**
-     * Values of the file when the provider is built: the values the plugin's restart-only consumers use. Empty when
-     * unreadable, so every restart-only change is reported.
+     * Adds to {@code waiting} the path of each restart-only field among {@code fields} whose value in
+     * {@code proposed} differs from its value in {@code atStartup}; missing and null count as equal. A value that is
+     * not a map holds no fields.
      */
-    private ConfigValues readStartupValues() {
+    private static void collectWaiting(List<ConfigField> fields, @Nullable Object proposed,
+                                       @Nullable Object atStartup, String path, List<String> waiting) {
+        Map<?, ?> now = proposed instanceof Map<?, ?> map ? map : Map.of();
+        Map<?, ?> then = atStartup instanceof Map<?, ?> map ? map : Map.of();
+        for (ConfigField field : fields) {
+            String fieldPath = ConfigPath.child(path, field.key());
+            Object value = now.get(field.key());
+            Object startupValue = then.get(field.key());
+            if (field.applyMode() == ApplyMode.RESTART) {
+                List<String> altered = new ArrayList<>();
+                collectAltered(value, startupValue, fieldPath, altered);
+                if (!altered.isEmpty()) {
+                    waiting.add(fieldPath);
+                }
+            } else if (field.type() == FieldType.OBJECT) {
+                collectWaiting(field.fields(), value, startupValue, fieldPath, waiting);
+            } else if (field.type() == FieldType.OBJECT_LIST && value instanceof List<?> items) {
+                List<?> startupItems = startupValue instanceof List<?> list ? list : List.of();
+                for (int i = 0; i < items.size(); i++) {
+                    collectWaiting(field.fields(), items.get(i),
+                        startupItem(field.itemKey(), items.get(i), i, startupItems), ConfigPath.index(fieldPath, i),
+                        waiting);
+                }
+            }
+        }
+    }
+
+    /**
+     * The item of {@code startupItems} that {@code item} stood for at startup: the first one with the same value
+     * under {@code itemKey}, or the one at {@code index} when {@code itemKey} is null. Null when there is none.
+     */
+    private static @Nullable Object startupItem(@Nullable String itemKey, @Nullable Object item, int index,
+                                                List<?> startupItems) {
+        if (itemKey == null) {
+            return index < startupItems.size() ? startupItems.get(index) : null;
+        }
+        Object key = item instanceof Map<?, ?> map ? map.get(itemKey) : null;
+        if (key == null) {
+            return null;
+        }
+        for (Object candidate : startupItems) {
+            if (candidate instanceof Map<?, ?> map && key.equals(map.get(itemKey))) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Values of the file when the provider is built: the values the plugin's restart-only consumers use. Null when
+     * unreadable.
+     */
+    private @Nullable ConfigValues readStartupValues() {
         try {
             return mapper.read(YamlBytes.parse(YamlBytes.read(file, fileName), fileName));
         } catch (IOException | ConfigLoadException | RuntimeException e) {
-            return ConfigValues.empty();
+            return null;
         }
     }
 
@@ -340,7 +406,7 @@ public final class YamlFileProvider implements ConfigProvider {
         /**
          * Builds the provider and reads the file once for the values in effect since startup. Call it after the
          * plugin loaded the file in {@code onEnable}. A file that cannot be read then gives no startup values, so
-         * every later restart-only change is reported as waiting.
+         * every later restart-only change is reported as waiting by the apply that makes it and by no later apply.
          *
          * @param logger the plugin's logger, which receives the apply lines and the activation failures with their
          *     stacks; an activation failure is logged only, because its message can carry a configuration value
