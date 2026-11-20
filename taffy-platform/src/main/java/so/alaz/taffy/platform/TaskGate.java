@@ -39,7 +39,11 @@ public final class TaskGate {
         return true;
     }
 
-    /** Marks an admitted task done. A call that matches no admitted task does nothing. */
+    /**
+     * Marks an admitted task done. A call with no task admitted does nothing. Call {@code exit} exactly once
+     * for each {@link #enter} that returned {@code true}; an unmatched call while tasks run releases one of
+     * them, so {@link #close} can return before that task has exited.
+     */
     public void exit() {
         state.updateAndGet(current -> running(current) == 0 ? current : current - 1);
     }
