@@ -310,7 +310,7 @@ public final class Frame<S> {
      * @param icon a whole icon that replaces the layout's item and text, or {@code null} to draw the layout's item
      * @param amount the stack amount
      * @param clicks the click types the button acts on; only those in {@link ClickGuard#ANY_PLAIN} ever reach it
-     * @param exclusive whether the button is dropped while an exclusive action of the session is in flight
+     * @param exclusive whether the button is exclusive, as {@link #exclusively()} states
      * @param handler what a click does, or {@code null} for display only
      */
     public record Spec(List<TagResolver> placeholders, List<Component> extraLore, boolean glint, @Nullable Icon icon,
@@ -413,9 +413,12 @@ public final class Frame<S> {
         }
 
         /**
-         * Gives this spec as exclusive.
+         * Gives this spec as exclusive: a click on it is dropped while the session is {@link MenuSession#busy()}, and
+         * a load its handler starts through {@link Menus#load} keeps the session busy until the load applies, fails or
+         * is cancelled, with no call in the handler. A handler whose work runs outside {@code Menus.load} holds the
+         * session itself through {@link MenuSession#busy(boolean)}.
          *
-         * @return a copy that is dropped while an exclusive action of the session is in flight
+         * @return a copy that is exclusive
          */
         public Spec exclusively() {
             return new Spec(placeholders, extraLore, glint, icon, amount, clicks, true, handler);
@@ -428,7 +431,7 @@ public final class Frame<S> {
      * @param icon what the row shows
      * @param handler what a click does, or {@code null} for display only
      * @param clicks the click types the row acts on; only those in {@link ClickGuard#ANY_PLAIN} ever reach it
-     * @param exclusive whether the row is dropped while an exclusive action of the session is in flight
+     * @param exclusive whether the row is exclusive, as {@link #exclusively()} states
      */
     public record Entry(Icon icon, @Nullable ClickHandler handler, Set<ClickType> clicks, boolean exclusive) {
 
@@ -465,9 +468,12 @@ public final class Frame<S> {
         }
 
         /**
-         * Gives this row as exclusive.
+         * Gives this row as exclusive: a click on it is dropped while the session is {@link MenuSession#busy()}, and
+         * a load its handler starts through {@link Menus#load} keeps the session busy until the load applies, fails or
+         * is cancelled, with no call in the handler. A handler whose work runs outside {@code Menus.load} holds the
+         * session itself through {@link MenuSession#busy(boolean)}.
          *
-         * @return a copy that is dropped while an exclusive action of the session is in flight
+         * @return a copy that is exclusive
          */
         public Entry exclusively() {
             return new Entry(icon, handler, clicks, true);

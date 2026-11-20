@@ -29,7 +29,9 @@ public final class MenuSession<S> implements InventoryHolder {
     private Map<Integer, Button> buttons = Map.of();
     private @Nullable Inventory inventory;
     private @Nullable Canvas canvas;
-    private boolean busy;
+    private boolean held;
+    private boolean guarded;
+    private boolean loading;
     private boolean closed;
     private boolean handoff;
     private boolean closedInHandoff;
@@ -160,21 +162,49 @@ public final class MenuSession<S> implements InventoryHolder {
     }
 
     /**
-     * Tells whether an exclusive action is in flight.
+     * Tells whether an exclusive action is in flight, during which a click on an exclusive button is dropped. The
+     * session is busy while the load the handler of an exclusive button started has not ended, and while a handler
+     * holds it through {@link #busy(boolean)}. Inside a handler it is {@code false} unless one of the two holds from
+     * an earlier click.
      *
      * @return whether the session is busy
      */
     public boolean busy() {
-        return busy;
+        return held || guarded;
     }
 
     /**
-     * Marks an exclusive action as started or finished. A load clears it when it applies or fails.
+     * Holds the session busy, or releases it. The handler of an exclusive button whose work runs through
+     * {@link Menus#load(MenuSession, java.util.concurrent.CompletableFuture, java.util.function.BiConsumer)} calls
+     * neither: the session is busy until that load ends. A handler whose work runs outside {@code Menus.load}, such
+     * as a claim that calls back, calls {@code busy(true)} before it starts the work, and the hold lasts past the
+     * handler's return until {@code busy(false)} is called on the viewer's entity thread, such as in that callback.
+     * {@code busy(false)} also releases a session that is busy for a load. A load that applies, fails or is cancelled
+     * and a handler that throws release the hold too.
      *
-     * @param busy whether an exclusive action is in flight
+     * @param busy {@code true} to hold the session, {@code false} to release it
      */
     public void busy(boolean busy) {
-        this.busy = busy;
+        this.held = busy;
+        if (!busy) {
+            this.guarded = false;
+        }
+    }
+
+    /** Keeps the session busy until the load in flight ends or {@link #busy(boolean)} releases it. */
+    void guard() {
+        this.guarded = true;
+    }
+
+    /** Tells whether the latest load has neither applied, failed nor been cancelled yet. */
+    boolean loading() {
+        return loading;
+    }
+
+    /** The latest load applied, failed or was cancelled: releases the session. */
+    void loadEnded() {
+        this.loading = false;
+        busy(false);
     }
 
     /**
@@ -215,6 +245,7 @@ public final class MenuSession<S> implements InventoryHolder {
     }
 
     long nextLoad() {
+        loading = true;
         return ++loadToken;
     }
 

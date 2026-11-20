@@ -116,6 +116,15 @@ All notable changes to Taffy are documented here. This project follows
   does not own, which happens only on Folia. Such a menu still stays open with no listener to cancel its clicks,
   but it now shows nothing, so its viewer has no menu copy to take. Before, it stayed fully stocked and a copy
   taken from it was deleted only when a click met it after a later enable.
+- `Frame.Spec.exclusively()`, `Frame.Entry.exclusively()` and the footer's refresh guard their handler with no
+  `session.busy(true)` in it. When the handler of an exclusive button returns with a load it started through
+  `Menus.load` still in flight, the session stays busy until that load applies, fails or is cancelled, and every
+  click on an exclusive button is dropped meanwhile. Before, `exclusively()` did nothing unless the handler called
+  `MenuSession.busy(true)` itself, so a buy button without that call ran a second purchase once the 250 ms
+  debounce passed. A handler that calls `busy(true)` keeps working: its hold lasts past the handler's return
+  until `busy(false)`, a load that ends or a handler that throws, which is how a handler whose work runs outside
+  `Menus.load`, such as a claim that calls back on the viewer's thread, holds the session and releases it in the
+  callback. `MenuSession.busy()` still reads `false` inside the handler of the first click.
 - A plugin with two `Menus`, such as one for player menus and one for admin menus, runs a button's handler once
   per click. Each `Menus` registers its own listener, and before, both listeners dispatched every click in any
   menu, so the handler ran twice, the click sound played twice, and the listener registered first ended every

@@ -35,9 +35,11 @@ import java.util.logging.Logger;
  * of the menu inventory that holds a button accepting that click type, reaches the button. The checks then run in this
  * order: the open arming (no click within the click debounce window of the menu opening), the busy check (an exclusive
  * button is dropped while {@link MenuSession#busy()}), and the per-button click debounce. An accepted click plays
- * {@link Cue#CLICK}. A handler that throws a {@link RuntimeException} leaves the event cancelled, is logged with its
- * stack, reported to {@link ErrorReports} under {@code gui.click}, clears {@link MenuSession#busy()} and plays
- * {@link Cue#FAIL}.
+ * {@link Cue#CLICK}. When the handler of an exclusive button returns with a load it started through
+ * {@link Menus#load} still in flight, the session stays busy until that load ends. A hold the handler took through
+ * {@link MenuSession#busy(boolean)} is left as the handler set it. A handler that throws a {@link RuntimeException}
+ * leaves the event cancelled, is logged with its stack, reported to {@link ErrorReports} under {@code gui.click},
+ * clears {@link MenuSession#busy()} and plays {@link Cue#FAIL}.
  *
  * <p>In any view that is not a menu, a stack carrying the menus' preview key found on the clicked slot, the
  * cursor, a number key's hotbar slot or, for an offhand swap, the offhand is deleted, the click is cancelled and a
@@ -105,8 +107,12 @@ final class MenuListener implements Listener {
             return;
         }
         menus.feedback().play(player, Cue.CLICK);
+        long load = session.loadToken();
         try {
             handler.click(new Click(session, player, click, raw));
+            if (button.exclusive() && session.loadToken() != load && session.loading()) {
+                session.guard();
+            }
         } catch (RuntimeException failure) {
             logger.log(Level.WARNING, "gui: " + session.id() + " button " + button.key() + " failed for "
                 + player.getName() + ": " + failure, failure);

@@ -604,10 +604,12 @@ public final class Menus {
     /**
      * Runs {@code apply} on the viewer's entity thread once {@code source} completes and draws the session again,
      * unless the session closed or a later load started meanwhile. Call on the viewer's entity thread, such as from
-     * {@link Menu#opened(MenuSession, Player)} or a {@link ClickHandler}. {@link MenuSession#busy()}, which a handler
-     * sets when it starts an exclusive action, clears when the load applies, fails or is cancelled, unless a later load
-     * started. A failure of {@code source} or {@code apply} is logged with its stack and reported; while the session is
-     * open and no later load started, the viewer is also told {@link #ERROR} and hears {@link Cue#FAIL}. A
+     * {@link Menu#opened(MenuSession, Player)} or a {@link ClickHandler}. A load the handler of an exclusive button
+     * starts keeps the session {@link MenuSession#busy()} once the handler returned, with no call in the handler.
+     * {@link MenuSession#busy()}, a handler's own {@link MenuSession#busy(boolean)} hold included, clears when the load
+     * applies, fails or is cancelled, unless a later load started. A failure of {@code source} or {@code apply} is
+     * logged with its stack and reported; while the session is open and no later load started, the viewer is also told
+     * {@link #ERROR} and hears {@link Cue#FAIL}. A
      * {@code source} that was cancelled is no failure: nothing is logged, reported or told. When the viewer left the
      * server, the viewer is told nothing; a failure of {@code source} itself is still logged and reported. Once
      * {@link #shutdown()} ran, a load that ends without applying does nothing more.
@@ -628,7 +630,7 @@ public final class Menus {
         UUID viewer = session.viewer().getUniqueId();
         source.thenCompose(value -> parts.entity().call(viewer, player -> {
             if (!session.closed() && session.loadToken() == token) {
-                session.busy(false);
+                session.loadEnded();
                 apply.accept(session, value);
                 rerender(session);
             }
@@ -648,7 +650,7 @@ public final class Menus {
                 if (session.loadToken() != token) {
                     return null;
                 }
-                session.busy(false);
+                session.loadEnded();
                 if (failed && !session.closed()) {
                     player.sendMessage(parts.text().render(parts.locales().apply(player), ERROR));
                     feedback.play(player, Cue.FAIL);
