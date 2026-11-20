@@ -529,6 +529,89 @@ class YamlFileProviderTest {
     }
 
     @Test
+    void anActivationThatRunsAfterACallSyncTimeoutStillTakesEffect() throws Exception {
+        AtomicReference<Callable<?>> queued = new AtomicReference<>();
+        TestApplyContext context = changing(provider, "greeting", "Hi", ApplyMode.LIVE).onMainThread(task -> {
+            queued.set(task);
+            throw new TimeoutException("main thread busy");
+        });
+
+        ApplyResult result = provider.apply(context);
+
+        assertThat(result.status()).isEqualTo(ApplyStatus.SAVED_RESTART_REQUIRED);
+        assertThat(result.message()).isEqualTo(NOT_LOADED);
+        assertThat(activations).hasValue(0);
+        assertThat(loaded.get().getString("greeting")).isEqualTo("Hello");
+
+        Object late = queued.get().call();
+
+        assertThat(late).isEqualTo(true);
+        assertThat(activations).hasValue(1);
+        assertThat(lockedDuringActivation).isFalse();
+        assertThat(loaded.get().getString("greeting")).isEqualTo("Hi");
+        assertThat(log.lines()).containsExactly(LOAD_FAILED);
+        assertThat(provider.read().revision()).isEqualTo(result.newRevision());
+    }
+
+    @Test
+    void anApplyAfterACallSyncTimeoutStartsFromTheRevisionOfTheSavedFile() throws Exception {
+        TestApplyContext timedOut = changing(provider, "greeting", "Hi", ApplyMode.LIVE).onMainThread(task -> {
+            throw new TimeoutException("main thread busy");
+        });
+        ApplyResult first = provider.apply(timedOut);
+        ConfigSnapshot saved = provider.read();
+
+        ApplyResult second = provider.apply(TestApplyContext.changing(first.newRevision(), saved.values(), "radius",
+            8L, ApplyMode.LIVE));
+
+        assertThat(second.status()).isEqualTo(ApplyStatus.APPLIED);
+        assertThat(activations).hasValue(1);
+        assertThat(loaded.get().getString("greeting")).isEqualTo("Hi");
+        assertThat(loaded.get().getInt("radius")).isEqualTo(8);
+    }
+
+    @Test
+    void twoConsecutiveAppliesEachStartFromTheRevisionOfTheOneBefore() throws Exception {
+        ConfigSnapshot start = provider.read();
+        ApplyResult first = provider.apply(TestApplyContext.changing(start.revision(), start.values(), "greeting",
+            "Hi", ApplyMode.LIVE));
+        ConfigSnapshot afterFirst = provider.read();
+
+        ApplyResult second = provider.apply(TestApplyContext.changing(first.newRevision(), afterFirst.values(),
+            "radius", 8L, ApplyMode.LIVE));
+
+        assertThat(first.status()).isEqualTo(ApplyStatus.APPLIED);
+        assertThat(afterFirst.revision()).isEqualTo(first.newRevision());
+        assertThat(second.status()).isEqualTo(ApplyStatus.APPLIED);
+        assertThat(second.newRevision()).isNotEqualTo(first.newRevision())
+            .isEqualTo(Revisions.of(Files.readAllBytes(file)));
+        assertThat(Files.readString(file)).contains("greeting: Hi").contains("radius: 8")
+            .contains("# Settings of the test plugin");
+        assertThat(activations).hasValue(2);
+        assertThat(loaded.get().getString("greeting")).isEqualTo("Hi");
+        assertThat(loaded.get().getInt("radius")).isEqualTo(8);
+        assertThat(SafeFileWriter.listBackups(file, BackupPolicy.in(backups))).hasSize(2);
+    }
+
+    @Test
+    void aSecondApplyFromTheRevisionBeforeTheFirstIsAConflict() throws Exception {
+        ConfigSnapshot start = provider.read();
+        ApplyResult first = provider.apply(TestApplyContext.changing(start.revision(), start.values(), "greeting",
+            "Hi", ApplyMode.LIVE));
+        byte[] afterFirst = Files.readAllBytes(file);
+        TestApplyContext stale = TestApplyContext.changing(start.revision(), start.values(), "radius", 8L,
+            ApplyMode.LIVE);
+
+        ApplyResult second = provider.apply(stale);
+
+        assertThat(second.status()).isEqualTo(ApplyStatus.CONFLICT);
+        assertThat(second.currentRevision()).isEqualTo(first.newRevision());
+        assertThat(Files.readAllBytes(file)).isEqualTo(afterFirst);
+        assertThat(stale.syncCalls).hasValue(0);
+        assertThat(activations).hasValue(1);
+    }
+
+    @Test
     void anInterruptedActivationKeepsTheInterruptFlag() throws Exception {
         TestApplyContext context = changing(provider, "greeting", "Hi", ApplyMode.LIVE).onMainThread(task -> {
             throw new InterruptedException();

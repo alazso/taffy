@@ -58,7 +58,10 @@ import java.util.logging.Logger;
  * interrupted all mean the values are not in effect. A failure the activation threw and a {@code callSync} that
  * timed out or was interrupted are each logged as a warning with its stack and never reported to the plugin's
  * {@code ErrorReports}, because the message of a failure of the plugin's loader can quote a configuration value.
- * The {@code savedRestartRequired} result then carries the text of {@link Builder#notLoadedMessage}.
+ * The {@code savedRestartRequired} result then carries the text of {@link Builder#notLoadedMessage}. A
+ * {@code callSync} that timed out may leave the activation waiting for the main thread, which can still run it after
+ * {@link #apply} returned: the values are then in effect although the result said they are not, and the outcome of
+ * that late run is neither logged nor reported.
  * {@code holder::reload} of a {@link so.alaz.taffy.config.ConfigHolder} serves as the activation.
  *
  * <p>The result is true only when the schema and the plugin's rules accept no more than the loader the activation
