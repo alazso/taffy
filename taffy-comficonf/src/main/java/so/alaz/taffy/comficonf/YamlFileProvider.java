@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.locks.Lock;
 import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -41,10 +42,11 @@ import java.util.logging.Logger;
  *
  * <p>The bridge calls {@link #describe()}, {@link #read()}, {@link #validate} and {@link #apply} on its worker
  * thread, and each call parses its own document. {@link #read()} takes the values and the revision from one read of
- * the file. {@link #apply} checks the base revision against the current bytes, merges the proposal into the
- * document parsed from them, refuses a value the file cannot store unchanged and writes through
- * {@link SafeFileWriter}, which keeps the 10 newest backups in the {@code backups} folder beside the file. With
- * no lock held, it then runs the activation on the main thread through {@link ApplyContext#callSync}. Nothing after
+ * the file, made while holding the lock of {@link SafeFileWriter#lockFor(Path)}. {@link #apply} takes that lock,
+ * reads the file, checks the base revision against the current bytes, merges the proposal into the document parsed
+ * from them, refuses a value the file cannot store unchanged and writes through {@link SafeFileWriter}, which keeps
+ * the 10 newest backups in the {@code backups} folder beside the file, and releases the lock. With no lock held, it
+ * then runs the activation on the main thread through {@link ApplyContext#callSync}. Nothing after
  * the write throws: the result is {@code applied} only when the activation returned {@code true} and no restart-only
  * change waits, and {@code savedRestartRequired} otherwise.
  *
@@ -94,9 +96,12 @@ import java.util.logging.Logger;
  *
  * <h2>The plugin's own writes</h2>
  *
- * <p>An apply checks the revision of the file and moves the new content over it while holding the lock that
- * {@link ComfiConfConnection#lockFor(Path)} gives for the same path. A write of the file by the plugin outside
- * ComfiConf holds that lock from reading the file anew to saving it, so an apply racing the write reports a conflict.
+ * <p>An apply reads the file, checks its revision and moves the new content over it while holding the lock that
+ * {@link ComfiConfConnection#lockFor(Path)} gives for the same path, and {@link #read()} and
+ * {@link Builder#build(Logger)} read the file while holding it. A write of the file by the plugin outside ComfiConf
+ * holds that lock from reading the file anew to saving it, so an apply racing the write reports a conflict, and
+ * neither a read nor an apply sees a file the plugin has written in part. The lock is held for file access only
+ * and never while the activation runs.
  * A write without the lock that lands between the revision check and the move of an apply is replaced by the apply
  * with no conflict, and a write of values read before an apply reverts that apply. The provider never calls
  * {@code notifyChanged()}: the plugin calls {@link ComfiConfConnection#notifyChanged()} after each such write and
@@ -158,7 +163,8 @@ public final class YamlFileProvider implements ConfigProvider {
     }
 
     /**
-     * Reads the file once; values and revision come from the same bytes, so edits by hand are detected.
+     * Reads the file once, holding the lock of {@link SafeFileWriter#lockFor(Path)} for the read; values and revision
+     * come from the same bytes, so edits by hand are detected.
      *
      * @throws IOException when the file cannot be read, a missing file included
      * @throws ConfigLoadException when the file is not UTF-8, not valid YAML or larger than 16 MiB; for invalid YAML
@@ -168,7 +174,7 @@ public final class YamlFileProvider implements ConfigProvider {
      */
     @Override
     public ConfigSnapshot read() throws IOException, ConfigLoadException {
-        byte[] content = YamlBytes.read(file, fileName);
+        byte[] content = readLocked();
         return ConfigSnapshot.of(mapper.read(YamlBytes.parse(content, fileName)), Revisions.of(content));
     }
 
@@ -181,7 +187,8 @@ public final class YamlFileProvider implements ConfigProvider {
     }
 
     /**
-     * Writes the proposal into the file and runs the activation.
+     * Writes the proposal into the file and runs the activation. The lock of {@link SafeFileWriter#lockFor(Path)} is
+     * held from the read of the file to the end of the write, and released before the activation.
      *
      * @throws IOException when the file cannot be read or written; nothing was written
      * @throws ConfigLoadException when the file is not UTF-8, not valid YAML or larger than 16 MiB; nothing was
@@ -189,33 +196,51 @@ public final class YamlFileProvider implements ConfigProvider {
      */
     @Override
     public ApplyResult apply(ApplyContext context) throws IOException, ConfigLoadException {
-        byte[] current = YamlBytes.read(file, fileName);
-        String currentRevision = Revisions.of(current);
-        if (!currentRevision.equals(context.baseRevision())) {
-            return ApplyResult.conflict(currentRevision);
-        }
-        ValidationResult storable = mapper.validate(context.proposed());
-        if (!storable.isValid()) {
-            return ApplyResult.rejected(storable);
-        }
-        YamlConfiguration yaml = YamlBytes.parse(current, fileName);
-        mapper.write(context.proposed(), yaml);
-        byte[] updated = YamlBytes.encodeLike(yaml.saveToString(), current);
-        List<String> altered = alteredPaths(context.proposed(), YamlBytes.parse(updated, fileName));
-        if (!altered.isEmpty()) {
-            ValidationResult.Builder rejection = ValidationResult.builder();
-            for (String path : altered) {
-                rejection.error(path, fileName + " cannot store this value unchanged, so nothing was saved.");
-            }
-            return ApplyResult.rejected(rejection.build());
-        }
         String newRevision;
+        // SafeFileWriter.write takes the same lock again: it is a ReentrantLock.
+        Lock lock = SafeFileWriter.lockFor(file);
+        lock.lock();
         try {
-            newRevision = SafeFileWriter.write(file, updated, context.baseRevision(), backups).newRevision();
-        } catch (RevisionConflictException e) {
-            return ApplyResult.conflict(e.currentRevision());
+            byte[] current = YamlBytes.read(file, fileName);
+            String currentRevision = Revisions.of(current);
+            if (!currentRevision.equals(context.baseRevision())) {
+                return ApplyResult.conflict(currentRevision);
+            }
+            ValidationResult storable = mapper.validate(context.proposed());
+            if (!storable.isValid()) {
+                return ApplyResult.rejected(storable);
+            }
+            YamlConfiguration yaml = YamlBytes.parse(current, fileName);
+            mapper.write(context.proposed(), yaml);
+            byte[] updated = YamlBytes.encodeLike(yaml.saveToString(), current);
+            List<String> altered = alteredPaths(context.proposed(), YamlBytes.parse(updated, fileName));
+            if (!altered.isEmpty()) {
+                ValidationResult.Builder rejection = ValidationResult.builder();
+                for (String path : altered) {
+                    rejection.error(path, fileName + " cannot store this value unchanged, so nothing was saved.");
+                }
+                return ApplyResult.rejected(rejection.build());
+            }
+            try {
+                newRevision = SafeFileWriter.write(file, updated, context.baseRevision(), backups).newRevision();
+            } catch (RevisionConflictException e) {
+                return ApplyResult.conflict(e.currentRevision());
+            }
+        } finally {
+            lock.unlock();
         }
         return activate(context, newRevision);
+    }
+
+    /** The bytes of the file, read while holding the lock every {@link SafeFileWriter} write of it takes. */
+    private byte[] readLocked() throws IOException, ConfigLoadException {
+        Lock lock = SafeFileWriter.lockFor(file);
+        lock.lock();
+        try {
+            return YamlBytes.read(file, fileName);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Runs the activation after the write; never throws. */
@@ -336,7 +361,7 @@ public final class YamlFileProvider implements ConfigProvider {
      */
     private @Nullable ConfigValues readStartupValues() {
         try {
-            return mapper.read(YamlBytes.parse(YamlBytes.read(file, fileName), fileName));
+            return mapper.read(YamlBytes.parse(readLocked(), fileName));
         } catch (IOException | ConfigLoadException | RuntimeException e) {
             return null;
         }

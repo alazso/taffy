@@ -12,6 +12,11 @@ All notable changes to Taffy are documented here. This project follows
   the plugin could not load them, so they are not in effect."
 
 ### Fixed
+- `YamlFileProvider.read`, the first read of `YamlFileProvider.apply` and the read of
+  `YamlFileProvider.Builder.build` hold the lock of `SafeFileWriter.lockFor(file)`, the lock
+  `ComfiConfConnection.lockFor(file)` gives while a resource is registered. A write of the file by the plugin
+  under that lock is no longer seen in part by a read or an apply. `apply` holds the lock from its read of the
+  file to the end of its write and releases it before the activation runs.
 - `YamlFileProvider.apply` compares the whole proposal with the values the file held when the provider was built,
   so an apply that changes only live fields still returns `savedRestartRequired` naming every `restartRequired()`
   field whose value differs from its startup value. Before, such an apply returned `applied` while a restart-only

@@ -260,7 +260,7 @@ class YamlFileProviderTest {
     }
 
     @Test
-    void reportsAConflictWhenTheFileChangesWhileTheWriteWaitsForItsLock() throws Exception {
+    void reportsAConflictWhenTheFileChangesWhileTheApplyWaitsForTheLock() throws Exception {
         TestApplyContext context = changing(provider, "greeting", "Hi", ApplyMode.LIVE);
         FutureTask<ApplyResult> apply = new FutureTask<>(() -> provider.apply(context));
         ReentrantLock lock = SafeFileWriter.lockFor(file);
@@ -287,6 +287,78 @@ class YamlFileProviderTest {
         assertThat(Files.readAllBytes(file)).isEqualTo(edited);
         assertThat(context.syncCalls).hasValue(0);
         assertThat(activations).hasValue(0);
+    }
+
+    @Test
+    void readWaitsForTheLockAndNeverSeesAHalfWrittenFile() throws Exception {
+        byte[] whole = SETTINGS.replace("greeting: Hello", "greeting: Hi").getBytes(StandardCharsets.UTF_8);
+        FutureTask<ConfigSnapshot> read = new FutureTask<>(() -> provider.read());
+        ReentrantLock lock = SafeFileWriter.lockFor(file);
+        lock.lock();
+        try {
+            Files.write(file, Arrays.copyOf(whole, whole.length / 2));
+            new Thread(read, "bridge-worker").start();
+            awaitQueuedThread(lock, read);
+            assertThat(lock.hasQueuedThreads()).isTrue();
+            assertThat(read.isDone()).isFalse();
+            Files.write(file, whole);
+        } finally {
+            lock.unlock();
+        }
+
+        ConfigSnapshot snapshot = read.get(10, TimeUnit.SECONDS);
+
+        assertThat(snapshot.revision()).isEqualTo(Revisions.of(whole));
+        assertThat(snapshot.values().getString("greeting")).isEqualTo("Hi");
+        assertThat(snapshot.values().getString("database.host")).isEqualTo("localhost");
+    }
+
+    @Test
+    void applyWaitsForTheLockAndNeverSeesAHalfWrittenFile() throws Exception {
+        byte[] whole = Files.readAllBytes(file);
+        TestApplyContext context = changing(provider, "greeting", "Hi", ApplyMode.LIVE);
+        FutureTask<ApplyResult> apply = new FutureTask<>(() -> provider.apply(context));
+        ReentrantLock lock = SafeFileWriter.lockFor(file);
+        lock.lock();
+        try {
+            Files.write(file, Arrays.copyOf(whole, whole.length / 2));
+            new Thread(apply, "bridge-worker").start();
+            awaitQueuedThread(lock, apply);
+            assertThat(lock.hasQueuedThreads()).isTrue();
+            assertThat(apply.isDone()).isFalse();
+            Files.write(file, whole);
+        } finally {
+            lock.unlock();
+        }
+
+        ApplyResult result = apply.get(10, TimeUnit.SECONDS);
+
+        assertThat(result.status()).isEqualTo(ApplyStatus.APPLIED);
+        assertThat(Files.readString(file)).contains("greeting: Hi").contains("password: s3cret");
+        assertThat(lock.isLocked()).isFalse();
+        assertThat(lockedDuringActivation).isFalse();
+    }
+
+    @Test
+    void buildWaitsForTheLockAndTakesTheStartupValuesOfTheWholeFile() throws Exception {
+        byte[] whole = Files.readAllBytes(file);
+        FutureTask<YamlFileProvider> build = new FutureTask<>(() -> providerActivatedBy(() -> true));
+        ReentrantLock lock = SafeFileWriter.lockFor(file);
+        lock.lock();
+        try {
+            Files.write(file, Arrays.copyOf(whole, whole.length / 2));
+            new Thread(build, "server-thread").start();
+            awaitQueuedThread(lock, build);
+            assertThat(lock.hasQueuedThreads()).isTrue();
+            Files.write(file, whole);
+        } finally {
+            lock.unlock();
+        }
+        YamlFileProvider built = build.get(10, TimeUnit.SECONDS);
+
+        ApplyResult result = built.apply(changing(built, "greeting", "Hi", ApplyMode.LIVE));
+
+        assertThat(result.status()).isEqualTo(ApplyStatus.APPLIED);
     }
 
     @Test
@@ -944,6 +1016,14 @@ class YamlFileProviderTest {
             .isInstanceOf(NullPointerException.class).hasMessage("message");
         assertThatThrownBy(() -> builder.build(null))
             .isInstanceOf(NullPointerException.class).hasMessage("logger");
+    }
+
+    /** Returns once a thread waits for {@code lock}, {@code task} is done, or 10 seconds passed. */
+    private static void awaitQueuedThread(ReentrantLock lock, FutureTask<?> task) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!lock.hasQueuedThreads() && !task.isDone() && System.nanoTime() < deadline) {
+            Thread.onSpinWait();
+        }
     }
 
     private static byte[] withCarriageReturns(String text) {
