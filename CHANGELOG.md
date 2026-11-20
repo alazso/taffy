@@ -19,6 +19,11 @@ All notable changes to Taffy are documented here. This project follows
   types of its options allowed to ping. `DiscordWebhook.PostOptions` is a record of a `Set<DiscordWebhook.Mention>`
   (`EVERYONE` for `@everyone` and `@here`, `ROLES`, `USERS`), built with `PostOptions.allowing(Mention...)` or
   `PostOptions.noMentions()`. The body carries the named types as the `allowed_mentions.parse` list.
+- `Sounds.isKnown(String)` tells whether a sound spec names a sound the server knows, so a plugin can warn while
+  it loads config. `Sounds.isValid` accepts any key that parses, including a Bukkit enum name such as
+  `ENTITY_PLAYER_LEVELUP`, which then plays nothing. `isKnown` looks a `minecraft` key up in the server's sound
+  registry and returns `true` for a `null` or blank spec and for a key of another namespace, which only a
+  resource pack defines. It needs a running server.
 - `DiscordWebhook.close(Duration)` closes the client and waits at most the given time for the posts still in
   flight. The posts unfinished when the wait ends are aborted and fail through their callbacks. An interrupt
   ends the wait the same way and stays set.

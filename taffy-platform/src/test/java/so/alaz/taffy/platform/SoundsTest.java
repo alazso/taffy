@@ -8,6 +8,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import so.alaz.taffy.test.JvmDefaults;
 
+import java.util.Set;
+import java.util.function.Predicate;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
@@ -15,6 +18,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 class SoundsTest {
+
+    private static final Predicate<Key> NO_REGISTRY = key -> {
+        throw new AssertionError("the registry was read for " + key);
+    };
 
     @Test
     void blankSpecIsAValidNoOp() {
@@ -112,6 +119,41 @@ class SoundsTest {
         assertThatThrownBy(() -> Sounds.play(player, "minecraft:a:b")).isInstanceOf(InvalidKeyException.class);
 
         verifyNoInteractions(player);
+    }
+
+    @Test
+    void aMinecraftKeyIsKnownOnlyWhenTheSoundRegistryHoldsIt() {
+        Predicate<Key> registered = Set.of(Key.key("minecraft", "entity.player.levelup"))::contains;
+
+        assertThat(Sounds.isKnown("minecraft:entity.player.levelup", registered)).isTrue();
+        assertThat(Sounds.isKnown("  ENTITY.PLAYER.LEVELUP 0.5 2", registered)).isTrue();
+        assertThat(Sounds.isKnown("minecraft:entity.player.levelup loud high", registered)).isTrue();
+        assertThat(Sounds.isKnown("minecraft:entity.player.level_up", registered)).isFalse();
+    }
+
+    @Test
+    void aBukkitEnumNameIsValidButNotKnown() {
+        Predicate<Key> registered = Set.of(Key.key("minecraft", "entity.player.levelup"))::contains;
+
+        assertThat(Sounds.isValid("ENTITY_PLAYER_LEVELUP")).isTrue();
+        assertThat(Sounds.isKnown("ENTITY_PLAYER_LEVELUP", registered)).isFalse();
+    }
+
+    @Test
+    void aKeyOutsideTheMinecraftNamespaceIsKnownWithoutReadingTheRegistry() {
+        assertThat(Sounds.isKnown("mypack:shop.open 1 1", NO_REGISTRY)).isTrue();
+        assertThat(Sounds.isKnown("mypack:shop.open 1 1")).isTrue();
+    }
+
+    @Test
+    void aBlankOrNullSpecIsKnownAndAnUnparseableKeyIsNotWithoutReadingTheRegistry() {
+        assertThat(Sounds.isKnown(null, NO_REGISTRY)).isTrue();
+        assertThat(Sounds.isKnown("", NO_REGISTRY)).isTrue();
+        assertThat(Sounds.isKnown("   ", NO_REGISTRY)).isTrue();
+        assertThat(Sounds.isKnown("bad$key", NO_REGISTRY)).isFalse();
+        assertThat(Sounds.isKnown("minecraft:a:b 1 1", NO_REGISTRY)).isFalse();
+        assertThat(Sounds.isKnown(null)).isTrue();
+        assertThat(Sounds.isKnown("bad$key")).isFalse();
     }
 
     private static Sound played(Player player) {
