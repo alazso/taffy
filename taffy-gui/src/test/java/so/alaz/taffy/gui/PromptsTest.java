@@ -1290,6 +1290,21 @@ final class PromptsTest {
     }
 
     @Test
+    void askRefusesANullRequestBeforeItClosesTheMenuOrReplacesAnAsk() {
+        start(PromptMode.CHAT);
+
+        assertThatNullPointerException().isThrownBy(() -> prompts.ask(alex.player, null)).withMessage("request");
+
+        assertThat(alex.session()).isNotNull();
+        assertThat(alex.closes).isEmpty();
+        assertThat(alex.said()).isEmpty();
+        ask();
+        long token = token();
+        assertThatNullPointerException().isThrownBy(() -> prompts.ask(alex.player, null)).withMessage("request");
+        assertThat(token()).isEqualTo(token);
+    }
+
+    @Test
     void noPlayerIsABedrockPlayerWithoutDetection() {
         assertThat(BedrockPlayers.NONE.bedrock(UUID.randomUUID())).isFalse();
     }

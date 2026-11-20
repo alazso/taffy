@@ -19,7 +19,10 @@ import java.util.Objects;
  * @param material the item shown; {@link Menus#register(Menu)} and {@link Menus#reload(java.util.Map)} refuse a
  *     material that is not an item, air included
  * @param action the menu action the item stands for, or {@code null} for decoration
- * @param permission the permission a viewer needs to see the item, or {@code null} for none
+ * @param permission the permission a viewer needs to see the item, or {@code null} for none. It decides only whether
+ *     the item is drawn, each time the menu draws; a click is not checked against it, so a viewer who lost the
+ *     permission since the last draw can still click the button, and a handler whose action needs a permission checks
+ *     it itself
  * @param enabled whether the item is shown at all
  * @param name the name as MiniMessage, or {@code null} to read it from the lang file
  * @param lore the lore lines as MiniMessage, or {@code null} to read them from the lang file
@@ -70,7 +73,7 @@ public record ItemLayout(String id, List<Integer> slots, Material material, @Nul
     }
 
     /**
-     * Gives this item behind another permission.
+     * Gives this item behind another permission, which decides only whether the item is drawn.
      *
      * @param permission the permission a viewer needs to see the item, or {@code null} for none
      * @return a copy of this item with {@code permission} replaced

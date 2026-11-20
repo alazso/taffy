@@ -188,8 +188,10 @@ public final class Prompts {
      *
      * @param player the player to ask
      * @param request the question
+     * @throws NullPointerException if {@code request} is {@code null}; nothing is closed or replaced then
      */
     public void ask(Player player, PromptRequest request) {
+        Objects.requireNonNull(request, "request");
         if (stopping) {
             return;
         }

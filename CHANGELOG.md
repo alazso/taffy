@@ -52,6 +52,11 @@ All notable changes to Taffy are documented here. This project follows
   time with `System.nanoTime()`. They read the wall clock before, so a clock stepped back by a time
   synchronisation or by hand dropped every menu click until the clock passed the old time again, and a clock
   stepped forward let a click through early and timed a refused ask out at once.
+- `Prompts.ask` throws a `NullPointerException` named `request` for a `null` request before it does anything, as
+  `Prompts.askLater` does. Before, it closed the player's menu and replaced a pending ask first, then failed
+  while sending the question. The `ItemLayout.permission` Javadoc now states that the permission decides only
+  whether the item is drawn and that a click is not checked against it, so a handler whose action needs a
+  permission checks it itself.
 - `Menus.shutdown` empties the inventory of each open menu and prompt anvil whose viewer the disabling thread
   does not own, which happens only on Folia. Such a menu still stays open with no listener to cancel its clicks,
   but it now shows nothing, so its viewer has no menu copy to take. Before, it stayed fully stocked and a copy
