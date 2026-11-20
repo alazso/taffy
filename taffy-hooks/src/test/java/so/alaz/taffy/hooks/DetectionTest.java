@@ -14,6 +14,7 @@ import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 final class DetectionTest {
@@ -92,6 +93,26 @@ final class DetectionTest {
 
         when(nexo.isEnabled()).thenReturn(true);
         assertThat(detected.status()).isEqualTo(new HookStatus("Nexo", HookState.ON, "1.0", null));
+    }
+
+    @Test
+    void aBoundPluginLoadedAgainUnderItsNameGivesTheNotEnabledStatusAReason() {
+        Detected<String> detected = detect("Nexo");
+        Plugin old = presence.plugins.get("Nexo");
+        Plugin loadedAgain = mock(Plugin.class);
+        when(loadedAgain.isEnabled()).thenReturn(true);
+
+        when(old.isEnabled()).thenReturn(false);
+        presence.plugins.put("Nexo", loadedAgain);
+
+        assertThat(detected.status()).isEqualTo(
+            new HookStatus("Nexo", HookState.NOT_ENABLED, null, Detected.replaced("Nexo")));
+        assertThat(detected.bound()).isSameAs(old);
+        assertThat(detected.provider()).isEqualTo("Nexo provider");
+        assertThat(built).containsExactly(old);
+
+        presence.unloaded.add("Nexo");
+        assertThat(detected.status()).isEqualTo(new HookStatus("Nexo", HookState.NOT_ENABLED, null, null));
     }
 
     @Test

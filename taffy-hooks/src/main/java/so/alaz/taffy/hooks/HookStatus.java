@@ -18,8 +18,9 @@ import java.util.Objects;
  * @param reason one or more full sentences for the server owner on what is missing or what went wrong, and what to
  *     do when there is something to do, each ending with a full stop, or {@code null} when {@link #describe()} says enough. It is given for every
  *     {@link HookState#NOT_VISIBLE} status, for the Vault economy's {@link HookState#NOT_INSTALLED},
- *     {@link HookState#NOT_REGISTERED}, {@link HookState#API_MISSING} and {@link HookState#FAILED}, and for a
- *     placeholder backend's {@link HookState#FAILED}
+ *     {@link HookState#NOT_REGISTERED}, {@link HookState#API_MISSING} and {@link HookState#FAILED}, for a
+ *     placeholder backend's {@link HookState#FAILED}, and for a {@link HookState#NOT_ENABLED} read after detection
+ *     while another instance of the plugin is enabled
  */
 public record HookStatus(String plugin, HookState state, @Nullable String version, @Nullable String reason) {
 

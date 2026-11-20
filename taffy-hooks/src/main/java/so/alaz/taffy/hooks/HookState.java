@@ -20,7 +20,9 @@ public enum HookState {
     NOT_INSTALLED,
     /**
      * The integration plugin is installed but not enabled: it was not enabled when the integration was detected, or,
-     * in a status read after detection, it has been disabled since.
+     * in a status read after detection, it has been disabled since. The integration stays bound to the plugin
+     * instance found at detection, so the state also stands, with a reason, while another instance of the plugin is
+     * enabled under the same name.
      */
     NOT_ENABLED,
     /**

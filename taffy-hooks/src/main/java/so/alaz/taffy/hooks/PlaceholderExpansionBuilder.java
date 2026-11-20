@@ -241,7 +241,8 @@ public final class PlaceholderExpansionBuilder {
             errors.report(Detection.source(backend), new IllegalStateException(reason));
             return new Detected<>(new HookStatus(backend, HookState.FAILED, version, reason), null);
         }
-        return new Detected<>(new HookStatus(backend, HookState.ON, version, null), action, presence.plugin(backend));
+        return new Detected<>(new HookStatus(backend, HookState.ON, version, null), action, presence.plugin(backend),
+            () -> presence.plugin(backend));
     }
 
     private static String author(Plugin owner) {

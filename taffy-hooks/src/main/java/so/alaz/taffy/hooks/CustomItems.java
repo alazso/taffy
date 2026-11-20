@@ -42,7 +42,8 @@ public final class CustomItems {
     public record Resolution(@Nullable String id, boolean failed) {
     }
 
-    private record Active(CustomItemPlugin plugin, CustomItemProvider provider, Plugin bound, HookStatus detected) {
+    private record Active(CustomItemPlugin plugin, CustomItemProvider provider, Plugin bound, HookStatus detected,
+                          Detected<CustomItemProvider> detection) {
     }
 
     private static final Resolution NONE_FOUND = new Resolution(null, false);
@@ -110,7 +111,7 @@ public final class CustomItems {
             CustomItemProvider provider = detected.provider();
             HookStatus status = detected.status();
             if (provider != null) {
-                active.add(new Active(plugin, provider, Objects.requireNonNull(detected.bound()), status));
+                active.add(new Active(plugin, provider, Objects.requireNonNull(detected.bound()), status, detected));
                 if (!provider.ready()) {
                     status = new HookStatus(status.plugin(), HookState.LOADING, status.version(), null);
                 }
@@ -267,8 +268,9 @@ public final class CustomItems {
     /**
      * The state of every custom item plugin now, read when called like every status of this package. A plugin whose
      * integration is on is {@link HookState#LOADING} while it is still loading its items, {@link HookState#ON} once
-     * it has loaded them, and {@link HookState#NOT_ENABLED} while it is not enabled. Every other plugin keeps the
-     * state it was detected with.
+     * it has loaded them, and {@link HookState#NOT_ENABLED} while it is not enabled, with the reason
+     * {@link Detected#status()} gives when the server holds another, enabled instance of it. Every other plugin
+     * keeps the state it was detected with.
      *
      * @return one status per {@link CustomItemPlugin}, in its order
      */
@@ -278,7 +280,7 @@ public final class CustomItems {
             HookStatus detected = hook.detected();
             HookStatus current;
             if (!hook.bound().isEnabled()) {
-                current = new HookStatus(detected.plugin(), HookState.NOT_ENABLED, null, null);
+                current = hook.detection().notEnabled();
             } else if (hook.provider().ready()) {
                 current = detected;
             } else {

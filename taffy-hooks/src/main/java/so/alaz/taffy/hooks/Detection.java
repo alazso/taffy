@@ -41,7 +41,8 @@ final class Detection {
             failed(plugin, version, failure, logger, errors);
             return off(plugin, HookState.FAILED, version);
         }
-        return new Detected<>(new HookStatus(plugin, HookState.ON, version, null), provider, bound);
+        return new Detected<>(new HookStatus(plugin, HookState.ON, version, null), provider, bound,
+            () -> presence.plugin(plugin));
     }
 
     // The status of the first presence check that fails, or null when the plugin is installed, enabled and its probe

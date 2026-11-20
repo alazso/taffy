@@ -50,7 +50,7 @@ final class DetectedTest {
         assertThatThrownBy(() -> new Detected<String>(null, null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("status");
-        assertThatThrownBy(() -> new Detected<String>(null, null, mock(Plugin.class)))
+        assertThatThrownBy(() -> new Detected<String>(null, null, mock(Plugin.class), () -> null))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("status");
     }
@@ -60,7 +60,7 @@ final class DetectedTest {
         Plugin vault = mock(Plugin.class);
         when(vault.isEnabled()).thenReturn(true);
         HookStatus found = status(HookState.ON);
-        Detected<String> detected = new Detected<>(found, "provider", vault);
+        Detected<String> detected = new Detected<>(found, "provider", vault, () -> vault);
 
         assertThat(detected.status()).isSameAs(found);
         assertThat(detected.bound()).isSameAs(vault);
@@ -72,6 +72,47 @@ final class DetectedTest {
 
         when(vault.isEnabled()).thenReturn(true);
         assertThat(detected.status()).isSameAs(found);
+    }
+
+    @Test
+    void aDisabledBoundPluginThatRunsAsAnotherInstanceGivesTheStatusAReason() {
+        Plugin old = mock(Plugin.class);
+        Plugin loadedAgain = mock(Plugin.class);
+        when(old.isEnabled()).thenReturn(true);
+        when(loadedAgain.isEnabled()).thenReturn(true);
+        Plugin[] current = {old};
+        HookStatus found = status(HookState.ON);
+        Detected<String> detected = new Detected<>(found, "provider", old, () -> current[0]);
+
+        current[0] = loadedAgain;
+        assertThat(detected.status()).as("the bound instance is still enabled").isSameAs(found);
+
+        when(old.isEnabled()).thenReturn(false);
+        HookStatus status = detected.status();
+        assertThat(status).isEqualTo(new HookStatus("Vault", HookState.NOT_ENABLED, null,
+            "Vault was loaded again as a new plugin instance after this plugin detected it, and this plugin still"
+                + " holds the old one. Restart the server to use Vault again, or run this plugin's reload command if"
+                + " it detects Vault again."));
+        assertThat(status.describe()).isEqualTo("Vault installed but not enabled");
+        assertThat(detected.provider()).isEqualTo("provider");
+
+        when(loadedAgain.isEnabled()).thenReturn(false);
+        assertThat(detected.status()).as("the other instance is disabled too")
+            .isEqualTo(new HookStatus("Vault", HookState.NOT_ENABLED, null, null));
+
+        current[0] = null;
+        assertThat(detected.status()).as("the server holds no plugin of that name")
+            .isEqualTo(new HookStatus("Vault", HookState.NOT_ENABLED, null, null));
+
+        current[0] = old;
+        assertThat(detected.status()).isEqualTo(new HookStatus("Vault", HookState.NOT_ENABLED, null, null));
+    }
+
+    @Test
+    void theLookupOfTheCurrentPluginIsRequired() {
+        assertThatThrownBy(() -> new Detected<>(status(HookState.ON), "provider", mock(Plugin.class), null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("current");
     }
 
     @Test
@@ -87,10 +128,10 @@ final class DetectedTest {
     void aStatusThatStoppedDetectionIsFixedWhateverItsPlugin() {
         Plugin vault = mock(Plugin.class);
         HookStatus stopped = status(HookState.API_MISSING);
-        Detected<String> detected = new Detected<>(stopped, null, null);
+        Detected<String> detected = new Detected<>(stopped, null, null, () -> vault);
 
         assertThat(detected.status()).isSameAs(stopped);
-        assertThatThrownBy(() -> new Detected<String>(stopped, null, vault))
+        assertThatThrownBy(() -> new Detected<String>(stopped, null, vault, () -> vault))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("a bound plugin needs a provider");
         verifyNoInteractions(vault);

@@ -268,6 +268,24 @@ final class CustomItemsTest {
     }
 
     @Test
+    void aPluginLoadedAgainAsANewInstanceStaysOffWithAReason() {
+        provider(CustomItemPlugin.NEXO).id("ruby", "ruby");
+        CustomItems items = detected();
+        Plugin old = bound(CustomItemPlugin.NEXO);
+        Plugin loadedAgain = mock(Plugin.class);
+        when(loadedAgain.isEnabled()).thenReturn(true);
+
+        when(old.isEnabled()).thenReturn(false);
+        presence.plugins.put("Nexo", loadedAgain);
+
+        assertThat(items.statuses().get(1)).isEqualTo(
+            new HookStatus("Nexo", HookState.NOT_ENABLED, null, Detected.replaced("Nexo")));
+        assertThat(items.available("nexo")).isFalse();
+        assertThat(items.create("nexo:ruby")).isNull();
+        assertThat(provider(CustomItemPlugin.NEXO).calls).hasValue(0);
+    }
+
+    @Test
     void anEnabledPluginWhoseApiThePluginCannotSeeIsNamedInAWarning() {
         presence.invisibleClasses.add(CustomItemPlugin.ORAXEN.probe());
 

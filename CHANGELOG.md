@@ -12,6 +12,13 @@ All notable changes to Taffy are documented here. This project follows
   `CustomItems` keeps answering, but a plugin that was still loading its items stays `LOADING` in it. A second
   call does nothing.
 
+### Fixed
+- `Detected.status()` and `CustomItems.statuses()` say why an integration stays off after its plugin was loaded
+  again as a new plugin instance, as a plugin manager does. An integration stays bound to the instance found at
+  detection, so its status read `NOT_ENABLED` with no reason while the new instance was enabled. The
+  `NOT_ENABLED` status now carries a reason in that case, which tells the owner to restart the server or to run
+  the plugin's reload command if it detects again. The state, the provider and every other status are unchanged.
+
 ## [0.3.0] - 2026-11-20
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.
