@@ -146,6 +146,26 @@ final class ProbeSchema {
         }
     }
 
+    /**
+     * Every row of a table, sorted, each as its column values joined by {@code |}, with {@code null} for a column
+     * that holds none.
+     */
+    static List<String> rows(Connection connection, String table) throws SQLException {
+        List<String> rows = new ArrayList<>();
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("SELECT * FROM " + table)) {
+            int columns = result.getMetaData().getColumnCount();
+            while (result.next()) {
+                List<String> values = new ArrayList<>();
+                for (int column = 1; column <= columns; column++) {
+                    values.add(String.valueOf(result.getString(column)));
+                }
+                rows.add(String.join("|", values));
+            }
+        }
+        return rows.stream().sorted().toList();
+    }
+
     static List<Integer> versions(Connection connection, String prefix) throws SQLException {
         return ids(connection, prefix + "schema_version", "version");
     }

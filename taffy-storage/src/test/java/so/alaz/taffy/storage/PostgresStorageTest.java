@@ -68,8 +68,18 @@ final class PostgresStorageTest extends StorageContract {
     }
 
     @Override
+    CompletableFuture<Storage> startingAs(String plugin, String prefix, @Nullable String versionTable,
+                                          List<Migration> migrations, Map<String, String> scripts,
+                                          @Nullable Baseline baseline) {
+        StorageSettings settings = StorageSettings.server(Dialect.POSTGRES, server(prefix));
+        return TestPlugins.start(TestPlugins.plugin(plugin, Path.of("unused"), Logger.getAnonymousLogger(),
+            ProbeSchema.source(scripts)), versionTable == null ? settings : settings.versionTable(versionTable),
+            migrations, baseline, CLOCK);
+    }
+
+    @Override
     String createProbe(String table) {
-        return "CREATE TABLE " + table + " (id UUID NOT NULL PRIMARY KEY, state VARCHAR(16) NOT NULL, amount BIGINT,"
+        return "CREATE TABLE " + table + " (id UUID NOT NULL PRIMARY KEY, state VARCHAR(48) NOT NULL, amount BIGINT,"
             + " at BIGINT, doc JSONB, data BYTEA, wide NUMERIC)";
     }
 

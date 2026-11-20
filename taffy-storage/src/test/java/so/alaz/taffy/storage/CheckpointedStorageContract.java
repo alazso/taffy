@@ -60,7 +60,7 @@ abstract class CheckpointedStorageContract extends StorageContract {
 
     @Override
     String createProbe(String table) {
-        return "CREATE TABLE " + table + " (id BINARY(16) NOT NULL PRIMARY KEY, state VARCHAR(16) NOT NULL,"
+        return "CREATE TABLE " + table + " (id BINARY(16) NOT NULL PRIMARY KEY, state VARCHAR(48) NOT NULL,"
             + " amount BIGINT, at BIGINT, doc JSON, data LONGBLOB, wide DECIMAL(65, 4)) ENGINE = InnoDB"
             + " DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_bin";
     }
@@ -469,6 +469,16 @@ abstract class CheckpointedStorageContract extends StorageContract {
     CompletableFuture<Storage> starting(String prefix, List<Migration> migrations, Map<String, String> scripts,
                                         @Nullable Baseline baseline) {
         return startingOn(server(prefix).database(), prefix, migrations, scripts, baseline);
+    }
+
+    @Override
+    CompletableFuture<Storage> startingAs(String plugin, String prefix, @Nullable String versionTable,
+                                          List<Migration> migrations, Map<String, String> scripts,
+                                          @Nullable Baseline baseline) {
+        StorageSettings settings = StorageSettings.server(dialect(), server(prefix));
+        return TestPlugins.start(TestPlugins.plugin(plugin, Path.of("unused"), Logger.getAnonymousLogger(),
+            ProbeSchema.source(scripts)), versionTable == null ? settings : settings.versionTable(versionTable),
+            migrations, baseline, CLOCK);
     }
 
     private CompletableFuture<Storage> startingOn(String database, String prefix, List<Migration> migrations,

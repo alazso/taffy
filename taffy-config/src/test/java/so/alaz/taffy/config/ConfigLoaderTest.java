@@ -85,6 +85,77 @@ final class ConfigLoaderTest {
 
     private static final Map<String, Set<String>> KITS_ARE_OWNER_KEYED = Map.of("kits", Set.of("default"));
 
+    // The config.yml the ConfigLoader of 0.1.0 saved when it upgraded an owner's file from version 1 to 2, byte for
+    // byte: its writer folded each text longer than 80 columns over several lines.
+    private static final String SAVED_BY_FIRST_RELEASE = """
+        # Settings of the shop.
+
+        # Layout version.
+        config-version: 2
+
+        # The line a player sees when joining.
+        welcome: '<gradient:#ffaa00:#ff5555>Willkommen auf Kupferhain</gradient> <gray>Read
+          the rules with <white>/rules</white>, claim your kit with <white>/kit starter</white>
+          and ask the staff when something is unclear: wir sind froh, dass du da bist. Regel
+          #1: sei nett, ''Griefing'' ist verboten'
+
+        # Lines of the help page.
+        help:
+        - <gold>/shop</gold> <gray>opens the shop, where every item is listed with its price,
+          its stock and the name of the seller who offers it
+        - <gold>/sell</gold> <gray>puts the item in your hand up for sale
+
+        # Limits of the shop.
+        limits:
+          # Listings a player may have at once.
+          listings: 12
+          # Price cap.
+          max-price: 1000000
+          # Share of a sale the server keeps.
+          tax: 0.05
+
+        # Kept by the owner.
+        my-note: 'do not touch: tuned for season 3'
+        """;
+
+    private static final String SHOP_WELCOME = "<gradient:#ffaa00:#ff5555>Willkommen auf Kupferhain</gradient>"
+        + " <gray>Read the rules with <white>/rules</white>, claim your kit with <white>/kit starter</white> and ask"
+        + " the staff when something is unclear: wir sind froh, dass du da bist. Regel #1: sei nett, 'Griefing' ist"
+        + " verboten";
+
+    private static final List<String> SHOP_HELP = List.of(
+        "<gold>/shop</gold> <gray>opens the shop, where every item is listed with its price, its stock and the name"
+            + " of the seller who offers it",
+        "<gold>/sell</gold> <gray>puts the item in your hand up for sale");
+
+    private static final String SHOP_SHIPPED_V3 = """
+        # Settings of the shop.
+
+        # Layout version.
+        config-version: 3
+
+        # The line a player sees when joining.
+        welcome: "<green>Welcome to the server"
+
+        # Lines of the help page.
+        help:
+          - "<gold>/shop</gold> <gray>opens the shop"
+
+        # Limits of the shop.
+        limits:
+          # Listings a player may have at once.
+          listings: 5
+          # Price cap.
+          max-price: 1000000
+          # Share of a sale the server keeps.
+          tax: 0.05
+
+        # Sounds of the shop.
+        sounds:
+          # Played to the buyer.
+          purchase: ENTITY_EXPERIENCE_ORB_PICKUP
+        """;
+
     @TempDir
     private Path folder;
 
@@ -845,6 +916,52 @@ final class ConfigLoaderTest {
             .singleElement().asString().contains("Anfuehrungszeichen");
         assertThat(Files.readAllLines(configFile())).filteredOn(line -> line.contains("Anfuehrungszeichen"))
             .hasSize(2);
+    }
+
+    @Test
+    void aFileTheFirstReleaseSavedWithFoldedTextsIsUpgradedOntoSingleLinesAndKeepsItsValuesAndCopies()
+        throws Exception {
+        String firstCopy = "the file as it was before 0.1.0 upgraded it\n";
+        Files.writeString(configFile(), SAVED_BY_FIRST_RELEASE);
+        Files.writeString(folder.resolve("config.yml.v1.bak"), firstCopy);
+        assertThat(SHOP_WELCOME).hasSizeGreaterThan(200);
+
+        YamlConfiguration loaded = loader(SHOP_SHIPPED_V3).load();
+        byte[] saved = Files.readAllBytes(configFile());
+        loader(SHOP_SHIPPED_V3).load();
+
+        for (YamlConfiguration settings : List.of(loaded, reread())) {
+            assertThat(settings.getInt("config-version")).isEqualTo(3);
+            assertThat(settings.getString("welcome")).isEqualTo(SHOP_WELCOME);
+            assertThat(settings.getStringList("help")).isEqualTo(SHOP_HELP);
+            assertThat(settings.getInt("limits.listings")).isEqualTo(12);
+            assertThat(settings.getInt("limits.max-price")).isEqualTo(1_000_000);
+            assertThat(settings.getDouble("limits.tax")).isEqualTo(0.05);
+            assertThat(settings.getString("my-note")).isEqualTo("do not touch: tuned for season 3");
+            assertThat(settings.getString("sounds.purchase")).isEqualTo("ENTITY_EXPERIENCE_ORB_PICKUP");
+            assertThat(settings.getKeys(true)).containsExactlyInAnyOrder("config-version", "welcome", "help",
+                "limits", "limits.listings", "limits.max-price", "limits.tax", "my-note", "sounds",
+                "sounds.purchase");
+            assertThat(settings.getComments("limits.listings")).containsExactly("Listings a player may have at once.");
+            assertThat(settings.getComments("my-note")).contains("Kept by the owner.");
+            assertThat(settings.getComments("sounds.purchase")).containsExactly("Played to the buyer.");
+        }
+        List<String> lines = Files.readAllLines(configFile());
+        assertThat(lines).filteredOn(line -> line.startsWith("welcome:")).singleElement().asString()
+            .contains("<gradient:#ffaa00:#ff5555>Willkommen").contains("ist verboten");
+        assertThat(lines).filteredOn(line -> line.contains("opens the shop")).singleElement().asString()
+            .contains("- <gold>/shop</gold>").contains("the seller who offers it");
+        assertThat(lines).filteredOn(line -> !line.isBlank() && !line.strip().startsWith("#"))
+            .allSatisfy(line -> assertThat(line).containsPattern("^\\s*(- |[a-z-]+:)"));
+        assertThat(Files.readString(folder.resolve("config.yml.v2.bak"))).isEqualTo(SAVED_BY_FIRST_RELEASE);
+        assertThat(Files.readString(folder.resolve("config.yml.v1.bak"))).isEqualTo(firstCopy);
+        assertThat(Files.readAllBytes(configFile())).isEqualTo(saved);
+        try (Stream<Path> files = Files.list(folder)) {
+            assertThat(files.map(file -> file.getFileName().toString()))
+                .containsExactlyInAnyOrder("config.yml", "config.yml.v1.bak", "config.yml.v2.bak");
+        }
+        assertThat(log.lines()).containsExactly("INFO Upgraded config.yml from version 2 to 3 and added"
+            + " sounds.purchase; the previous file is kept as config.yml.v2.bak.");
     }
 
     @Test

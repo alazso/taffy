@@ -55,6 +55,15 @@ final class SqliteStorageTest extends StorageContract {
     }
 
     @Override
+    CompletableFuture<Storage> startingAs(String plugin, String prefix, @Nullable String versionTable,
+                                          List<Migration> migrations, Map<String, String> scripts,
+                                          @Nullable Baseline baseline) {
+        StorageSettings settings = versionTable == null ? settings() : settings().versionTable(versionTable);
+        return TestPlugins.start(TestPlugins.plugin(plugin, folder, Logger.getAnonymousLogger(),
+            ProbeSchema.source(scripts)), settings, migrations, baseline, CLOCK);
+    }
+
+    @Override
     Connection connect() throws SQLException {
         return DriverManager.getConnection("jdbc:sqlite:" + folder.resolve("data.db"));
     }
@@ -66,7 +75,7 @@ final class SqliteStorageTest extends StorageContract {
 
     @Override
     String createProbe(String table) {
-        return "CREATE TABLE " + table + " (id BLOB NOT NULL PRIMARY KEY, state VARCHAR(16) NOT NULL, amount BIGINT,"
+        return "CREATE TABLE " + table + " (id BLOB NOT NULL PRIMARY KEY, state VARCHAR(48) NOT NULL, amount BIGINT,"
             + " at BIGINT, doc TEXT, data BLOB, wide TEXT)";
     }
 
@@ -91,6 +100,12 @@ final class SqliteStorageTest extends StorageContract {
             .join()).cause().isInstanceOf(SQLException.class).isNotInstanceOf(CommitUnknownException.class);
         assertThat(storage().read(tx -> tx.query("SELECT id FROM child", Tx.Binder.NONE, row -> row.integer("id")))
             .join()).isEmpty();
+    }
+
+    @Test
+    void aDatabaseTheFirstReleaseRecordedFromScriptsWithAByteOrderMarkStartsOnABuildThatShipsThoseBytes()
+        throws Exception {
+        startsOnABuildThatShipsTheRecordedBytes(FirstRelease.Bytes.MARK);
     }
 
     @Test

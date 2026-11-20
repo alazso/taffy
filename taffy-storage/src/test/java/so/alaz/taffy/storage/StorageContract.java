@@ -3,6 +3,8 @@ package so.alaz.taffy.storage;
 import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import so.alaz.taffy.test.RaceRunner;
 
 import java.math.BigDecimal;
@@ -16,6 +18,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -51,6 +54,20 @@ abstract class StorageContract {
     /** Starts another storage on the database of {@link #storage()}, with no baseline. */
     CompletableFuture<Storage> starting(String prefix, List<Migration> migrations, Map<String, String> scripts) {
         return starting(prefix, migrations, scripts, null);
+    }
+
+    /**
+     * Starts another storage on the database of {@link #storage()} for the plugin named {@code plugin}, with the
+     * prefix where the dialect has one. The version table is {@code versionTable}, or has its default name when
+     * {@code versionTable} is {@code null}.
+     */
+    abstract CompletableFuture<Storage> startingAs(String plugin, String prefix, @Nullable String versionTable,
+                                                   List<Migration> migrations, Map<String, String> scripts,
+                                                   @Nullable Baseline baseline);
+
+    /** The default name of the version table of the plugin {@link #name()} under {@code prefix}. */
+    String defaultVersionTable(String prefix) {
+        return dialect() == Dialect.SQLITE ? "schema_version" : prefix + name().replace('-', '_') + "_schema_version";
     }
 
     /** A connection of its own to the database of {@link #storage()}. */
@@ -408,6 +425,168 @@ abstract class StorageContract {
                     prefix + "gamma", prefix + "schema_version", prefix + "schema_version_takeover")) {
                     statement.execute("DROP TABLE IF EXISTS " + table);
                 }
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(FirstRelease.Bytes.class)
+    void aDatabaseTheFirstReleaseRecordedStartsOnABuildWithLfCrlfOrByteOrderMarkScripts(FirstRelease.Bytes build)
+        throws Exception {
+        String prefix = dialect() == Dialect.SQLITE ? "" : "first_";
+        String earlier = prefix + "schema_version";
+        String own = defaultVersionTable(prefix);
+        Map<String, String> scripts = FirstRelease.scripts(dialect(), build);
+        List<String> recorded = FirstRelease.rows(FirstRelease.Bytes.LF);
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            try {
+                FirstRelease.record(connection, dialect(), prefix, FirstRelease.Bytes.LF);
+
+                startingAs(name(), prefix, null, FirstRelease.CURRENT, scripts, null).join()
+                    .close(Duration.ofSeconds(5));
+                startingAs(name(), prefix, null, FirstRelease.CURRENT, scripts, null).join()
+                    .close(Duration.ofSeconds(5));
+
+                assertThat(ProbeSchema.rows(connection, own)).containsExactly(recorded.get(0), recorded.get(1),
+                    FirstRelease.notesRow(NOW.toEpochMilli()));
+                assertThat(ProbeSchema.rows(connection, earlier)).startsWith(recorded.get(0), recorded.get(1))
+                    .hasSize(own.equals(earlier) ? 3 : 2);
+                assertThat(ProbeSchema.tables(connection, dialect(), prefix))
+                    .containsAll(FirstRelease.tables(prefix)).doesNotContain(own + "_takeover");
+                assertThat(ProbeSchema.rows(connection, prefix + "accounts")).containsExactly("1|seed", "2|steve");
+                assertThat(ProbeSchema.rows(connection, prefix + "ledger")).containsExactly("10|2|first sale");
+                assertThat(ProbeSchema.rows(connection, prefix + "notes")).isEmpty();
+            } finally {
+                dropFirstRelease(statement, prefix);
+            }
+        }
+    }
+
+    @Test
+    void aDatabaseTheFirstReleaseRecordedFromCrlfScriptsStartsOnABuildThatShipsThoseBytes() throws Exception {
+        startsOnABuildThatShipsTheRecordedBytes(FirstRelease.Bytes.CRLF);
+    }
+
+    /**
+     * Starts the next build, which names the version table as 0.1.0 did, on a database 0.1.0 recorded from scripts
+     * shipped as {@code shipped}, with its scripts shipped the same way.
+     */
+    void startsOnABuildThatShipsTheRecordedBytes(FirstRelease.Bytes shipped) throws Exception {
+        String prefix = dialect() == Dialect.SQLITE ? "" : "kept_";
+        String versionTable = prefix + "schema_version";
+        Map<String, String> scripts = FirstRelease.scripts(dialect(), shipped);
+        List<String> recorded = FirstRelease.rows(shipped);
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            try {
+                FirstRelease.record(connection, dialect(), prefix, shipped);
+
+                starting(prefix, FirstRelease.CURRENT, scripts).join().close(Duration.ofSeconds(5));
+                starting(prefix, FirstRelease.CURRENT, scripts).join().close(Duration.ofSeconds(5));
+
+                assertThat(recorded).doesNotContainAnyElementsOf(FirstRelease.rows(FirstRelease.Bytes.LF));
+                assertThat(ProbeSchema.rows(connection, versionTable)).containsExactly(recorded.get(0),
+                    recorded.get(1), FirstRelease.notesRow(NOW.toEpochMilli()));
+                assertThat(ProbeSchema.tables(connection, dialect(), prefix)).containsAll(FirstRelease.tables(prefix));
+                assertThat(ProbeSchema.rows(connection, prefix + "accounts")).containsExactly("1|seed", "2|steve");
+                assertThat(ProbeSchema.rows(connection, prefix + "ledger")).containsExactly("10|2|first sale");
+            } finally {
+                dropFirstRelease(statement, prefix);
+            }
+        }
+    }
+
+    private void dropFirstRelease(Statement statement, String prefix) throws SQLException {
+        List<String> tables = new ArrayList<>(FirstRelease.tables(prefix));
+        tables.add(prefix + "schema_version");
+        tables.add(defaultVersionTable(prefix));
+        tables.add(defaultVersionTable(prefix) + "_takeover");
+        for (String table : tables) {
+            statement.execute("DROP TABLE IF EXISTS " + table);
+        }
+    }
+
+    @Test
+    void aBaselineTakesOverTheDatabaseOfProVouchers() throws Exception {
+        String old = ProVouchersDatabase.VERSION_TABLE;
+        @Nullable String named = dialect() == Dialect.SQLITE ? null : "provouchers_migrations";
+        String versionTable = named == null ? "schema_version" : named;
+        Baseline baseline = Baseline.versionTable(old);
+        List<Migration> migrations = ProVouchersDatabase.MIGRATIONS;
+        Map<String, String> scripts = ProVouchersDatabase.scripts(dialect());
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            try {
+                ProVouchersDatabase.create(connection);
+                assertThat(ProbeSchema.rows(connection, old)).containsExactly("5");
+                Map<String, List<String>> before = new HashMap<>();
+                for (String table : ProVouchersDatabase.TABLES) {
+                    before.put(table, ProbeSchema.rows(connection, table));
+                    assertThat(before.get(table)).as("rows of %s", table).isNotEmpty();
+                }
+
+                startingAs("ProVouchers", "", named, migrations, scripts, baseline).join()
+                    .close(Duration.ofSeconds(5));
+                startingAs("ProVouchers", "", named, migrations, scripts, baseline).join()
+                    .close(Duration.ofSeconds(5));
+
+                List<String> recorded = new ArrayList<>();
+                for (Migration migration : migrations) {
+                    int version = migration.version();
+                    recorded.add(version + "|" + migration.name() + "|"
+                        + FirstRelease.sha256(ProVouchersDatabase.script(version)) + "|"
+                        + ProVouchersDatabase.statements(version) + "|" + NOW.toEpochMilli());
+                }
+                assertThat(ProbeSchema.rows(connection, versionTable)).containsExactlyElementsOf(recorded);
+                assertThat(ProbeSchema.rows(connection, old + "_baseline")).containsExactly("5");
+                List<String> tables = new ArrayList<>(ProVouchersDatabase.TABLES);
+                tables.add(old + "_baseline");
+                if (named != null) {
+                    tables.add(named);
+                }
+                assertThat(ProbeSchema.tables(connection, dialect(), "provouchers_"))
+                    .containsExactlyInAnyOrderElementsOf(tables);
+                for (String table : ProVouchersDatabase.TABLES) {
+                    assertThat(ProbeSchema.rows(connection, table)).as("rows of %s", table)
+                        .isEqualTo(before.get(table));
+                }
+            } finally {
+                ProbeSchema.drop(connection, dialect(), "provouchers_");
+                statement.execute("DROP TABLE IF EXISTS " + versionTable);
+            }
+        }
+    }
+
+    @Test
+    void aVersionTableNamedAsTheOldTableOfProVouchersStopsTheStartAndLeavesTheDatabaseAsItWas() throws Exception {
+        String old = ProVouchersDatabase.VERSION_TABLE;
+        @Nullable String named = dialect() == Dialect.SQLITE ? old : null;
+        Baseline baseline = Baseline.versionTable(old);
+        Map<String, String> scripts = ProVouchersDatabase.scripts(dialect());
+        try (Connection connection = connect()) {
+            try {
+                ProVouchersDatabase.create(connection);
+                List<String> tables = ProbeSchema.tables(connection, dialect(), "");
+                Map<String, List<String>> before = new HashMap<>();
+                for (String table : ProVouchersDatabase.TABLES) {
+                    before.put(table, ProbeSchema.rows(connection, table));
+                }
+
+                assertThatThrownBy(() -> startingAs("ProVouchers", "", named, ProVouchersDatabase.MIGRATIONS, scripts,
+                    baseline).join())
+                    .isInstanceOf(CompletionException.class)
+                    .cause().isInstanceOf(StorageException.class)
+                    .hasMessage("the database holds a table named " + old + " that storage did not create, so it"
+                        + " cannot record migrations there; rename or remove that table, or on MySQL, MariaDB and"
+                        + " PostgreSQL set another table prefix");
+
+                assertThat(ProbeSchema.tables(connection, dialect(), "")).isEqualTo(tables);
+                assertThat(ProbeSchema.rows(connection, old)).containsExactly("5");
+                for (String table : ProVouchersDatabase.TABLES) {
+                    assertThat(ProbeSchema.rows(connection, table)).as("rows of %s", table)
+                        .isEqualTo(before.get(table));
+                }
+                assertNoBackup();
+            } finally {
+                ProbeSchema.drop(connection, dialect(), "provouchers_");
             }
         }
     }
