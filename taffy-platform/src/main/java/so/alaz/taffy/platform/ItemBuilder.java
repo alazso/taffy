@@ -80,7 +80,14 @@ public final class ItemBuilder {
         return reference.startsWith(SERIALIZED_PREFIX);
     }
 
-    /** Serializes an item to a {@code serialized:<base64>} reference, preserving all of its data. */
+    /**
+     * Serializes an item to a {@code serialized:<base64>} reference, preserving all of its data.
+     *
+     * <p>The item goes to {@link ItemStack#serializeAsBytes()} as it is, and nothing that call throws is
+     * caught. An empty stack (air, or an amount of 0) has no reference: the server throws for it. A
+     * {@code null} item throws {@link NullPointerException}. A caller that may hold an empty stack checks
+     * {@link ItemStack#isEmpty()} first and stores the absence of an item its own way.
+     */
     public static String serialize(ItemStack item) {
         return SERIALIZED_PREFIX + Base64.getEncoder().encodeToString(item.serializeAsBytes());
     }
@@ -89,13 +96,50 @@ public final class ItemBuilder {
      * Rebuilds the exact item from a {@code serialized:<base64>} reference, or returns {@code null} if
      * it is malformed or was written for an incompatible server version. The prefix is skipped by
      * length, not checked, so {@code reference} must first pass {@link #isSerialized(String)}.
+     * A {@code null} reference gives {@code null}. {@link #deserializeOrThrow(String)} reads the same
+     * reference and says why there is no item.
      */
     public static @Nullable ItemStack deserialize(String reference) {
         try {
-            byte[] bytes = Base64.getDecoder().decode(reference.substring(SERIALIZED_PREFIX.length()));
-            return ItemStack.deserializeBytes(bytes);
+            return decode(reference, false);
         } catch (RuntimeException ex) {
             return null;
+        }
+    }
+
+    /**
+     * Rebuilds the exact item from a {@code serialized:<base64>} reference.
+     *
+     * @throws IllegalArgumentException if {@code reference} does not start with
+     *     {@link #SERIALIZED_PREFIX} (no cause), if the text after the prefix is not base64 (the cause
+     *     is the decoder's exception), or if the server refused the decoded bytes, which are corrupt
+     *     or were written by a newer data version (the cause is the server's exception). The message
+     *     names which of the three it was.
+     * @throws NullPointerException if {@code reference} is {@code null}
+     */
+    public static ItemStack deserializeOrThrow(String reference) {
+        return decode(reference, true);
+    }
+
+    private static ItemStack decode(String reference, boolean prefixChecked) {
+        boolean prefixed = prefixChecked
+            ? reference.startsWith(SERIALIZED_PREFIX)
+            : reference.length() >= SERIALIZED_PREFIX.length();
+        if (!prefixed) {
+            throw new IllegalArgumentException("Item reference does not start with '" + SERIALIZED_PREFIX + "'");
+        }
+        byte[] bytes;
+        try {
+            bytes = Base64.getDecoder().decode(reference.substring(SERIALIZED_PREFIX.length()));
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException(
+                "Item reference holds invalid base64 after '" + SERIALIZED_PREFIX + "': " + ex.getMessage(), ex);
+        }
+        try {
+            return ItemStack.deserializeBytes(bytes);
+        } catch (RuntimeException ex) {
+            throw new IllegalArgumentException("The server refused the bytes of the item reference, which are"
+                + " corrupt or were written by a newer data version: " + ex.getMessage(), ex);
         }
     }
 }

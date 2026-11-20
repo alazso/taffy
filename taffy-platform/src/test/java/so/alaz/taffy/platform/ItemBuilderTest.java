@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockConstruction;
@@ -156,6 +157,20 @@ class ItemBuilderTest {
         assertThat(ItemBuilder.serialize(item)).isEqualTo("serialized:AQID/w==");
     }
 
+    @Test
+    void serializeLetsWhatTheServerThrowsForAnEmptyStackThrough() {
+        ItemStack empty = mock(ItemStack.class);
+        IllegalArgumentException refusal = new IllegalArgumentException("air cannot be serialized");
+        when(empty.serializeAsBytes()).thenThrow(refusal);
+
+        assertThatThrownBy(() -> ItemBuilder.serialize(empty)).isSameAs(refusal);
+    }
+
+    @Test
+    void serializeThrowsForANullItem() {
+        assertThatThrownBy(() -> ItemBuilder.serialize(null)).isInstanceOf(NullPointerException.class);
+    }
+
     @Nested
     class Deserialize {
 
@@ -202,6 +217,86 @@ class ItemBuilderTest {
 
             assertThat(ItemBuilder.deserialize("serial")).isNull();
             stacks.verify(() -> ItemStack.deserializeBytes(any()), never());
+        }
+
+        @Test
+        void aNullReferenceIsNull() {
+            assertThat(ItemBuilder.deserialize(null)).isNull();
+            stacks.verify(() -> ItemStack.deserializeBytes(any()), never());
+        }
+
+        @Test
+        void thePrefixIsSkippedByLengthWithoutBeingChecked() {
+            stacks.when(() -> ItemStack.deserializeBytes(new byte[] {1, 2, 3, -1})).thenReturn(item);
+
+            assertThat(ItemBuilder.deserialize("SERIALIZED:AQID/w==")).isSameAs(item);
+        }
+    }
+
+    @Nested
+    class DeserializeOrThrow {
+
+        private final ItemStack item = mock(ItemStack.class);
+        private MockedStatic<ItemStack> stacks;
+
+        @BeforeEach
+        void interceptDeserializeBytes() {
+            stacks = mockStatic(ItemStack.class);
+        }
+
+        @AfterEach
+        void close() {
+            stacks.close();
+        }
+
+        @Test
+        void theDecodedBytesAreTurnedBackIntoTheItem() {
+            stacks.when(() -> ItemStack.deserializeBytes(new byte[] {1, 2, 3, -1})).thenReturn(item);
+
+            assertThat(ItemBuilder.deserializeOrThrow("serialized:AQID/w==")).isSameAs(item);
+        }
+
+        @Test
+        void aReferenceWithoutThePrefixThrowsWithNoCause() {
+            stacks.when(() -> ItemStack.deserializeBytes(any())).thenReturn(item);
+
+            for (String reference : List.of("DIAMOND", "serial", "", "SERIALIZED:AQID/w==")) {
+                assertThatThrownBy(() -> ItemBuilder.deserializeOrThrow(reference))
+                    .isExactlyInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Item reference does not start with 'serialized:'")
+                    .hasNoCause();
+            }
+            stacks.verify(() -> ItemStack.deserializeBytes(any()), never());
+        }
+
+        @Test
+        void invalidBase64ThrowsWithTheDecodersExceptionAsCause() {
+            stacks.when(() -> ItemStack.deserializeBytes(any())).thenReturn(item);
+
+            assertThatThrownBy(() -> ItemBuilder.deserializeOrThrow("serialized:not base64!"))
+                .isExactlyInstanceOf(IllegalArgumentException.class)
+                .hasMessageStartingWith("Item reference holds invalid base64 after 'serialized:': ")
+                .hasCauseExactlyInstanceOf(IllegalArgumentException.class)
+                .satisfies(thrown -> assertThat(thrown.getMessage()).endsWith(thrown.getCause().getMessage()));
+            stacks.verify(() -> ItemStack.deserializeBytes(any()), never());
+        }
+
+        @Test
+        void bytesTheServerRefusesThrowWithTheServersExceptionAsCause() {
+            RuntimeException refusal = new IllegalStateException("Newer version! Server downgrades are not supported!");
+            stacks.when(() -> ItemStack.deserializeBytes(any())).thenThrow(refusal);
+
+            assertThatThrownBy(() -> ItemBuilder.deserializeOrThrow("serialized:AQID/w=="))
+                .isExactlyInstanceOf(IllegalArgumentException.class)
+                .hasMessage("The server refused the bytes of the item reference, which are corrupt or were written"
+                    + " by a newer data version: Newer version! Server downgrades are not supported!")
+                .hasCause(refusal);
+            stacks.verify(() -> ItemStack.deserializeBytes(new byte[] {1, 2, 3, -1}));
+        }
+
+        @Test
+        void aNullReferenceThrowsNullPointerException() {
+            assertThatThrownBy(() -> ItemBuilder.deserializeOrThrow(null)).isInstanceOf(NullPointerException.class);
         }
     }
 }

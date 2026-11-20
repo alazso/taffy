@@ -17,6 +17,15 @@ All notable changes to Taffy are documented here. This project follows
   plugin with no integration on or no longer enabled, `NOT_READY` a plugin still loading its items, `UNKNOWN_ID`
   an id the plugin does not know, and `FAILED` a plugin that threw. `create` is unchanged: it returns
   `build(reference).item()`, so `null` for every one of these.
+- `ItemBuilder.deserializeOrThrow(String reference)` rebuilds the item of a `serialized:<base64>` reference or
+  throws `IllegalArgumentException` with a message that tells three failures apart: a reference that does not
+  start with `serialized:` (no cause), text after the prefix that is not base64 (the cause is the decoder's
+  exception), and bytes the server refused because they are corrupt or were written by a newer data version (the
+  cause is the server's exception). A plugin that stores items calls it to log why a stored item is gone.
+  `ItemBuilder.deserialize` is unchanged: it returns `null` for each of these and still skips the prefix by
+  length without checking it. The `ItemBuilder.serialize` Javadoc now states that an empty stack has no
+  reference: the item goes to `ItemStack.serializeAsBytes()` as it is, the server throws for air or an amount of
+  0, and a `null` item throws `NullPointerException`.
 
 ### Fixed
 - `Detected.status()` and `CustomItems.statuses()` say why an integration stays off after its plugin was loaded
