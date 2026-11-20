@@ -41,8 +41,11 @@ public final class ComfiConfRegistration implements ComfiConfLink {
      * @param provider the callbacks of the resource
      * @return the link the plugin keeps until {@code onDisable}
      * @throws IllegalArgumentException if the id or a text is invalid, or the id is already registered
-     * @throws IllegalStateException if the bridge or {@code owner} is not enabled, or the bridge's API service is not
-     *     the one this plugin sees, which happens when the plugin bundles its own copy of {@code com.comficonf.api}
+     * @throws IllegalStateException if the bridge or {@code owner} is not enabled, the bridge's API service is not
+     *     the one this plugin sees, which happens when the plugin bundles its own copy of {@code com.comficonf.api},
+     *     or the bridge's {@link ComfiConfApi#apiVersion()} is lower than the {@link ComfiConfApi#API_VERSION} this
+     *     class was compiled against, in which case nothing is registered and {@link ComfiConfConnection#connect}
+     *     gives {@link ComfiConfState#API_MISSING}
      */
     public static ComfiConfLink register(Plugin owner, String id, String displayName, String description,
                                          ConfigProvider provider) {
@@ -56,6 +59,10 @@ public final class ComfiConfRegistration implements ComfiConfLink {
         if (api == null) {
             throw new IllegalStateException("No ComfiConf API service matches this plugin's com.comficonf.api classes:"
                 + " the bridge is not enabled, or this plugin bundles its own copy of com.comficonf.api");
+        }
+        int implemented = api.apiVersion();
+        if (implemented < ComfiConfApi.API_VERSION) {
+            throw new OutdatedBridgeException(implemented, ComfiConfApi.API_VERSION);
         }
         return new ComfiConfRegistration(id, api.register(owner, resource));
     }

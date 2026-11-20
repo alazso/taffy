@@ -16,6 +16,12 @@ All notable changes to Taffy are documented here. This project follows
   `YamlFileProvider` Javadoc now states.
 
 ### Fixed
+- `ComfiConfRegistration.register` compares the bridge's `ComfiConfApi.apiVersion()` with the
+  `ComfiConfApi.API_VERSION` Taffy is compiled against, before it registers anything. A bridge with a lower
+  version makes it throw an `IllegalStateException` that names both versions, and `ComfiConfConnection.connect`
+  then gives `API_MISSING`, logs the one warning that asks the owner to update ComfiConf, with both versions in
+  it, and reports nothing. Before, such a bridge was noticed only when a call reached a class or method it lacks.
+  A bridge with the same or a higher version registers as before.
 - `YamlFileProvider.read`, the first read of `YamlFileProvider.apply` and the read of
   `YamlFileProvider.Builder.build` hold the lock of `SafeFileWriter.lockFor(file)`, the lock
   `ComfiConfConnection.lockFor(file)` gives while a resource is registered. A write of the file by the plugin

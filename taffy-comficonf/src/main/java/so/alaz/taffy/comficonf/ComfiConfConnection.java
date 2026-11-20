@@ -76,7 +76,10 @@ public final class ComfiConfConnection {
      * registration that throws or returns {@code null} logs one warning with the stack and is reported under
      * {@code hook.comficonf}. A {@link LinkageError} means the bridge lacks an API class when its message names a
      * {@code com.comficonf} class or it has no message; any other, such as a class of the plugin that failed to
-     * initialize, counts as a failed registration. A registration that succeeds logs one line naming the resource id.
+     * initialize, counts as a failed registration. A bridge whose API version is lower than the one
+     * {@link ComfiConfRegistration#register} was compiled against lacks the API too: it logs the same warning, naming
+     * both versions, registers nothing and reports nothing. A registration that succeeds logs one line naming the
+     * resource id.
      * A {@link RuntimeException} or {@link LinkageError} from {@code registration} never leaves this method.
      *
      * @param owner the plugin whose settings are registered; its logger receives the lines
@@ -143,6 +146,8 @@ public final class ComfiConfConnection {
                 return apiMissing(bridge, version, missing(e), logger);
             }
             return failed(bridge, version, e, logger, errors);
+        } catch (OutdatedBridgeException e) {
+            return apiMissing(bridge, version, e.detail(), logger);
         } catch (RuntimeException e) {
             return failed(bridge, version, e, logger, errors);
         }

@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -46,6 +47,7 @@ class ComfiConfRegistrationTest {
         when(owner.getServer()).thenReturn(server);
         when(server.getServicesManager()).thenReturn(services);
         when(services.load(ComfiConfApi.class)).thenReturn(api);
+        when(api.apiVersion()).thenReturn(ComfiConfApi.API_VERSION);
         when(api.register(any(), any())).thenReturn(registration);
     }
 
@@ -100,6 +102,26 @@ class ComfiConfRegistrationTest {
             .hasMessage("No ComfiConf API service matches this plugin's com.comficonf.api classes: the bridge is not"
                 + " enabled, or this plugin bundles its own copy of com.comficonf.api");
         verifyNoInteractions(api);
+    }
+
+    @Test
+    void aBridgeWithAnOlderApiVersionThrowsAndRegistersNothing() {
+        when(api.apiVersion()).thenReturn(ComfiConfApi.API_VERSION - 1);
+
+        assertThatThrownBy(this::register).isInstanceOf(IllegalStateException.class)
+            .hasMessage("The ComfiConf bridge implements API version " + (ComfiConfApi.API_VERSION - 1)
+                + ", older than the API version " + ComfiConfApi.API_VERSION + " this plugin was built against");
+        verify(api, never()).register(any(), any());
+    }
+
+    @Test
+    void aBridgeWithANewerApiVersionRegisters() {
+        when(api.apiVersion()).thenReturn(ComfiConfApi.API_VERSION + 1);
+
+        ComfiConfLink link = register();
+
+        assertThat(link.resourceId()).isEqualTo("taffy:test");
+        verify(api).register(same(owner), any());
     }
 
     @Test

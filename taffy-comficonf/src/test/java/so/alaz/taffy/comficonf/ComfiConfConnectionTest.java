@@ -273,6 +273,27 @@ class ComfiConfConnectionTest {
     }
 
     @Test
+    void aBridgeWithAnOlderApiVersionIsApiMissingWithOneWarningAndNoReport() {
+        ComfiConfConnection connection = connectThrowing(new OutdatedBridgeException(1, 2));
+
+        ComfiConfStatus status = connection.status();
+        assertThat(status).isEqualTo(new ComfiConfStatus(ComfiConfState.API_MISSING, "0.1.0",
+            "The installed ComfiConf 0.1.0 does not include the ComfiConf API this plugin needs (it implements API"
+                + " version 1, older than the API version 2 this plugin was built against). Update ComfiConf to the"
+                + " version this plugin was built for"
+                + " (https://docs.comficonf.com/bridge/updating#when-a-plugin-needs-a-newer-bridge); settings are"
+                + " edited in their files only until then."));
+        assertThat(log.records).singleElement().satisfies(record -> {
+            assertThat(record.getLevel()).isEqualTo(Level.WARNING);
+            assertThat(record.getMessage()).isEqualTo(status.reason());
+            assertThat(record.getThrown()).isNull();
+        });
+        assertThat(connection.resourceId()).isNull();
+        assertThat(registrations).hasValue(1);
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
     void anIncompatibleApiClassIsApiMissing() {
         ComfiConfConnection connection =
             connectThrowing(new IncompatibleClassChangeError("com/comficonf/api/ConfigProvider"));
