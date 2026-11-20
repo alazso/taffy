@@ -40,8 +40,9 @@ All notable changes to Taffy are documented here. This project follows
   again, the result is `applied`. An item of an object list is compared with the startup item of the same item
   key, or of the same index where the list declares no item key. A list that no longer holds an item it held at
   startup is named under its own path, as in `servers`, while that item held a `restartRequired()` value. A
-  provider built while the file could not be read reports, as before, only the restart-only changes of the apply
-  itself.
+  change of the apply itself inside an object list is still reported as waiting even when its new value equals
+  the startup value, as before. A provider built while the file could not be read reports, as before, only the
+  restart-only changes of the apply itself.
 
 ## [0.2.1] - 2026-11-19
 
