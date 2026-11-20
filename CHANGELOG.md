@@ -78,6 +78,15 @@ All notable changes to Taffy are documented here. This project follows
   "preview")`, and `Parts.server(Server)`, `Parts.logger(Logger)` and `Parts.preview(NamespacedKey)` replace them.
   Pass the plugin to `Menus.Parts.of`, add `.preview(key)` when the plugin's preview key is not `new
   NamespacedKey(plugin, "preview")`, and delete both `registerEvents` calls.
+- Breaking: `Menus.open`, `Menus.rerender`, `Menus.load` and `Prompts.ask` throw an `IllegalStateException` on
+  a thread that does not own the viewer, such as the thread that completed a storage future, before they change
+  anything. The message names the method and what to call instead, such as "Menus.open must run on the viewer's
+  entity thread; use Menus.openLater". Before, the call went on off the viewer's thread, where it changed the
+  session and the inventory unguarded on Paper and failed part way inside the server on Folia. `rerender` still
+  does nothing for a closed session, and `open` and `ask` still do nothing once `Menus.shutdown` ran. From a
+  callback on another thread call `Menus.openLater`, `Menus.rerenderLater` or `Prompts.askLater`, which schedule
+  the work on the viewer's entity thread, and call `Menus.load` from `Menu.opened` or a `ClickHandler`, or hop to
+  the viewer's thread first through `EntityThread.call`.
 - Breaking: `Menus.listener()` and `Prompts.listener()` are deprecated, a later release removes them, and each now
   returns a listener with no event handler, so a `registerEvents` call left in a plugin registers nothing and
   cannot register the menus or the prompts twice. Delete the calls that pass them to `registerEvents`.

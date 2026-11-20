@@ -26,6 +26,7 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InOrder;
 import so.alaz.taffy.platform.Messages;
@@ -436,6 +437,43 @@ final class PromptsTest {
         assertThat(alex.said()).containsExactly("[Server] Price?", HINT + " [Cancel]");
         assertThatNullPointerException().isThrownBy(() -> prompts.askLater(alex.player, null))
             .withMessage("request");
+    }
+
+    @ParameterizedTest
+    @EnumSource(PromptMode.class)
+    void askOffThePlayersThreadThrowsBeforeAnythingChangesAndAskLaterStillAsks(PromptMode mode) {
+        start(mode);
+        ask();
+        long first = token();
+        int said = alex.said().size();
+        int closes = alex.closes.size();
+        owned = false;
+
+        assertThatIllegalStateException().isThrownBy(this::ask)
+            .withMessage("Prompts.ask must run on the player's entity thread; use Prompts.askLater");
+
+        assertThat(token()).isEqualTo(first);
+        assertThat(alex.said()).hasSize(said);
+        assertThat(alex.closes).hasSize(closes);
+
+        prompts.askLater(alex.player, new PromptRequest(Component.text("Price?"), "10",
+            new Route(Sample.KIND.id(), 2, null), this::judge));
+        owned = true;
+        harness.drain();
+
+        assertThat(token()).isNotEqualTo(first);
+    }
+
+    @Test
+    void askOffThePlayersThreadDoesNothingOnceShutdownRan() {
+        start(PromptMode.CHAT);
+        prompts.shutdown();
+        owned = false;
+
+        ask();
+
+        assertThat(prompts.pending(alex.id)).isNull();
+        assertThat(alex.session()).isNotNull();
     }
 
     @Test
@@ -1315,11 +1353,11 @@ final class PromptsTest {
     @ValueSource(booleans = {true, false})
     void shutdownTakesTheAnvilAwayFromPlayersThisThreadOwnsEmptiesTheRestAndReopensNothing(boolean ownedHere) {
         start(PromptMode.ANVIL);
-        owned = ownedHere;
         ask();
         long token = token();
         AnvilView view = real().shown;
         int opened = sample.menu.sessions.size();
+        owned = ownedHere;
 
         prompts.shutdown();
         timer.fire(Prompts.TIMEOUT);

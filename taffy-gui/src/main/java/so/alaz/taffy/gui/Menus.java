@@ -44,10 +44,13 @@ import java.util.logging.Logger;
  * The menu registry and the sessions of open menus.
  *
  * <p>{@link #open(Player, String, Route)}, {@link #open(Player, Route)}, {@link #rerender(MenuSession)} and
- * {@link #load(MenuSession, CompletableFuture, BiConsumer)} run on the viewer's entity thread. The {@code *Later}
- * methods schedule that work for the next tick on the viewer's entity thread through {@link Parts#tasks()}, which is
- * how a {@link ClickHandler} opens, closes and redraws menus. The session map serves {@link #session(UUID)}, a quit and
- * {@link #shutdown()}; listeners find a menu by its inventory holder, the {@link MenuSession}.
+ * {@link #load(MenuSession, CompletableFuture, BiConsumer)} run on the viewer's entity thread. On a thread that does
+ * not own the viewer, such as the thread that completed a storage future, each throws an
+ * {@link IllegalStateException} that names what to call instead, before it changes anything. The {@code *Later}
+ * methods are called from any thread and schedule that work for the next tick on the viewer's entity thread through
+ * {@link Parts#tasks()}, which is how a {@link ClickHandler} opens, closes and redraws menus. The session map serves
+ * {@link #session(UUID)}, a quit and {@link #shutdown()}; listeners find a menu by its inventory holder, the
+ * {@link MenuSession}.
  *
  * <p>A plugin may build more than one {@code Menus}. Each listener cancels the clicks and drags in a menu of any of
  * them, and only the menus that opened a session run its button handlers, play its sounds and end it.
@@ -512,6 +515,9 @@ public final class Menus {
      * @param menu the id of the menu
      * @param back the route the back button returns to, or {@code null} for none
      * @throws IllegalArgumentException if no menu is registered under {@code menu}
+     * @throws IllegalStateException if the calling thread does not own the viewer and {@link #shutdown()} did not
+     *     run; nothing is opened, closed or ended then, and {@link #openLater(Player, String, Route)} opens from any
+     *     thread
      */
     public void open(Player viewer, String menu, @Nullable Route back) {
         open(viewer, menu(menu), back);
@@ -525,6 +531,8 @@ public final class Menus {
      * @param route the menu, its state and its back route
      * @throws IllegalArgumentException if no menu is registered under the route's menu, or the route's state is not
      *     an instance of that menu's {@link Menu#stateType()}
+     * @throws IllegalStateException if the calling thread does not own the viewer and {@link #shutdown()} did not
+     *     run; nothing is opened, closed or ended then, and {@link #openLater(Player, Route)} opens from any thread
      */
     public void open(Player viewer, Route route) {
         reopen(viewer, menu(route), route);
@@ -560,11 +568,14 @@ public final class Menus {
      * Draws the session again in place; nothing happens once it closed. Call on the viewer's entity thread.
      *
      * @param session the session to draw
+     * @throws IllegalStateException if the session is open and the calling thread does not own its viewer; nothing
+     *     is drawn then, and {@link #rerenderLater(MenuSession)} draws from any thread
      */
     public void rerender(MenuSession<?> session) {
         if (session.closed()) {
             return;
         }
+        onViewerThread(session.viewer(), "Menus.rerender", "use Menus.rerenderLater");
         paint(session);
     }
 
@@ -606,8 +617,13 @@ public final class Menus {
      * @param apply puts the value into the session, on the viewer's entity thread
      * @param <S> the type of the state the menu shows
      * @param <T> the type of the loaded value
+     * @throws IllegalStateException if the calling thread does not own the session's viewer; no load starts then. Call
+     *     from {@link Menu#opened(MenuSession, Player)} or a {@link ClickHandler}, or hop to the viewer's thread
+     *     through {@link EntityThread#call}
      */
     public <S, T> void load(MenuSession<S> session, CompletableFuture<T> source, BiConsumer<MenuSession<S>, T> apply) {
+        onViewerThread(session.viewer(), "Menus.load",
+            "call it from Menu.opened or a ClickHandler, or hop there through EntityThread.call");
         long token = session.nextLoad();
         UUID viewer = session.viewer().getUniqueId();
         source.thenCompose(value -> parts.entity().call(viewer, player -> {
@@ -881,6 +897,7 @@ public final class Menus {
         if (stopping) {
             return;
         }
+        onViewerThread(viewer, "Menus.open", "use Menus.openLater");
         prompts.end(viewer.getUniqueId());
         MenuLayout layout = layouts.get(menu.kind().id());
         MenuSession<S> session = new MenuSession<>(this, viewer, menu, layout, state, back, nanos.getAsLong());
@@ -911,6 +928,12 @@ public final class Menus {
             throw new IllegalStateException("the " + session.id() + " menu has no inventory yet");
         }
         session.rendered(frame.paint(canvas, filler));
+    }
+
+    private void onViewerThread(Player viewer, String method, String instead) {
+        if (!ownedHere.test(viewer)) {
+            throw new IllegalStateException(method + " must run on the viewer's entity thread; " + instead);
+        }
     }
 
     private <S> void notifyClosed(MenuSession<S> session, boolean left) {

@@ -198,11 +198,18 @@ public final class Prompts {
      * @param player the player to ask
      * @param request the question
      * @throws NullPointerException if {@code request} is {@code null}; nothing is closed or replaced then
+     * @throws IllegalStateException if the calling thread does not own the player and {@link Menus#shutdown()} did
+     *     not run; nothing is closed or replaced then, and {@link #askLater(Player, PromptRequest)} asks from any
+     *     thread
      */
     public void ask(Player player, PromptRequest request) {
         Objects.requireNonNull(request, "request");
         if (stopping) {
             return;
+        }
+        if (!menus.ownedHere().test(player)) {
+            throw new IllegalStateException(
+                "Prompts.ask must run on the player's entity thread; use Prompts.askLater");
         }
         UUID id = player.getUniqueId();
         boolean onBedrock = bedrock.bedrock(id);

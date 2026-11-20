@@ -40,6 +40,7 @@ import java.util.function.Supplier;
 import java.util.logging.Logger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -1022,6 +1023,102 @@ final class MenuLifecycleTest {
         assertThat(sample.session().closed()).isFalse();
         assertThat(sample.menu.closes).isEmpty();
         assertThat(sample.harness.menus.session(sample.viewer.id)).containsSame(sample.session());
+    }
+
+    @Test
+    void openOffTheViewersThreadThrowsBeforeAnythingChangesAndOpenLaterStillOpens() {
+        Sample sample = new Sample(folder);
+        Menus menus = sample.harness.menus;
+        menus.register(new TestMenu(MenuHarness.MAIN));
+        MenuSession<?> session = sample.session();
+        int created = sample.harness.inventories.created.size();
+        sample.harness.prompts.ended.clear();
+        sample.harness.owned = player -> false;
+
+        assertThatIllegalStateException()
+            .isThrownBy(() -> menus.open(sample.viewer.player, MenuHarness.MAIN.id(), null))
+            .withMessage("Menus.open must run on the viewer's entity thread; use Menus.openLater");
+        assertThatIllegalStateException()
+            .isThrownBy(() -> menus.open(sample.viewer.player, new Route(MenuHarness.MAIN.id(), 0, null)))
+            .withMessage("Menus.open must run on the viewer's entity thread; use Menus.openLater");
+
+        assertThat(sample.harness.prompts.ended).isEmpty();
+        assertThat(sample.harness.inventories.created).hasSize(created);
+        assertThat(sample.viewer.session()).isSameAs(session);
+        assertThat(session.closed()).isFalse();
+        assertThat(sample.menu.closes).isEmpty();
+
+        menus.openLater(sample.viewer.player, MenuHarness.MAIN.id(), null);
+        sample.harness.owned = player -> true;
+        sample.harness.drain();
+
+        assertThat(sample.viewer.session()).isNotNull().isNotSameAs(session);
+        assertThat(sample.viewer.session().id()).isEqualTo(MenuHarness.MAIN.id());
+    }
+
+    @Test
+    void openOffTheViewersThreadDoesNothingOnceShutdownRan() {
+        Sample sample = new Sample(folder);
+        sample.harness.menus.shutdown();
+        sample.harness.owned = player -> false;
+
+        sample.harness.menus.open(sample.viewer.player, Sample.KIND.id(), null);
+
+        assertThat(sample.viewer.session()).isNull();
+    }
+
+    @Test
+    void rerenderOffTheViewersThreadThrowsAndDrawsNothingAndRerenderLaterStillDraws() {
+        Sample sample = new Sample(folder);
+        MenuSession<?> session = sample.session();
+        int renders = sample.menu.renders;
+        sample.harness.owned = player -> false;
+
+        assertThatIllegalStateException().isThrownBy(() -> sample.harness.menus.rerender(session))
+            .withMessage("Menus.rerender must run on the viewer's entity thread; use Menus.rerenderLater");
+
+        assertThat(sample.menu.renders).isEqualTo(renders);
+        assertThat(session.generation()).isEqualTo(1);
+
+        sample.harness.menus.rerenderLater(session);
+        sample.harness.owned = player -> true;
+        sample.harness.drain();
+
+        assertThat(sample.menu.renders).isEqualTo(renders + 1);
+    }
+
+    @Test
+    void rerenderOfAClosedSessionOffTheViewersThreadDoesNothing() {
+        Sample sample = new Sample(folder);
+        MenuSession<?> session = sample.session();
+        sample.viewer.player.closeInventory(InventoryCloseEvent.Reason.PLAYER);
+        int renders = sample.menu.renders;
+        sample.harness.owned = player -> false;
+
+        sample.harness.menus.rerender(session);
+
+        assertThat(sample.menu.renders).isEqualTo(renders);
+    }
+
+    @Test
+    void loadOffTheViewersThreadThrowsAndStartsNoLoad() {
+        Fixture fixture = new Fixture(folder);
+        MenuSession<Integer> session = fixture.session();
+        long token = session.loadToken();
+        CompletableFuture<String> second = new CompletableFuture<>();
+        fixture.harness.owned = player -> false;
+
+        assertThatIllegalStateException()
+            .isThrownBy(() -> fixture.harness.menus.load(session, second, (s, value) -> s.data(value)))
+            .withMessage("Menus.load must run on the viewer's entity thread; call it from Menu.opened or a "
+                + "ClickHandler, or hop there through EntityThread.call");
+
+        assertThat(session.loadToken()).isEqualTo(token);
+        fixture.harness.owned = player -> true;
+        second.complete("late");
+        assertThat(session.data()).isNull();
+        fixture.first.complete("ready");
+        assertThat(session.data()).isEqualTo("ready");
     }
 
     @Test
