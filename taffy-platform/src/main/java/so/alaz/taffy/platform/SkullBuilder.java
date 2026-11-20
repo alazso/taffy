@@ -64,7 +64,8 @@ public final class SkullBuilder {
      * A builder whose {@link #fromName} and {@link #fromUuid} lookups run on {@code lookups}. A lookup
      * blocks on the network, so the executor must run its tasks off the calling thread. The executor
      * must throw {@link RejectedExecutionException} when it cannot take a task, as
-     * {@link Scheduler#asyncExecutor()} does: the lookup then completes with a blank head.
+     * {@link Scheduler#asyncExecutor()} does: the lookup then completes with a blank head. Any other exception
+     * the executor throws is thrown from {@link #fromName} or {@link #fromUuid}, and that lookup is not cached.
      */
     public SkullBuilder(Executor lookups) {
         this(lookups, System::nanoTime);
@@ -183,6 +184,12 @@ public final class SkullBuilder {
                 textureCache.remove(key, lookup);
             }
             lookup.texture.complete(null);
+        } catch (RuntimeException | Error failure) {
+            synchronized (textureCache) {
+                textureCache.remove(key, lookup);
+            }
+            lookup.texture.completeExceptionally(failure);
+            throw failure;
         }
         return lookup.texture;
     }

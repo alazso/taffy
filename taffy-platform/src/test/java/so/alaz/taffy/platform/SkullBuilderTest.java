@@ -518,6 +518,30 @@ final class SkullBuilderTest {
     }
 
     @Test
+    void anExecutorThatThrowsAnotherExceptionThrowsItAndTheNextCallStartsANewLookup() {
+        nameResolvesTo("Notch", resolvable(TEXTURE));
+        List<Runnable> submitted = new ArrayList<>();
+        SkullBuilder skulls = new SkullBuilder(task -> {
+            submitted.add(task);
+            if (submitted.size() == 1) {
+                throw new IllegalStateException("plugin is disabled");
+            }
+            task.run();
+        });
+
+        assertThatThrownBy(() -> skulls.fromName("Notch"))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("plugin is disabled");
+        assertThat(skulls.cached()).isZero();
+
+        CompletableFuture<ItemStack> next = skulls.fromName("Notch");
+
+        assertThat(submitted).hasSize(2);
+        assertThat(next).isCompleted();
+        assertTextured(next.join(), TEXTURE);
+    }
+
+    @Test
     void anExecutorThatRejectsGivesABlankHeadForAUuidToo() {
         SkullBuilder skulls = new SkullBuilder(task -> {
             throw new RejectedExecutionException("not accepting work");
