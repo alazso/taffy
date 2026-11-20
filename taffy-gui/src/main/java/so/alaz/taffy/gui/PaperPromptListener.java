@@ -29,8 +29,9 @@ import java.util.UUID;
  * {@link AsyncPlayerChatEvent} before {@link AsyncChatEvent} whenever a plugin listens to it, and this listener does,
  * so once it is registered Paper posts the legacy event for every chat line on the server. The legacy handler
  * therefore normally takes the answer, and {@link AsyncChatEvent} then arrives cancelled; the line is taken from
- * whichever event comes first. A handler of another plugin at {@link EventPriority#LOWEST} that reads cancelled lines
- * can still see it.
+ * whichever event comes first, and once: a line the legacy handler took is left to no ask by the modern handler, even
+ * when the same ask waits again after a refusal or the answer started another ask in between. A handler of another
+ * plugin at {@link EventPriority#LOWEST} that reads cancelled lines can still see it.
  *
  * <p>Every click and drag on a prompt anvil is cancelled first and again last. A click on its result slot submits the
  * name field. The result shows a PAPER named after the name field, marked with the menus' preview key. A close clears
@@ -56,6 +57,10 @@ final class PaperPromptListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
     public void onChat(AsyncChatEvent event) {
         UUID player = event.getPlayer().getUniqueId();
+        if (prompts.takenByLegacy(player)) {
+            event.setCancelled(true);
+            return;
+        }
         Pending taken = prompts.takeChat(player);
         if (taken == null) {
             return;
@@ -73,7 +78,7 @@ final class PaperPromptListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
     public void onLegacyChat(AsyncPlayerChatEvent event) {
         UUID player = event.getPlayer().getUniqueId();
-        Pending taken = prompts.takeChat(player);
+        Pending taken = prompts.takeLegacyChat(player);
         if (taken == null) {
             return;
         }

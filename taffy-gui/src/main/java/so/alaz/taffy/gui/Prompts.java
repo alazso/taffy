@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
@@ -107,6 +108,7 @@ public final class Prompts {
     private final Clock clock;
     private final Map<UUID, Pending> pending = new ConcurrentHashMap<>();
     private final Map<UUID, Pending> judging = new ConcurrentHashMap<>();
+    private final Set<UUID> legacyLines = ConcurrentHashMap.newKeySet();
     private final AtomicLong tokens = new AtomicLong();
     private volatile boolean stopping;
     private final PaperPromptListener listener;
@@ -297,6 +299,7 @@ public final class Prompts {
     void quit(UUID player) {
         pending.remove(player);
         judging.remove(player);
+        legacyLines.remove(player);
         if (anvil != null) {
             anvil.forget(player);
         }
@@ -333,6 +336,24 @@ public final class Prompts {
             return null;
         });
         return taken[0];
+    }
+
+    /**
+     * Takes the player's ask for a line the legacy chat event carries, and remembers the line as taken until
+     * {@link #takenByLegacy(UUID)} asks for it or the player's next legacy line arrives.
+     */
+    @Nullable Pending takeLegacyChat(UUID player) {
+        legacyLines.remove(player);
+        Pending taken = takeChat(player);
+        if (taken != null) {
+            legacyLines.add(player);
+        }
+        return taken;
+    }
+
+    /** Tells, once, whether the legacy chat event took the line the player's modern chat event now carries. */
+    boolean takenByLegacy(UUID player) {
+        return legacyLines.remove(player);
     }
 
     /** Judges text for an ask the caller took, on the player's entity thread. */

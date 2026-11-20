@@ -18,6 +18,11 @@ All notable changes to Taffy are documented here. This project follows
   A plugin's own `switch` over the sealed `Answer` needs a case for `Later` to compile.
 
 ### Fixed
+- A chat line that answers a `Prompts` ask is judged once. Paper posts the legacy `AsyncPlayerChatEvent` and then
+  `AsyncChatEvent` for one line, and when the answer was refused, or its function started another ask, the ask
+  waiting by the time the second event arrived took the same line again, so a refusal was told twice or the next
+  question was answered with the previous text. The line the legacy event took is now left alone by the second
+  event, which stays cancelled.
 - `Menus.shutdown` empties the inventory of each open menu and prompt anvil whose viewer the disabling thread
   does not own, which happens only on Folia. Such a menu still stays open with no listener to cancel its clicks,
   but it now shows nothing, so its viewer has no menu copy to take. Before, it stayed fully stocked and a copy

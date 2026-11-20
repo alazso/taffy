@@ -507,6 +507,73 @@ final class PromptsTest {
         assertThat(free.isCancelled()).isFalse();
     }
 
+    // Posts one chat line as the server does: the legacy event, then the modern one carrying its cancelled state.
+    @SuppressWarnings("deprecation")
+    private AsyncChatEvent line(String text) {
+        AsyncPlayerChatEvent legacy = new AsyncPlayerChatEvent(true, alex.player, text, new HashSet<>());
+        post(legacy);
+        Component message = Component.text(text);
+        AsyncChatEvent modern = new AsyncChatEvent(true, alex.player, new HashSet<>(), ChatRenderer.defaultRenderer(),
+            message, message, mock(SignedMessage.class));
+        modern.setCancelled(legacy.isCancelled());
+        post(modern);
+        return modern;
+    }
+
+    @Test
+    void aRefusedLineTakenFromTheLegacyEventIsNotJudgedAgainFromTheModernEvent() {
+        start(PromptMode.CHAT);
+        ask();
+
+        AsyncChatEvent refused = line("nope");
+
+        assertThat(refused.isCancelled()).isTrue();
+        assertThat(judged).containsExactly("nope");
+        assertThat(prompts.pending(alex.id)).isNotNull();
+        assertThat(line("5").isCancelled()).isTrue();
+        assertThat(judged).containsExactly("nope", "5");
+        assertThat(state()).isEqualTo(5);
+        assertThat(line("hello").isCancelled()).isFalse();
+    }
+
+    @Test
+    void aLineWhoseAnswerStartsAnotherAskIsNotTakenAsTheAnswerOfThatAsk() {
+        start(PromptMode.CHAT);
+        List<String> second = new ArrayList<>();
+        PromptRequest next = new PromptRequest(Component.text("Amount?"), "1", new Route(Sample.KIND.id(), 2, null),
+            text -> {
+                second.add(text);
+                return accept(3);
+            });
+        ask(text -> {
+            prompts.ask(alex.player, next);
+            return new Answer.Retry(NOT_A_NUMBER);
+        });
+
+        line("7");
+
+        assertThat(second).isEmpty();
+        assertThat(prompts.pending(alex.id).request()).isSameAs(next);
+        line("4");
+        assertThat(second).containsExactly("4");
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void aQuitForgetsThatTheLegacyEventTookALine() {
+        start(PromptMode.CHAT);
+        ask();
+        post(new AsyncPlayerChatEvent(true, alex.player, "nope", new HashSet<>()));
+        post(new AsyncPlayerChatEvent(true, alex.player, "again", new HashSet<>()));
+        harness.listener.onQuit(new PlayerQuitEvent(alex.player, Component.empty(),
+            PlayerQuitEvent.QuitReason.DISCONNECTED));
+        ask();
+
+        assertThat(type("5").isCancelled()).isTrue();
+
+        assertThat(judged).containsExactly("nope", "again", "5");
+    }
+
     @Test
     void aLongLineIsCutTo256Characters() {
         start(PromptMode.CHAT);
