@@ -10,7 +10,9 @@ All notable changes to Taffy are documented here. This project follows
   one that waits for `ItemsAdderLoadDataEvent`. A plugin that detects again from its reload command calls it on
   the `CustomItems` it holds first, so no listener of an earlier detection stays registered. A closed
   `CustomItems` keeps answering, but a plugin that was still loading its items stays `LOADING` in it. A second
-  call does nothing.
+  call does nothing. A plugin that detects again without calling it leaves one listener registered for each of
+  ItemsAdder, Nexo, Oraxen and HeadDatabase whose integration is on, where `0.3.0` left one for ItemsAdder only,
+  until the plugin disables.
 - `CustomItems.build(String reference)` builds the item a reference names as `create` does and returns a
   `CustomItems.Built`: the item, or a `Built.Reason` that says why there is none. `UNKNOWN_PLUGIN` is a
   reference whose text before the first colon names no plugin and that no plugin knows whole, `PLUGIN_OFF` a
