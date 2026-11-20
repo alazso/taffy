@@ -69,7 +69,9 @@ import java.util.logging.Level;
  * logger and the {@link ErrorReports} of the menus they are built over. Building the prompts makes them the prompts
  * of those menus, so opening a menu ends a pending ask; a second {@code Prompts} over the same menus, or prompts over
  * menus that were shut down, are refused. Building the prompts also registers their listener, which reads the chat
- * answers and guards the prompt anvil, as a listener of the menus' plugin, so the plugin registers nothing.
+ * answers and guards the prompt anvil, as a listener of the menus' plugin, so the plugin registers nothing. An ask
+ * ends only a pending ask of the same {@code Prompts}, and each {@code Prompts} takes the chat line of a player it
+ * waits for, so a plugin with more than one {@code Menus} builds its {@code Prompts} over one of them.
  *
  * <p>At disable, {@link Menus#shutdown()} ends every ask, in the order the {@code so.alaz.taffy.platform} package
  * states.
