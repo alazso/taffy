@@ -543,6 +543,14 @@ public final class Menus {
     }
 
     /**
+     * Opens the route as {@link #open(Player, Route)} does and tells whether the viewer now sees its menu:
+     * {@code false} when the server refused to open the inventory or {@link #shutdown()} ran.
+     */
+    boolean opens(Player viewer, Route route) {
+        return reopen(viewer, menu(route), route);
+    }
+
+    /**
      * Opens {@code route.menu()} in {@code route.state()} on the next tick, on the viewer's entity thread.
      *
      * @param viewer the player to show the menu to
@@ -903,13 +911,14 @@ public final class Menus {
     }
 
     @SuppressWarnings("unchecked")
-    private <S> void reopen(Player viewer, Menu<S> menu, Route route) {
-        start(viewer, menu, (S) route.state(), route.back());
+    private <S> boolean reopen(Player viewer, Menu<S> menu, Route route) {
+        return start(viewer, menu, (S) route.state(), route.back());
     }
 
-    private <S> void start(Player viewer, Menu<S> menu, S state, @Nullable Route back) {
+    /** Opens the menu and tells whether the viewer now sees it: not once shutdown ran or when the server refused. */
+    private <S> boolean start(Player viewer, Menu<S> menu, S state, @Nullable Route back) {
         if (stopping) {
-            return;
+            return false;
         }
         onViewerThread(viewer, "Menus.open", "use Menus.openLater");
         prompts.end(viewer.getUniqueId());
@@ -921,10 +930,11 @@ public final class Menus {
         paint(session);
         if (!handoff(viewer, () -> shows(viewer.openInventory(session.getInventory()), session))) {
             session.close();
-            return;
+            return false;
         }
         sessions.put(viewer.getUniqueId(), session);
         menu.opened(session, viewer);
+        return true;
     }
 
     /** A refused open returns null when nothing was open before, else the viewer's own inventory view. */

@@ -44,9 +44,13 @@ All notable changes to Taffy are documented here. This project follows
   constructor give a row with no key, and `exclusively()` keeps the key.
 - `PromptRequest.abandoned(Consumer<PromptEnd>)` gives a question a step that runs once when its ask ends and the
   prompts open no menu for it, with how it ended as the new enum `PromptEnd`: `TIMED_OUT` and `CANCELLED` when
-  the origin could not open because the player is dead, offline or has another plugin's inventory open, `LEFT`
-  when the player quit or was gone, `REPLACED` when another menu, a newer ask or another inventory took the place
-  of the ask, and `CANCELLED` also when `Menus.shutdown` ends the ask of a player the disabling thread owns.
+  the origin did not open because the player is dead, offline or has another plugin's inventory open, the server
+  refused the origin's inventory or opening it failed, `LEFT` when the player quit, was gone, or was dead or
+  offline when an accepted or failed answer was to open its menu, `REPLACED` when another menu, a newer ask or
+  another inventory took the place of the ask or kept an answer's menu or anvil from showing, and also when the
+  menu an accepted or failed answer was to open did not open, because the server refused its inventory, its route
+  names no registered menu or the menu failed to draw, and `CANCELLED` also when `Menus.shutdown` ends the ask of
+  a player the disabling thread owns.
   Before, nothing told a menu that had handed its session to an ask, with `Menu.closed(session, false)`, that the
   ask would never open it again, so what it kept for the reopened menu, such as escrowed items, was lost. An ask
   that opens a menu, its origin or the route of an `Answer.Accept`, calls nothing, and neither does one whose

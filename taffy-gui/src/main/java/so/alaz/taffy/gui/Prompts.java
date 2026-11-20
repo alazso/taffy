@@ -42,7 +42,8 @@ import java.util.logging.Level;
  * until its first deadline, {@link #TIMEOUT} after it was asked. Submit, cancel and timeout open a menu again unless
  * the player is dead or offline, has another plugin's inventory open, or the plugin is stopping; an ask ended by
  * another menu, another plugin's inventory, a newer ask or a quit opens nothing. An ask that ends with no menu opened
- * for it calls {@link PromptRequest#abandoned()} once with a {@link PromptEnd}.
+ * for it calls {@link PromptRequest#abandoned()} once with a {@link PromptEnd}, also when the menu it was to open
+ * did not open because the server refused its inventory or opening it failed.
  *
  * <p>The plugin's lang files hold the text under these keys: {@link #QUESTION} (the question, with the
  * {@code <question>} value), {@link #HINT} (the chat hint, with the cancel word as {@code <word>}),
@@ -553,8 +554,10 @@ public final class Prompts {
 
     /**
      * Ends an ask the caller took: closes its anvil, tells the player {@code key} when one is given and opens
-     * {@code next}. When no menu may open, the ask ends as {@code cause}, or without one as what keeps the menu from
-     * opening.
+     * {@code next}. When no menu may open, or the menu does not open because the server refused its inventory or
+     * opening it threw, the ask ends as {@code cause}, or without one as what keeps the menu from opening, which is
+     * {@link PromptEnd#REPLACED} for a menu that does not open. A failure of the open is thrown on after the ask
+     * ended.
      */
     private void finish(Player player, Pending entry, @Nullable String key, Route next, @Nullable PromptEnd cause) {
         closeSurface(player, entry);
@@ -566,7 +569,17 @@ public final class Prompts {
                 : player.isDead() || !player.isOnline() ? PromptEnd.LEFT : PromptEnd.REPLACED);
             return;
         }
-        menus.open(player, next);
+        UUID id = player.getUniqueId();
+        MenuSession<?> before = menus.session(id).orElse(null);
+        boolean opened = false;
+        try {
+            opened = menus.opens(player, next);
+        } finally {
+            // A menu whose opened step threw is open, and its session is the viewer's by then.
+            if (!opened && menus.session(id).orElse(null) == before) {
+                abandon(entry, cause != null ? cause : stopping ? PromptEnd.CANCELLED : PromptEnd.REPLACED);
+            }
+        }
     }
 
     private void abandon(Pending entry, PromptEnd end) {

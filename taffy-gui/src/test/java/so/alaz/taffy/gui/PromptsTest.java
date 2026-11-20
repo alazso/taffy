@@ -735,6 +735,8 @@ final class PromptsTest {
             assertThat(report.error()).isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("no menu is registered as nowhere");
         });
+        assertThat(ends).containsExactly(PromptEnd.REPLACED);
+        assertThat(alex.session()).isNull();
     }
 
     @Test
@@ -1695,6 +1697,79 @@ final class PromptsTest {
         link.actions.getLast().run();
         link.actions.getLast().run();
         assertThat(ends).containsExactly(PromptEnd.CANCELLED, PromptEnd.CANCELLED);
+    }
+
+    @Test
+    void anAcceptedOrFailedAnswerWhoseMenuTheServerRefusesEndsTheAskAsReplaced() {
+        start(PromptMode.CHAT);
+        ask();
+        alex.refuseOpen = true;
+
+        type("7");
+
+        assertThat(alex.session()).isNull();
+        assertThat(prompts.pending(alex.id)).isNull();
+        assertThat(ends).containsExactly(PromptEnd.REPLACED);
+        alex.refuseOpen = false;
+        ask(text -> {
+            throw new IllegalStateException("boom");
+        });
+        alex.refuseOpen = true;
+        type("7");
+        assertThat(alex.session()).isNull();
+        assertThat(ends).containsExactly(PromptEnd.REPLACED, PromptEnd.REPLACED);
+    }
+
+    @Test
+    void aCancelAndATimeoutWhoseOriginTheServerRefusesEndAsCancelledAndTimedOut() {
+        start(PromptMode.CHAT);
+        ask();
+        alex.refuseOpen = true;
+
+        type("cancel");
+
+        assertThat(alex.session()).isNull();
+        assertThat(ends).containsExactly(PromptEnd.CANCELLED);
+        alex.refuseOpen = false;
+        ask();
+        alex.refuseOpen = true;
+        timer.fire(Prompts.TIMEOUT);
+        assertThat(alex.session()).isNull();
+        assertThat(ends).containsExactly(PromptEnd.CANCELLED, PromptEnd.TIMED_OUT);
+    }
+
+    @Test
+    void anAcceptedAnswerWhoseMenuFailsToDrawEndsTheAskAsReplacedAndIsStillReported() {
+        start(PromptMode.CHAT);
+        ask();
+        sample.menu.render = frame -> {
+            throw new IllegalStateException("no icons");
+        };
+
+        type("7");
+
+        assertThat(alex.session()).isNull();
+        assertThat(ends).containsExactly(PromptEnd.REPLACED);
+        assertThat(harness.reports).singleElement().satisfies(report -> {
+            assertThat(report.source()).isEqualTo("gui.prompt");
+            assertThat(report.error()).hasMessage("no icons");
+        });
+    }
+
+    @Test
+    void anAcceptedAnswerWhoseMenuOpensAndThenFailsInItsOpenedStepTellsNoEnd() {
+        start(PromptMode.CHAT);
+        ask();
+        sample.menu.opened = session -> {
+            throw new IllegalStateException("late");
+        };
+
+        type("7");
+
+        assertThat(state()).isEqualTo(7);
+        assertThat(ends).isEmpty();
+        assertThat(harness.reports).singleElement()
+            .satisfies(report -> assertThat(report.source()).isEqualTo("gui.prompt"));
     }
 
     @Test
