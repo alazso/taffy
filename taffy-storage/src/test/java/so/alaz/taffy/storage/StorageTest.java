@@ -68,17 +68,33 @@ final class StorageTest {
     @ParameterizedTest
     @CsvSource(delimiter = '|', textBlock = """
         MYSQL    | DISABLE     | jdbc:mysql://db.example:3307/app?sslMode=DISABLED&useAffectedRows=true&socketTimeout=30000&allowPublicKeyRetrieval=true
+        MYSQL    | PREFER      | jdbc:mysql://db.example:3307/app?sslMode=PREFERRED&useAffectedRows=true&socketTimeout=30000&allowPublicKeyRetrieval=true
         MYSQL    | TRUST       | jdbc:mysql://db.example:3307/app?sslMode=REQUIRED&useAffectedRows=true&socketTimeout=30000
         MYSQL    | VERIFY_FULL | jdbc:mysql://db.example:3307/app?sslMode=VERIFY_IDENTITY&useAffectedRows=true&socketTimeout=30000
         MARIADB  | DISABLE     | jdbc:mariadb://db.example:3307/app?sslMode=disable&useAffectedRows=true&socketTimeout=30000&allowPublicKeyRetrieval=true
+        MARIADB  | PREFER      | jdbc:mariadb://db.example:3307/app?sslMode=disable&useAffectedRows=true&socketTimeout=30000&allowPublicKeyRetrieval=true
         MARIADB  | TRUST       | jdbc:mariadb://db.example:3307/app?sslMode=trust&useAffectedRows=true&socketTimeout=30000
         MARIADB  | VERIFY_FULL | jdbc:mariadb://db.example:3307/app?sslMode=verify-full&useAffectedRows=true&socketTimeout=30000
         POSTGRES | DISABLE     | jdbc:postgresql://db.example:3307/app?sslmode=disable&socketTimeout=30
+        POSTGRES | PREFER      | jdbc:postgresql://db.example:3307/app?sslmode=prefer&socketTimeout=30
         POSTGRES | TRUST       | jdbc:postgresql://db.example:3307/app?sslmode=require&socketTimeout=30
         POSTGRES | VERIFY_FULL | jdbc:postgresql://db.example:3307/app?sslmode=verify-full&sslfactory=org.postgresql.ssl.DefaultJavaSSLFactory&socketTimeout=30
         """)
     void aServerUrlCarriesTheDriversOwnSslModeAndTimeouts(Dialect dialect, StorageSettings.SslMode ssl, String url) {
         assertThat(Storage.serverUrl(dialect, server("db.example", ssl))).isEqualTo(url);
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', textBlock = """
+        MYSQL    | jdbc:mysql://db.example:3307/app?sslMode=REQUIRED&useAffectedRows=true&socketTimeout=90000
+        MARIADB  | jdbc:mariadb://db.example:3307/app?sslMode=trust&useAffectedRows=true&socketTimeout=90000
+        POSTGRES | jdbc:postgresql://db.example:3307/app?sslmode=require&socketTimeout=90
+        """)
+    void aServerUrlCarriesTheSocketTimeoutOfTheServerAndNoneOfItsDriverProperties(Dialect dialect, String url) {
+        StorageSettings.Server server = server("db.example", StorageSettings.SslMode.TRUST)
+            .socketTimeout(Duration.ofSeconds(90)).properties(Map.of("connectTimeout", "5000"));
+
+        assertThat(Storage.serverUrl(dialect, server)).isEqualTo(url);
     }
 
     @Test

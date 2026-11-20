@@ -45,7 +45,8 @@ import javax.sql.DataSource;
  * where the name is the plugin's {@link Plugin#getName()}, and {@link #close} stops them, so a plugin passes it no
  * executor. On SQLite storage from {@link #start}, writes run on one more thread of their own, named
  * {@code <name>-db-writer}, one at a time in the order they were submitted. Each piece of work runs in a transaction
- * of its own on one of those threads, with a connection of its own. On SQLite, writes go through a pool of one
+ * of its own on one of those threads, with a connection of its own, so on MySQL, MariaDB and PostgreSQL writes run
+ * at the same time as each other, as {@link #async} states. On SQLite, writes go through a pool of one
  * connection named {@code <name>-writer} and reads through a pool of read-only connections named
  * {@code <name>-reader}; on a server both go through one pool named {@code <name>}.
  *
@@ -57,9 +58,11 @@ import javax.sql.DataSource;
  * transaction begins deferred.
  *
  * <p>MySQL and MariaDB connections are opened with {@code useAffectedRows=true}, so an {@code UPDATE} counts only
- * the rows whose values it changed (see {@link Tx#update}). Every server connection has a socket timeout of 30
- * seconds during normal work: a statement that waits longer for the server, a lock wait included, fails and its
- * connection is closed. Migrations run without that timeout.
+ * the rows whose values it changed (see {@link Tx#update}). Every server connection has the socket timeout of
+ * {@link StorageSettings.Server#socketTimeout()} during normal work, 30 seconds unless the plugin set another: a
+ * statement that waits longer for the server, a lock wait included, fails and its connection is closed. Migrations
+ * run without that timeout. The {@link StorageSettings.Server#properties()} are handed to the driver with every
+ * server connection.
  *
  * <p>The future of a piece of work completes on a database thread after its transaction has ended and its
  * connection is back in the pool, so code chained onto the future never holds the connection or reaches an open
@@ -79,8 +82,6 @@ import javax.sql.DataSource;
  * database thread.
  */
 public final class Storage {
-
-    private static final Duration SOCKET_TIMEOUT = Duration.ofSeconds(30);
 
     private static final String ERROR_SOURCE = "storage";
 
@@ -352,6 +353,20 @@ public final class Storage {
      * another order than the writes, which still commit in the order they were submitted. The work itself must not
      * wait for another write: that write queues behind it on the one writer thread and never runs.
      *
+     * <p>On MySQL, MariaDB and PostgreSQL, writes run at the same time on up to
+     * {@link StorageSettings#asyncThreads()} threads, each in a transaction on a connection of its own, in no order
+     * relative to each other. Work that reads a row and then writes a value computed from what it read is correct
+     * on SQLite, where writes run one at a time, and loses an update on a server, where another write may change
+     * the row between the two statements. Such work either writes with a single conditional or relative
+     * {@code UPDATE}, such as {@code SET balance = balance + ?} or {@code WHERE id = ? AND state = ?}, or selects
+     * the row with {@link Dialect#forUpdate()}, which holds the row until the transaction ends.
+     *
+     * <p>On MySQL and MariaDB a transaction reads from the snapshot its first select took
+     * ({@code REPEATABLE READ}), so a select without {@link Dialect#forUpdate()} that runs again inside one piece
+     * of work sees the same rows however often it runs, whatever other transactions committed meanwhile. A loop
+     * that reads, computes and writes with a condition until its write counts a row therefore runs one piece of
+     * work per attempt, or reads with {@link Dialect#forUpdate()}, which reads the newest committed row.
+     *
      * <p>The transaction commits when the work returns and rolls back when it throws. A commit the database refuses
      * because it rolled the transaction back, which is an {@link SQLTransactionRollbackException} or an
      * {@link SQLException} whose SQLState, or that of a cause, starts with {@code 40}, completes the future with that
@@ -541,31 +556,37 @@ public final class Storage {
         StorageSettings.SslMode ssl = server.sslMode();
         // useAffectedRows makes an UPDATE count only the rows it changed, so a conditional update must change a
         // column, and an insert that meets an existing key counts as 0. socketTimeout ends a call on a dead
-        // connection. Without TLS, MySQL 8's caching_sha2_password needs the server key, which
-        // allowPublicKeyRetrieval lets the driver fetch.
-        String publicKey = ssl == StorageSettings.SslMode.DISABLE ? "&allowPublicKeyRetrieval=true" : "";
+        // connection. Without TLS, which PREFER may end in, MySQL 8's caching_sha2_password needs the server key,
+        // which allowPublicKeyRetrieval lets the driver fetch.
+        Duration socketTimeout = server.socketTimeout();
+        String publicKey = ssl == StorageSettings.SslMode.DISABLE || ssl == StorageSettings.SslMode.PREFER
+            ? "&allowPublicKeyRetrieval=true" : "";
         return switch (dialect) {
             case MYSQL -> {
                 String mode = switch (ssl) {
                     case DISABLE -> "DISABLED";
+                    case PREFER -> "PREFERRED";
                     case TRUST -> "REQUIRED";
                     case VERIFY_FULL -> "VERIFY_IDENTITY";
                 };
                 yield "jdbc:mysql://" + address + "?sslMode=" + mode + "&useAffectedRows=true&socketTimeout="
-                    + SOCKET_TIMEOUT.toMillis() + publicKey;
+                    + socketTimeout.toMillis() + publicKey;
             }
             case MARIADB -> {
+                // The MariaDB driver has no mode that encrypts without a certificate check only when the server
+                // offers TLS: its allow mode checks the certificate and the host name.
                 String mode = switch (ssl) {
-                    case DISABLE -> "disable";
+                    case DISABLE, PREFER -> "disable";
                     case TRUST -> "trust";
                     case VERIFY_FULL -> "verify-full";
                 };
                 yield "jdbc:mariadb://" + address + "?sslMode=" + mode + "&useAffectedRows=true&socketTimeout="
-                    + SOCKET_TIMEOUT.toMillis() + publicKey;
+                    + socketTimeout.toMillis() + publicKey;
             }
             case POSTGRES -> {
                 String mode = switch (ssl) {
                     case DISABLE -> "disable";
+                    case PREFER -> "prefer";
                     case TRUST -> "require";
                     case VERIFY_FULL -> "verify-full";
                 };
@@ -575,7 +596,7 @@ public final class Storage {
                 String factory = ssl == StorageSettings.SslMode.VERIFY_FULL
                     ? "&sslfactory=org.postgresql.ssl.DefaultJavaSSLFactory" : "";
                 yield "jdbc:postgresql://" + address + "?sslmode=" + mode + factory + "&socketTimeout="
-                    + SOCKET_TIMEOUT.toSeconds();
+                    + socketTimeout.toSeconds();
             }
             case SQLITE -> throw new IllegalArgumentException("sqlite connects to a file, not a server");
         };
@@ -813,7 +834,9 @@ public final class Storage {
         Dialect dialect = settings.dialect();
         StorageSettings.Server server = Objects.requireNonNull(settings.server());
         StorageSettings.Pool pool = settings.pool();
-        HikariDataSource shared = pool(name, dialect.driverClassName(), serverUrl(dialect, server), new Properties(),
+        Properties properties = new Properties();
+        properties.putAll(server.properties());
+        HikariDataSource shared = pool(name, dialect.driverClassName(), serverUrl(dialect, server), properties,
             pool.maxSize(), pool.minIdle(), pool.connectionTimeout(), server.user(), server.password(), null);
         pools.add(shared);
         return new Storage(dialect, server.tablePrefix(), logger, errors, workers, shared, shared,

@@ -6,6 +6,9 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.time.Duration;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -81,11 +84,105 @@ final class StorageSettingsTest {
     }
 
     @Test
+    void aServerFromTheFactoryWaitsThirtySecondsOnItsSocketAndHasNoDriverProperties() {
+        StorageSettings.Server server = StorageSettings.Server.of("db.example", 3306, "app", "shop", "",
+            StorageSettings.SslMode.PREFER);
+
+        assertThat(server.socketTimeout()).isEqualTo(Duration.ofSeconds(30));
+        assertThat(server.properties()).isEmpty();
+        assertThat(server.tablePrefix()).isEmpty();
+        assertThat(server.sslMode()).isEqualTo(StorageSettings.SslMode.PREFER);
+    }
+
+    @Test
+    void theSocketTimeoutAndTheDriverPropertiesAreReplacedInACopy() {
+        StorageSettings.Server server = server("p_");
+        Map<String, String> given = new LinkedHashMap<>();
+        given.put("sessionVariables", "wait_timeout=600");
+        given.put("connectTimeout", "5000");
+
+        StorageSettings.Server changed = server.socketTimeout(Duration.ofMinutes(2)).properties(given);
+        given.put("tcpKeepAlive", "true");
+
+        assertThat(changed.socketTimeout()).isEqualTo(Duration.ofSeconds(120));
+        assertThat(changed.properties()).containsExactly(Map.entry("sessionVariables", "wait_timeout=600"),
+            Map.entry("connectTimeout", "5000"));
+        assertThat(changed.tablePrefix("q_").socketTimeout()).isEqualTo(Duration.ofSeconds(120));
+        assertThat(changed.tablePrefix("q_").properties()).isEqualTo(changed.properties());
+        assertThat(changed.properties(Map.of()).properties()).isEmpty();
+        assertThatThrownBy(() -> changed.properties().put("tcpKeepAlive", "true"))
+            .isInstanceOf(UnsupportedOperationException.class);
+        assertThat(server).isEqualTo(server("p_")).isNotEqualTo(server.socketTimeout(Duration.ofSeconds(31)))
+            .isNotEqualTo(server.properties(Map.of("connectTimeout", "5000")));
+        assertThat(server.properties(Map.of("connectTimeout", "5000")))
+            .isEqualTo(server.properties(Map.of("connectTimeout", "5000")))
+            .hasSameHashCodeAs(server.properties(Map.of("connectTimeout", "5000")));
+        assertThat(server.socketTimeout(Duration.ofSeconds(1)).socketTimeout()).isEqualTo(Duration.ofSeconds(1));
+        assertThat(server.socketTimeout(Duration.ofSeconds(2_147_483)).socketTimeout())
+            .isEqualTo(Duration.ofSeconds(2_147_483));
+    }
+
+    @Test
+    void aSocketTimeoutOutsideWholeSecondsFromOneIsRefused() {
+        StorageSettings.Server server = server("p_");
+
+        assertThatThrownBy(() -> server.socketTimeout(Duration.ZERO))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("socketTimeout is PT0S; expected a whole number of seconds from 1 to 2147483");
+        assertThatThrownBy(() -> server.socketTimeout(Duration.ofSeconds(-5)))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("socketTimeout is PT-5S; expected a whole number of seconds from 1 to 2147483");
+        assertThatThrownBy(() -> server.socketTimeout(Duration.ofMillis(1500)))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("socketTimeout is PT1.5S; expected a whole number of seconds from 1 to 2147483");
+        assertThatThrownBy(() -> server.socketTimeout(Duration.ofSeconds(2_147_484)))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("socketTimeout is PT596H31M24S; expected a whole number of seconds from 1 to 2147483");
+        assertThatThrownBy(() -> server.socketTimeout(null))
+            .isInstanceOf(NullPointerException.class).hasMessage("socketTimeout");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"user", "password", "PASSWORD", "sslMode", "sslmode", "SSLMODE", "ssl", "useSSL",
+        "useSsl", "requireSSL", "verifyServerCertificate", "trustServerCertificate",
+        "disableSslHostnameVerification", "sslfactory", "allowPublicKeyRetrieval", "useAffectedRows",
+        "socketTimeout", "SocketTimeout"})
+    void aDriverPropertyThatWouldReplaceAValueStorageSetsIsRefusedInAnyLetterCase(String name) {
+        assertThatThrownBy(() -> server("p_").properties(Map.of("connectTimeout", "5000", name, "x")))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the driver property \"" + name + "\" would replace a value storage sets itself; set the"
+                + " user, the password, the SSL mode and the socket timeout through the server settings");
+    }
+
+    @Test
+    void aDriverPropertyWithoutANameOrAValueIsRefused() {
+        StorageSettings.Server server = server("p_");
+        Map<String, String> noValue = new HashMap<>();
+        noValue.put("connectTimeout", null);
+        Map<String, String> noName = new HashMap<>();
+        noName.put(null, "5000");
+
+        assertThatThrownBy(() -> server.properties(Map.of(" ", "5000")))
+            .isInstanceOf(IllegalArgumentException.class).hasMessage("a driver property has a blank name");
+        assertThatThrownBy(() -> server.properties(noValue))
+            .isInstanceOf(NullPointerException.class).hasMessage("value of driver property connectTimeout");
+        assertThatThrownBy(() -> server.properties(noName))
+            .isInstanceOf(NullPointerException.class).hasMessage("property name");
+        assertThatThrownBy(() -> server.properties(null))
+            .isInstanceOf(NullPointerException.class).hasMessage("properties");
+    }
+
+    @Test
     void theServerToStringHidesASetPasswordAndShowsAnEmptyOne() {
         assertThat(server("p_")).hasToString("Server[host=db.example, port=3307, database=app, user=shop,"
-            + " password=(set), sslMode=VERIFY_FULL, tablePrefix=p_]");
+            + " password=(set), sslMode=VERIFY_FULL, tablePrefix=p_, socketTimeout=PT30S, properties=[]]");
         assertThat(server("db.example", 3307, "app", "", "p_")).hasToString("Server[host=db.example,"
-            + " port=3307, database=app, user=shop, password=, sslMode=VERIFY_FULL, tablePrefix=p_]");
+            + " port=3307, database=app, user=shop, password=, sslMode=VERIFY_FULL, tablePrefix=p_,"
+            + " socketTimeout=PT30S, properties=[]]");
+        assertThat(server("p_").socketTimeout(Duration.ofSeconds(90))
+            .properties(Map.of("trustStorePassword", "hunter2")).toString())
+            .endsWith("tablePrefix=p_, socketTimeout=PT1M30S, properties=[trustStorePassword]]")
+            .doesNotContain("hunter2");
         assertThat(StorageSettings.server(Dialect.MYSQL, server("p_")).toString())
             .doesNotContain("0451").contains("password=(set)");
         assertThat(StorageSettings.sqlite("data.db")).hasToString("StorageSettings[dialect=SQLITE,"
@@ -310,8 +407,8 @@ final class StorageSettingsTest {
     }
 
     @Test
-    void theSslModesAreDisableTrustAndVerifyFull() {
+    void theSslModesAreDisablePreferTrustAndVerifyFull() {
         assertThat(StorageSettings.SslMode.values()).containsExactly(StorageSettings.SslMode.DISABLE,
-            StorageSettings.SslMode.TRUST, StorageSettings.SslMode.VERIFY_FULL);
+            StorageSettings.SslMode.PREFER, StorageSettings.SslMode.TRUST, StorageSettings.SslMode.VERIFY_FULL);
     }
 }

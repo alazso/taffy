@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.logging.Logger;
@@ -386,6 +387,78 @@ abstract class CheckpointedStorageContract extends StorageContract {
 
         assertThat(unchanged).isZero();
         assertThat(changed).isEqualTo(1);
+    }
+
+    @Test
+    void twoTransactionsThatLockTwoRowsInOppositeOrderBothCommitOnceAfterTheLoserIsRetried() throws Exception {
+        String prefix = "deadlock_";
+        Storage threaded = start(StorageSettings.server(dialect(), server(prefix)).asyncThreads(2));
+        try (Connection connection = connect()) {
+            try {
+                DeadlockScenario.run(threaded, connection, prefix + "rows");
+            } finally {
+                assertThat(threaded.close(Duration.ofSeconds(5))).isTrue();
+                ProbeSchema.drop(connection, dialect(), prefix);
+            }
+        }
+    }
+
+    @Test
+    void aStatementThatOutlastsTheSocketTimeoutOfTheServerFailsAndOneWithinItRuns() throws Exception {
+        String prefix = "socket_";
+        Storage quick = start(StorageSettings.server(dialect(), server(prefix).socketTimeout(Duration.ofSeconds(1))));
+        Storage patient = start(StorageSettings.server(dialect(),
+            server(prefix).socketTimeout(Duration.ofSeconds(20))));
+        try (Connection connection = connect()) {
+            try {
+                long begun = System.nanoTime();
+
+                assertThatThrownBy(() -> quick.async(tx -> {
+                    tx.execute("SELECT SLEEP(6)");
+                    return null;
+                }).get(30, TimeUnit.SECONDS))
+                    .isInstanceOf(ExecutionException.class).cause().isInstanceOf(SQLException.class);
+
+                assertThat(Duration.ofNanos(System.nanoTime() - begun)).isLessThan(Duration.ofSeconds(6));
+                assertThat(quick.read(tx -> tx.queryOne("SELECT 1 AS n", Tx.Binder.NONE, row -> row.integer("n"))
+                    .orElseThrow()).get(30, TimeUnit.SECONDS)).isEqualTo(1L);
+                assertThat(patient.async(tx -> {
+                    tx.execute("SELECT SLEEP(3)");
+                    return "slept";
+                }).get(30, TimeUnit.SECONDS)).isEqualTo("slept");
+            } finally {
+                quick.close(Duration.ofSeconds(5));
+                patient.close(Duration.ofSeconds(5));
+                ProbeSchema.drop(connection, dialect(), prefix);
+            }
+        }
+    }
+
+    @Test
+    void theDriverPropertiesOfTheServerReachEveryConnection() throws Exception {
+        String prefix = "props_";
+        Storage plain = start(StorageSettings.server(dialect(), server(prefix)));
+        Storage tuned = start(StorageSettings.server(dialect(),
+            server(prefix).properties(Map.of("sessionVariables", "wait_timeout=1234"))).asyncThreads(2));
+        TxWork<Long> waitTimeout = tx -> tx.queryOne("SELECT @@session.wait_timeout AS n", Tx.Binder.NONE,
+            row -> row.integer("n")).orElseThrow();
+        try (Connection connection = connect()) {
+            try {
+                assertThat(plain.read(waitTimeout).get(30, TimeUnit.SECONDS)).isNotEqualTo(1234L);
+                assertThat(tuned.read(waitTimeout).get(30, TimeUnit.SECONDS)).isEqualTo(1234L);
+                assertThat(tuned.async(waitTimeout).get(30, TimeUnit.SECONDS)).isEqualTo(1234L);
+            } finally {
+                plain.close(Duration.ofSeconds(5));
+                tuned.close(Duration.ofSeconds(5));
+                ProbeSchema.drop(connection, dialect(), prefix);
+            }
+        }
+    }
+
+    /** Starts storage with no migrations, recording them in {@code <prefix>schema_version}. */
+    private Storage start(StorageSettings settings) {
+        return TestPlugins.start(TestPlugins.plugin(name(), Path.of("unused"), Logger.getAnonymousLogger()),
+            settings.versionTable(settings.tablePrefix() + "schema_version"), List.of(), null, CLOCK).join();
     }
 
     private Storage start(String prefix, List<Migration> migrations, Map<String, String> scripts) {

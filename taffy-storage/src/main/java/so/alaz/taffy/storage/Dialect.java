@@ -127,7 +127,11 @@ public enum Dialect {
     }
 
     /**
-     * Returns the clause appended to a select to lock the rows it reads until the transaction ends.
+     * Returns the clause appended to a select to lock the rows it reads until the transaction ends. On MySQL,
+     * MariaDB and PostgreSQL writes run at the same time, so work that reads a row and then writes a value computed
+     * from it selects the row with this clause, as {@link Storage#async} states: another transaction that selects
+     * the row with it, or writes the row, then waits until this one has ended. On MySQL and MariaDB a select with
+     * this clause also reads the newest committed row, where a select without it reads the transaction's snapshot.
      *
      * @return {@code " FOR UPDATE"}, or an empty string on SQLite, which has no such clause
      */

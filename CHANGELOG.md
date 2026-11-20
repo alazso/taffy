@@ -17,6 +17,23 @@ All notable changes to Taffy are documented here. This project follows
   and `tablePrefix(String)` a copy with one. `StorageSettings.Pool.of(int maxSize)` gives a pool that keeps 1 idle
   connection and lets a caller wait 10 seconds, and `maxSize(int)`, `minIdle(int)` and
   `connectionTimeout(Duration)` each give a copy.
+- `StorageSettings.SslMode.PREFER` encrypts the connection when the server offers TLS and connects without
+  encryption when it does not, and never checks the server's certificate: `sslMode=PREFERRED` on MySQL (with
+  `allowPublicKeyRetrieval=true`, for a login that ends up unencrypted) and `sslmode=prefer` on PostgreSQL, which
+  is what those drivers do for a URL that names no mode. A plugin that connected with a bare JDBC URL so keeps what
+  its owners have. The MariaDB driver has no such mode, so on MariaDB `PREFER` is `sslMode=disable`, that driver's
+  own default: the connection is not encrypted, and `TRUST` or `VERIFY_FULL` encrypts it.
+- `StorageSettings.Server.socketTimeout(Duration)` gives a server with another socket timeout, a whole number of
+  seconds from 1 to 2147483, for a plugin whose statements or lock waits may pass the 30 seconds every server
+  connection had. `Server.of` still gives 30 seconds, `Server.socketTimeout()` reads the value, and migrations
+  still run without the timeout.
+- `StorageSettings.Server.properties(Map<String, String>)` gives a server with properties that are handed to the
+  JDBC driver with every connection, such as `connectTimeout`, `sessionVariables` or `ApplicationName`, and
+  `Server.properties()` reads them as an unmodifiable map. A name that would replace a value storage sets itself
+  throws `IllegalArgumentException`, in any letter case: `user`, `password`, `sslMode`, `ssl`, `useSSL`,
+  `requireSSL`, `verifyServerCertificate`, `trustServerCertificate`, `disableSslHostnameVerification`,
+  `sslfactory`, `allowPublicKeyRetrieval`, `useAffectedRows` and `socketTimeout`. `Server.toString()` shows the
+  socket timeout and the names of the properties, never their values.
 
 ### Changed
 - Breaking: `StorageSettings`, `StorageSettings.Server` and `StorageSettings.Pool` are final classes with no public
@@ -32,6 +49,11 @@ All notable changes to Taffy are documented here. This project follows
   `StorageSettings.Server.of(host, port, database, user, password, sslMode).tablePrefix(prefix)` and
   `new StorageSettings.Pool(maxSize, minIdle, timeout)` with
   `StorageSettings.Pool.of(maxSize).minIdle(minIdle).connectionTimeout(timeout)`.
+- Breaking: `StorageSettings.SslMode` has a fourth constant, `PREFER`, between `DISABLE` and `TRUST`, so a `switch`
+  expression over the three earlier constants no longer compiles, a `switch` statement runs no branch for it, and
+  the ordinals of `TRUST` and `VERIFY_FULL` are one higher. The Javadoc of the enum now states that constants may
+  be added in a later release. Add a `default` branch to each `switch` over `SslMode`, and store a mode by its
+  name, not its ordinal.
 - Breaking: on MySQL, MariaDB and PostgreSQL the applied migrations are recorded in
   `<prefix><plugin>_schema_version`, where `<plugin>` is the plugin's name in lowercase with every character other
   than a lowercase letter, a digit or an underscore replaced by an underscore, and no longer in
@@ -99,6 +121,13 @@ All notable changes to Taffy are documented here. This project follows
 - The Javadoc of `Params.time` states its range: an instant whose milliseconds since the epoch fit a `long`. It
   throws `ArithmeticException` for `Instant.MAX`, `Instant.MIN` and any other instant outside that range, as
   before, so a plugin stores "never" as `null`.
+- The Javadoc of `Storage.async` states that on MySQL, MariaDB and PostgreSQL writes run at the same time on up to
+  `asyncThreads` threads, each on a connection of its own, in no order relative to each other. Work that reads a
+  row and then writes a value computed from it is correct on SQLite and loses an update on a server unless it
+  writes with one conditional or relative `UPDATE` or selects the row with `Dialect.forUpdate()`, whose Javadoc
+  points back to this rule. It also states that on MySQL and MariaDB a select without `forUpdate()` that runs
+  again inside one `TxWork` sees the transaction's first snapshot (`REPEATABLE READ`), so a loop that reads,
+  computes and writes until its write counts a row runs one `TxWork` per attempt or reads with `forUpdate()`.
 
 ## [0.3.2] - 2026-11-20
 

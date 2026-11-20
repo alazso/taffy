@@ -3,8 +3,12 @@ package so.alaz.taffy.storage;
 import org.jetbrains.annotations.Nullable;
 
 import java.time.Duration;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
@@ -33,6 +37,13 @@ public final class StorageSettings {
     private static final Pattern DATABASE = Pattern.compile("[A-Za-z0-9_$-]{1,64}");
     private static final Pattern HOST = Pattern.compile("[A-Za-z0-9._-]+|\\[[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*]");
     private static final Duration MIN_CONNECTION_TIMEOUT = Duration.ofMillis(250);
+    private static final Duration DEFAULT_SOCKET_TIMEOUT = Duration.ofSeconds(30);
+    // The MySQL and MariaDB drivers hold the socket timeout as an int of milliseconds.
+    private static final long MAX_SOCKET_TIMEOUT_SECONDS = Integer.MAX_VALUE / 1000;
+    // Lowercase: the MySQL and MariaDB drivers read a property name in any letter case.
+    private static final Set<String> RESERVED_PROPERTIES = Set.of("user", "password", "sslmode", "ssl", "usessl",
+        "requiressl", "verifyservercertificate", "trustservercertificate", "disablesslhostnameverification",
+        "sslfactory", "allowpublickeyretrieval", "useaffectedrows", "sockettimeout");
 
     static final String LEGACY_VERSION_TABLE = "schema_version";
     static final int MAX_VERSION_TABLE_LENGTH = 54;
@@ -294,8 +305,10 @@ public final class StorageSettings {
 
     /**
      * A MySQL, MariaDB or PostgreSQL server. It is built through {@link #of}, which gives a server with no table
-     * prefix, and {@link #tablePrefix(String)} gives a copy with one. {@link #toString()} does not show the
-     * password. Two servers are equal when every value is equal.
+     * prefix, a socket timeout of 30 seconds and no driver properties, and {@link #tablePrefix(String)},
+     * {@link #socketTimeout(Duration)} and {@link #properties(Map)} each give a copy with that value replaced.
+     * {@link #toString()} shows neither the password nor the value of a driver property. Two servers are equal
+     * when every value is equal.
      */
     public static final class Server {
 
@@ -306,9 +319,11 @@ public final class StorageSettings {
         private final String password;
         private final SslMode sslMode;
         private final String tablePrefix;
+        private final Duration socketTimeout;
+        private final Map<String, String> properties;
 
         private Server(String host, int port, String database, String user, String password, SslMode sslMode,
-                       String tablePrefix) {
+                       String tablePrefix, Duration socketTimeout, Map<String, String> properties) {
             this.host = host;
             this.port = port;
             this.database = database;
@@ -316,10 +331,12 @@ public final class StorageSettings {
             this.password = password;
             this.sslMode = sslMode;
             this.tablePrefix = tablePrefix;
+            this.socketTimeout = socketTimeout;
+            this.properties = properties;
         }
 
         /**
-         * Gives a server with no table prefix.
+         * Gives a server with no table prefix, a socket timeout of 30 seconds and no driver properties.
          *
          * @param host a host name or IPv4 address of ASCII letters, digits, dots, hyphens and underscores, or an
          *     IPv6 address in brackets, such as {@code [::1]}
@@ -350,7 +367,7 @@ public final class StorageSettings {
                 throw new IllegalArgumentException("database is \"" + database + "\"; use up to 64 letters,"
                     + " digits, underscores, dollar signs and hyphens");
             }
-            return new Server(host, port, database, user, password, sslMode, "");
+            return new Server(host, port, database, user, password, sslMode, "", DEFAULT_SOCKET_TIMEOUT, Map.of());
         }
 
         /**
@@ -417,6 +434,24 @@ public final class StorageSettings {
         }
 
         /**
+         * Gives how long a connection waits for the server to answer during normal work.
+         *
+         * @return the socket timeout, a whole number of seconds from 1 to 2147483
+         */
+        public Duration socketTimeout() {
+            return socketTimeout;
+        }
+
+        /**
+         * Gives the properties handed to the JDBC driver with every connection.
+         *
+         * @return the driver properties by name, in the order they were given; unmodifiable and possibly empty
+         */
+        public Map<String, String> properties() {
+            return properties;
+        }
+
+        /**
          * Gives this server with another table prefix.
          *
          * @param tablePrefix the text put before every table name: empty, or up to 32 lowercase letters, digits
@@ -426,33 +461,112 @@ public final class StorageSettings {
          * @throws IllegalArgumentException if the prefix is out of its range
          */
         public Server tablePrefix(String tablePrefix) {
-            return new Server(host, port, database, user, password, sslMode, requirePrefix(tablePrefix));
+            return new Server(host, port, database, user, password, sslMode, requirePrefix(tablePrefix),
+                socketTimeout, properties);
+        }
+
+        /**
+         * Gives this server with another socket timeout: how long a connection waits for the server to answer
+         * during normal work. A statement that waits longer, a wait for a row lock included, fails with an
+         * {@link java.sql.SQLException} and its connection is closed; whether the server still ran the statement is
+         * then unknown, and {@link Storage#asyncRetrying} does not run the work again. Migrations run without this
+         * timeout. A plugin whose statements or lock waits may pass 30 seconds sets a longer one.
+         *
+         * @param socketTimeout the timeout, a whole number of seconds from 1 to 2147483, the longest the drivers
+         *     hold
+         * @return a copy of this server with {@code socketTimeout} replaced
+         * @throws NullPointerException if {@code socketTimeout} is {@code null}
+         * @throws IllegalArgumentException if the timeout is out of its range or holds a part of a second
+         */
+        public Server socketTimeout(Duration socketTimeout) {
+            Objects.requireNonNull(socketTimeout, "socketTimeout");
+            if (socketTimeout.getNano() != 0 || socketTimeout.getSeconds() < 1
+                || socketTimeout.getSeconds() > MAX_SOCKET_TIMEOUT_SECONDS) {
+                throw new IllegalArgumentException("socketTimeout is " + socketTimeout + "; expected a whole number"
+                    + " of seconds from 1 to " + MAX_SOCKET_TIMEOUT_SECONDS);
+            }
+            return new Server(host, port, database, user, password, sslMode, tablePrefix, socketTimeout, properties);
+        }
+
+        /**
+         * Gives this server with other driver properties, which replace the ones it had. Each is handed to the JDBC
+         * driver with every connection, under the name and with the value the driver documents, such as
+         * {@code connectTimeout} or {@code sessionVariables} on MySQL and MariaDB and {@code ApplicationName} on
+         * PostgreSQL. Storage does not check a name or a value the driver does not know.
+         *
+         * <p>A property must not name what storage sets itself, in any letter case, because a driver would let it
+         * replace that value: {@code user} and {@code password}; the SSL mode and the switches that replace it
+         * ({@code sslMode}, {@code ssl}, {@code useSSL}, {@code requireSSL}, {@code verifyServerCertificate},
+         * {@code trustServerCertificate}, {@code disableSslHostnameVerification}, {@code sslfactory}); and
+         * {@code allowPublicKeyRetrieval}, {@code useAffectedRows} and {@code socketTimeout}. These are set through
+         * {@link #of} and {@link #socketTimeout(Duration)}.
+         *
+         * @param properties the driver properties by name; copied, so a later change to the map changes nothing
+         * @return a copy of this server with {@code properties} replaced
+         * @throws NullPointerException if {@code properties}, a name or a value is {@code null}
+         * @throws IllegalArgumentException if a name is blank or names what storage sets itself
+         */
+        public Server properties(Map<String, String> properties) {
+            Objects.requireNonNull(properties, "properties");
+            Map<String, String> copy = new LinkedHashMap<>();
+            for (Map.Entry<String, String> property : properties.entrySet()) {
+                String name = Objects.requireNonNull(property.getKey(), "property name");
+                if (name.isBlank()) {
+                    throw new IllegalArgumentException("a driver property has a blank name");
+                }
+                if (RESERVED_PROPERTIES.contains(name.toLowerCase(Locale.ROOT))) {
+                    throw new IllegalArgumentException("the driver property \"" + name + "\" would replace a value"
+                        + " storage sets itself; set the user, the password, the SSL mode and the socket timeout"
+                        + " through the server settings");
+                }
+                copy.put(name, Objects.requireNonNull(property.getValue(), "value of driver property " + name));
+            }
+            return new Server(host, port, database, user, password, sslMode, tablePrefix, socketTimeout,
+                Collections.unmodifiableMap(copy));
         }
 
         @Override
         public boolean equals(Object other) {
             return other instanceof Server that && host.equals(that.host) && port == that.port
                 && database.equals(that.database) && user.equals(that.user) && password.equals(that.password)
-                && sslMode == that.sslMode && tablePrefix.equals(that.tablePrefix);
+                && sslMode == that.sslMode && tablePrefix.equals(that.tablePrefix)
+                && socketTimeout.equals(that.socketTimeout) && properties.equals(that.properties);
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(host, port, database, user, password, sslMode, tablePrefix);
+            return Objects.hash(host, port, database, user, password, sslMode, tablePrefix, socketTimeout,
+                properties);
         }
 
         @Override
         public String toString() {
             return "Server[host=" + host + ", port=" + port + ", database=" + database + ", user=" + user
                 + ", password=" + (password.isEmpty() ? "" : "(set)") + ", sslMode=" + sslMode
-                + ", tablePrefix=" + tablePrefix + "]";
+                + ", tablePrefix=" + tablePrefix + ", socketTimeout=" + socketTimeout + ", properties="
+                + properties.keySet() + "]";
         }
     }
 
-    /** Whether and how the connection to a server is encrypted. */
+    /**
+     * Whether and how the connection to a server is encrypted. Constants may be added in a later release, so a
+     * {@code switch} over this enum needs a {@code default} branch.
+     */
     public enum SslMode {
         /** The connection is not encrypted. */
         DISABLE,
+        /**
+         * The connection is encrypted when the server offers TLS and is not encrypted when it does not, and the
+         * server's certificate is never checked: {@code sslMode=PREFERRED} on MySQL and {@code sslmode=prefer} on
+         * PostgreSQL, which is what those drivers do for a URL that names no mode. Someone who can change the
+         * traffic between the two machines can make the connection fall back to no encryption, so this mode
+         * protects only against reading the traffic.
+         *
+         * <p>The MariaDB driver has no such mode. On MariaDB this mode is {@link #DISABLE}, which is what that
+         * driver does for a URL that names no mode: the connection is not encrypted, whether or not the server
+         * offers TLS. {@link #TRUST} or {@link #VERIFY_FULL} encrypts a MariaDB connection.
+         */
+        PREFER,
         /** The connection is encrypted, without checking the server's certificate. */
         TRUST,
         /**

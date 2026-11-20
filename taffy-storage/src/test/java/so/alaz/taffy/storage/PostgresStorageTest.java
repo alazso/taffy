@@ -24,6 +24,7 @@ import java.util.UUID;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -446,6 +447,79 @@ final class PostgresStorageTest extends StorageContract {
                 ProbeSchema.drop(connection, Dialect.POSTGRES, prefix);
             }
         }
+    }
+
+    @Test
+    void twoTransactionsThatLockTwoRowsInOppositeOrderBothCommitOnceAfterTheLoserIsRetried() throws Exception {
+        String prefix = "deadlock_";
+        Storage threaded = start(StorageSettings.server(Dialect.POSTGRES, server(prefix)).asyncThreads(2));
+        try (Connection connection = connect()) {
+            try {
+                DeadlockScenario.run(threaded, connection, prefix + "rows");
+            } finally {
+                assertThat(threaded.close(Duration.ofSeconds(5))).isTrue();
+                ProbeSchema.drop(connection, Dialect.POSTGRES, prefix);
+            }
+        }
+    }
+
+    @Test
+    void aStatementThatOutlastsTheSocketTimeoutOfTheServerFailsAndOneWithinItRuns() throws Exception {
+        String prefix = "socket_";
+        Storage quick = start(StorageSettings.server(Dialect.POSTGRES,
+            server(prefix).socketTimeout(Duration.ofSeconds(1))));
+        Storage patient = start(StorageSettings.server(Dialect.POSTGRES,
+            server(prefix).socketTimeout(Duration.ofSeconds(20))));
+        try (Connection connection = connect()) {
+            try {
+                long begun = System.nanoTime();
+
+                assertThatThrownBy(() -> quick.async(tx -> {
+                    tx.execute("SELECT pg_sleep(6)");
+                    return null;
+                }).get(30, TimeUnit.SECONDS))
+                    .isInstanceOf(ExecutionException.class).cause().isInstanceOf(SQLException.class);
+
+                assertThat(Duration.ofNanos(System.nanoTime() - begun)).isLessThan(Duration.ofSeconds(6));
+                assertThat(quick.read(tx -> tx.queryOne("SELECT 1 AS n", Tx.Binder.NONE, row -> row.integer("n"))
+                    .orElseThrow()).get(30, TimeUnit.SECONDS)).isEqualTo(1L);
+                assertThat(patient.async(tx -> {
+                    tx.execute("SELECT pg_sleep(3)");
+                    return "slept";
+                }).get(30, TimeUnit.SECONDS)).isEqualTo("slept");
+            } finally {
+                quick.close(Duration.ofSeconds(5));
+                patient.close(Duration.ofSeconds(5));
+                ProbeSchema.drop(connection, Dialect.POSTGRES, prefix);
+            }
+        }
+    }
+
+    @Test
+    void theDriverPropertiesOfTheServerReachEveryConnection() throws Exception {
+        String prefix = "props_";
+        Storage plain = start(StorageSettings.server(Dialect.POSTGRES, server(prefix)));
+        Storage tuned = start(StorageSettings.server(Dialect.POSTGRES,
+            server(prefix).properties(Map.of("ApplicationName", "taffy-probe"))).asyncThreads(2));
+        TxWork<String> application = tx -> tx.queryOne("SELECT current_setting('application_name') AS app",
+            Tx.Binder.NONE, row -> row.text("app")).orElseThrow();
+        try (Connection connection = connect()) {
+            try {
+                assertThat(plain.read(application).get(30, TimeUnit.SECONDS)).isNotEqualTo("taffy-probe");
+                assertThat(tuned.read(application).get(30, TimeUnit.SECONDS)).isEqualTo("taffy-probe");
+                assertThat(tuned.async(application).get(30, TimeUnit.SECONDS)).isEqualTo("taffy-probe");
+            } finally {
+                plain.close(Duration.ofSeconds(5));
+                tuned.close(Duration.ofSeconds(5));
+                ProbeSchema.drop(connection, Dialect.POSTGRES, prefix);
+            }
+        }
+    }
+
+    /** Starts storage with no migrations, recording them in {@code <prefix>schema_version}. */
+    private static Storage start(StorageSettings settings) {
+        return TestPlugins.start(TestPlugins.plugin(NAME, Path.of("unused"), Logger.getAnonymousLogger()),
+            settings.versionTable(settings.tablePrefix() + "schema_version"), List.of(), null, CLOCK).join();
     }
 
     /** Starts storage for the plugin named {@code plugin}, which records its migrations in the default table. */

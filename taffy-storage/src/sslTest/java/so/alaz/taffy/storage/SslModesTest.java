@@ -3,6 +3,7 @@ package so.alaz.taffy.storage;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.JdbcDatabaseContainer;
@@ -10,6 +11,7 @@ import org.testcontainers.containers.MariaDBContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.images.builder.Transferable;
+import so.alaz.taffy.platform.ErrorReports;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -25,12 +27,16 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Logger;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -38,8 +44,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Connects to MySQL, MariaDB and PostgreSQL servers that serve TLS with a certificate for {@code localhost} only,
- * issued by a certificate authority this class creates and puts in the JVM's default trust store. Each connection
- * uses the URL {@link Storage#serverUrl} builds for the mode under test.
+ * issued by a certificate authority this class creates and puts in the JVM's default trust store, and to a MySQL and
+ * a PostgreSQL server that offer no TLS. Each connection uses the URL {@link Storage#serverUrl} builds for the mode
+ * under test, opened directly or by {@link Storage#start} through its connection pool.
  *
  * <p>Runs in the {@code sslTest} task, in a JVM of its own, because the default trust store is read once per JVM.
  */
@@ -52,6 +59,7 @@ final class SslModesTest {
     static Path keys;
 
     private static final Map<Dialect, JdbcDatabaseContainer<?>> SERVERS = new EnumMap<>(Dialect.class);
+    private static final Map<Dialect, JdbcDatabaseContainer<?>> PLAIN_SERVERS = new EnumMap<>(Dialect.class);
 
     @BeforeAll
     static void startServers() throws Exception {
@@ -88,7 +96,11 @@ final class SslModesTest {
         SERVERS.put(Dialect.MYSQL, mysql);
         SERVERS.put(Dialect.MARIADB, mariadb);
         SERVERS.put(Dialect.POSTGRES, postgres);
-        SERVERS.values().parallelStream().forEach(JdbcDatabaseContainer::start);
+        // MySQL creates a certificate of its own at its first start, and an empty tls_version turns TLS off.
+        PLAIN_SERVERS.put(Dialect.MYSQL, new MySQLContainer<>(DatabaseImages.MYSQL).withCommand("--tls-version="));
+        PLAIN_SERVERS.put(Dialect.POSTGRES, new PostgreSQLContainer<>(DatabaseImages.POSTGRES));
+        Stream.concat(SERVERS.values().stream(), PLAIN_SERVERS.values().stream()).parallel()
+            .forEach(JdbcDatabaseContainer::start);
         for (JdbcDatabaseContainer<?> server : SERVERS.values()) {
             assumeTrue(server.getHost().equals("localhost"),
                 "the database containers are not reached as localhost: " + server.getHost());
@@ -133,6 +145,59 @@ final class SslModesTest {
     void verifyFullRefusesACertificateForAnotherHostName(Dialect dialect) {
         assertThatThrownBy(() -> connect(dialect, "127.0.0.1", StorageSettings.SslMode.VERIFY_FULL).close())
             .isInstanceOf(SQLException.class);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Dialect.class, names = {"MYSQL", "POSTGRES"})
+    void preferConnectsEncryptedWithoutCheckingTheCertificateWhereTheServerOffersTls(Dialect dialect)
+        throws Exception {
+        try (Connection connection = connect(dialect, "127.0.0.1", StorageSettings.SslMode.PREFER)) {
+            assertThat(encrypted(dialect, connection)).isTrue();
+        }
+        assertThat(encryptedThroughStorage(dialect, SERVERS.get(dialect), "127.0.0.1",
+            StorageSettings.SslMode.PREFER)).isTrue();
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = Dialect.class, names = {"MYSQL", "POSTGRES"})
+    void preferConnectsWithoutEncryptionWhereTheServerOffersNoTls(Dialect dialect) throws Exception {
+        JdbcDatabaseContainer<?> server = PLAIN_SERVERS.get(dialect);
+
+        assertThat(encryptedThroughStorage(dialect, server, server.getHost(), StorageSettings.SslMode.PREFER))
+            .isFalse();
+        assertThatThrownBy(() -> encryptedThroughStorage(dialect, server, server.getHost(),
+            StorageSettings.SslMode.TRUST)).isInstanceOf(Exception.class);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "MYSQL, DISABLE, false", "MYSQL, PREFER, true", "MYSQL, TRUST, true", "MYSQL, VERIFY_FULL, true",
+        "MARIADB, DISABLE, false", "MARIADB, PREFER, false", "MARIADB, TRUST, true", "MARIADB, VERIFY_FULL, true",
+        "POSTGRES, DISABLE, false", "POSTGRES, PREFER, true", "POSTGRES, TRUST, true", "POSTGRES, VERIFY_FULL, true"
+    })
+    void storageStartsInEachModeAndEncryptsAsTheModeStates(Dialect dialect, StorageSettings.SslMode mode,
+                                                         boolean encrypted) throws Exception {
+        assertThat(encryptedThroughStorage(dialect, SERVERS.get(dialect), "localhost", mode)).isEqualTo(encrypted);
+    }
+
+    /** Starts storage on {@code server} in {@code mode} and gives whether a connection of its pool is encrypted. */
+    private static boolean encryptedThroughStorage(Dialect dialect, JdbcDatabaseContainer<?> server, String host,
+                                                   StorageSettings.SslMode mode) throws Exception {
+        StorageSettings.Server settings = StorageSettings.Server.of(host, server.getFirstMappedPort(),
+            server.getDatabaseName(), server.getUsername(), server.getPassword(), mode).tablePrefix("ssl_");
+        Storage storage = Storage.start(TestPlugins.plugin("ssl-probe", Logger.getAnonymousLogger()),
+            new ErrorReports(), StorageSettings.server(dialect, settings), List.of(), Clock.systemUTC())
+            .get(60, TimeUnit.SECONDS);
+        try {
+            return storage.read(tx -> dialect == Dialect.POSTGRES
+                ? tx.queryOne("SELECT CASE WHEN ssl THEN 1 ELSE 0 END AS encrypted FROM pg_stat_ssl"
+                    + " WHERE pid = pg_backend_pid()", Tx.Binder.NONE, row -> row.integer("encrypted"))
+                    .orElseThrow() == 1
+                : !tx.queryOne("SHOW SESSION STATUS LIKE 'Ssl_version'", Tx.Binder.NONE, row -> row.text("Value"))
+                    .orElseThrow().isEmpty()).get(30, TimeUnit.SECONDS);
+        } finally {
+            storage.close(Duration.ofSeconds(5));
+        }
     }
 
     private static Connection connect(Dialect dialect, String host, StorageSettings.SslMode mode)
