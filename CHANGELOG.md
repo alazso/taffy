@@ -28,6 +28,12 @@ All notable changes to Taffy are documented here. This project follows
 - The email rule of the FastStats error trackers took quadratic time on a long run of letters and overflowed
   the stack on a long dotted name after an `@`, when a report's message was compared with the kinds its source
   already holds. Every rule now runs in linear time.
+- The SQL rule of the FastStats error trackers hides a statement only where it starts as one: `SELECT ... FROM`,
+  `INSERT INTO` (also `INSERT IGNORE INTO` and `INSERT OR REPLACE INTO`), `UPDATE ... SET`, `DELETE FROM`,
+  `REPLACE INTO`, `MERGE INTO`, `CREATE TABLE`, `ALTER TABLE` or `DROP TABLE`, in either letter case. It matched
+  the bare words `select`, `insert`, `update` and `delete`, so `Failed to update balance for shop 12: timeout
+  after 5003ms` was sent as `Failed to [sql hidden]`; such a message is now sent as written. A statement of
+  another shape, such as `SELECT 1`, is no longer hidden.
 
 ## [0.2.0] - 2026-11-19
 

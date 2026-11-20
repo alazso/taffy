@@ -23,7 +23,12 @@ import java.util.regex.Pattern;
  *       {@code pwd}, {@code secret}, {@code token}, {@code api_key}, {@code access_key} or {@code private_key}
  *       in either letter case, with {@code -} or nothing in place of the {@code _}. The value {@code YES} or
  *       {@code NO} stays, so {@code (using password: YES)} reads as the driver wrote it;</li>
- *   <li>an SQL statement;</li>
+ *   <li>an SQL statement that starts with {@code SELECT ... FROM}, {@code INSERT INTO} (also with
+ *       {@code IGNORE} or {@code OR} and a word between the two), {@code UPDATE ... SET},
+ *       {@code DELETE FROM}, {@code REPLACE INTO}, {@code MERGE INTO}, {@code CREATE TABLE},
+ *       {@code ALTER TABLE} or {@code DROP TABLE} in either letter case, with what follows that start on the
+ *       line, up to 200 characters. One of these verbs without the rest, as in
+ *       {@code Failed to update balance for shop 12}, stays, and so does a statement of another shape;</li>
  *   <li>a Windows path that starts with a drive letter and a backslash;</li>
  *   <li>an absolute Unix path of two or more segments;</li>
  *   <li>a host name of two or more labels that ends in {@code com}, {@code net}, {@code org}, {@code io},
@@ -64,7 +69,9 @@ final class Anonymizers {
         {"([?&](?:api_?key|token|secret)=)[^&\\s]+", "$1[redacted]"},
         {"(?i)((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)[\\w-]{0,20}"
             + "[\"']?\\s*[=:]\\s*)(?!(?:yes|no)\\b)(?:\"[^\"\\n]*\"|'[^'\\n]*'|[^\\s\"'&,;)]+)", "$1[redacted]"},
-        {"(?i)\\b(SELECT|INSERT|UPDATE|DELETE)\\b[^\\n]{0,200}", "[sql hidden]"},
+        {"(?i)\\b(?:SELECT\\s[^\\n]{0,200}?\\sFROM\\s|INSERT\\s+(?:OR\\s+\\w+\\s+|IGNORE\\s+)?INTO\\s"
+            + "|UPDATE\\s+\\S+\\s+SET\\s|DELETE\\s+FROM\\s|REPLACE\\s+INTO\\s|MERGE\\s+INTO\\s"
+            + "|(?:CREATE|ALTER|DROP)\\s+TABLE\\s)[^\\n]{0,200}", "[sql hidden]"},
         {"[A-Za-z]:\\\\[^\\s\"']+", "[path hidden]"},
         {"(?<![\\w./:-])/[\\w.-]+/[\\w./-]*", "[path hidden]"},
         {"(?i)(?<![\\w.-])[\\w.-]+\\.(?:" + HOST_ENDINGS + ")(?![\\w-]|\\.[\\w-])", "[host hidden]"},

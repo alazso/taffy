@@ -183,6 +183,50 @@ class AnonymizersTest {
         assertThat(apply(SQL, "the selection is empty")).isEqualTo("the selection is empty");
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "INSERT INTO balances (shop, amount) VALUES (12, 5)",
+        "insert or replace into balances values (12, 5)",
+        "INSERT IGNORE INTO balances VALUES (12, 5)",
+        "UPDATE balances SET amount = 5 WHERE shop = 12",
+        "update `shop`.`balances`\tset amount = 5",
+        "DELETE FROM balances WHERE shop = 12",
+        "REPLACE INTO balances VALUES (12, 5)",
+        "MERGE INTO balances KEY (shop) VALUES (12, 5)",
+        "CREATE TABLE IF NOT EXISTS balances (shop INT)",
+        "ALTER TABLE balances ADD COLUMN owner VARCHAR(36)",
+        "drop table balances",
+        "SELECT amount FROM balances WHERE shop = 12",
+    })
+    void aStatementOfEachShapeIsHidden(String statement) {
+        assertThat(apply(SQL, "failed: " + statement + "\nnext")).isEqualTo("failed: [sql hidden]\nnext");
+    }
+
+    @Test
+    void anSqlStatementIsHiddenForAtMost200CharactersPastItsStart() {
+        assertThat(apply(SQL, "DELETE FROM " + "a".repeat(200) + "tail")).isEqualTo("[sql hidden]tail");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Failed to update balance for shop 12: timeout after 5003ms",
+        "Could not delete file",
+        "insert slot 3 failed",
+        "select a kit first",
+        "update check failed",
+        "Cannot drop the table item here",
+        "selected 3 rows, inserted 2, updated 1 and deleted none",
+    })
+    void anSqlVerbWithoutAStatementIsLeftAsWritten(String line) {
+        assertThat(apply(SQL, line)).isEqualTo(line);
+    }
+
+    @Test
+    void aMessageWithAnSqlVerbKeepsItsWordsUnderEveryRule() {
+        assertThat(Anonymizers.anonymize("Could not delete C:\\srv\\mc\\plugins\\X\\data.db"))
+            .isEqualTo("Could not delete [path hidden]");
+    }
+
     @Test
     void aWindowsPathIsHidden() {
         assertThat(apply(WINDOWS_PATH, "cannot read C:\\Server\\plugins\\data.db now"))
@@ -242,6 +286,11 @@ class AnonymizersTest {
     @ParameterizedTest
     @ValueSource(strings = {
         "Could not save the kit of shop 12: timeout after 5003ms",
+        "Failed to update balance for shop 12: timeout after 5003ms",
+        "select a kit first",
+        "Could not delete file",
+        "insert slot 3 failed",
+        "update check failed",
         "Failed to load config.yml: line 3, column 5",
         "Kit 'starter' is on cooldown (30s left), see /kit list.",
         "No permission to open the menu. Ask an admin/owner.",
@@ -255,7 +304,8 @@ class AnonymizersTest {
     @ParameterizedTest
     @ValueSource(strings = {
         "a", "a.", "a-", "a@", "a.a@", "x@a.", "/a", "/", "://", "a://", "x://a:", "a:", "'", "'a'@", "0", "0-", "f",
-        "select ", "select a from ", "update a ", "insert  ", "password", "password=", "password \"", "token:", " ",
+        "select ", "select a from ", "update a ", "update a set", "insert  ", "insert or ", "create table ",
+        "password", "password=", "password \"", "token:", " ",
         "\t", "\\", "C:\\", ".com", "a.com.", "jdbc:", "Bearer ", "?token=", "\"", "-", ".",
     })
     void aLongAdversarialTextIsAnonymizedQuickly(String unit) {
