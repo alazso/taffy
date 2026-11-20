@@ -19,6 +19,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -51,6 +53,13 @@ import java.util.logging.Level;
  * {@link ErrorReports} under {@code gui.prompt}, and the player is told {@link Menus#ERROR} and taken back to the
  * origin. A failure while running work on the player's entity thread is logged and reported under {@code gui.prompt}
  * as well, except that the player having left is not a failure.
+ *
+ * <p>An answer function returns an {@link Answer.Later} to decide off the player's entity thread. The ask then waits
+ * for the future, which completes on any thread, and its result is applied on the player's entity thread. Until then
+ * no chat line and no anvil submit is taken; the timer, the cancel link, a closed anvil, another menu, a newer ask, a
+ * quit and {@link Menus#shutdown()} still end the ask, and the result of a future that completes after that is
+ * dropped. A future that fails or completes with {@code null} is handled as an answer function that throws, and a
+ * cancelled future opens the origin again with no message.
  *
  * <p>The prompts read the lang files, the locale function, the entity-thread seams, the thread-ownership check, the
  * logger and the {@link ErrorReports} of the menus they are built over. Building the prompts makes them the prompts
@@ -97,6 +106,7 @@ public final class Prompts {
     private final Predicate<Player> ownScreen;
     private final Clock clock;
     private final Map<UUID, Pending> pending = new ConcurrentHashMap<>();
+    private final Map<UUID, Pending> judging = new ConcurrentHashMap<>();
     private final AtomicLong tokens = new AtomicLong();
     private volatile boolean stopping;
     private final PaperPromptListener listener;
@@ -246,7 +256,7 @@ public final class Prompts {
      */
     void surfaceClosed(UUID player, long token, InventoryCloseEvent.Reason reason) {
         if (reason == InventoryCloseEvent.Reason.OPEN_NEW) {
-            take(player, token);
+            takeWaiting(player, token);
             return;
         }
         cancel(player, token);
@@ -254,7 +264,7 @@ public final class Prompts {
 
     /** Any thread: ends the ask with the cancelled message and opens its menu again. */
     void cancel(UUID player, long token) {
-        Pending taken = take(player, token);
+        Pending taken = takeWaiting(player, token);
         if (taken != null) {
             hop(player, live -> finish(live, taken, CANCELLED, taken.request().origin()));
         }
@@ -262,23 +272,31 @@ public final class Prompts {
 
     /** Any thread: ends the ask with the timed-out message and opens its menu again. */
     void expire(UUID player, long token) {
-        Pending taken = take(player, token);
+        Pending taken = takeWaiting(player, token);
         if (taken != null) {
             hop(player, live -> finish(live, taken, TIMED_OUT, taken.request().origin()));
         }
     }
 
-    /** Ends the player's pending ask without a message and opens nothing. Call on the player's entity thread. */
+    /**
+     * Ends the player's ask, pending or waiting for its {@link Answer.Later}, without a message and opens nothing.
+     * Call on the player's entity thread.
+     */
     void end(UUID player) {
         Pending entry = pending.remove(player);
         if (entry != null) {
             closeSurface(entry.player(), entry);
         }
+        Pending judged = judging.remove(player);
+        if (judged != null) {
+            closeSurface(judged.player(), judged);
+        }
     }
 
-    /** Forgets the pending ask of a player who quit, and what the anvil keeps for them. */
+    /** Forgets the ask of a player who quit, and what the anvil keeps for them. */
     void quit(UUID player) {
         pending.remove(player);
+        judging.remove(player);
         if (anvil != null) {
             anvil.forget(player);
         }
@@ -298,6 +316,7 @@ public final class Prompts {
     void shutdown() {
         stopping = true;
         pending.clear();
+        judging.clear();
         if (anvil != null) {
             anvil.shutdown(player -> player.isOnline() && menus.ownedHere().test(player));
         }
@@ -344,6 +363,16 @@ public final class Prompts {
         return taken[0];
     }
 
+    /** Takes the ask with the token, whether it waits for an answer or for its {@link Answer.Later}. */
+    private @Nullable Pending takeWaiting(UUID player, long token) {
+        Pending taken = take(player, token);
+        if (taken != null) {
+            return taken;
+        }
+        Pending judged = judging.get(player);
+        return judged != null && judged.token() == token && judging.remove(player, judged) ? judged : null;
+    }
+
     private boolean show(Player player, Pending entry) {
         PromptRequest request = entry.request();
         return switch (entry.mode()) {
@@ -366,21 +395,57 @@ public final class Prompts {
         try {
             result = Objects.requireNonNull(taken.request().answer().apply(text), "the answer function returned null");
         } catch (RuntimeException failure) {
-            menus.logger().log(Level.WARNING, "gui: a prompt answer failed for " + player.getName() + ": " + failure,
-                failure);
-            menus.errors().report("gui.prompt", failure);
-            player.sendMessage(menus.messages().render(locale, Menus.ERROR));
-            finish(player, taken, null, taken.request().origin());
+            failed(player, taken, failure);
             return;
         }
+        decide(player, taken, text, result);
+    }
+
+    private void decide(Player player, Pending taken, String text, Answer result) {
         switch (result) {
             case Answer.Accept accept -> finish(player, taken, null, accept.next());
             case Answer.Retry retry -> {
-                player.sendMessage(menus.messages().render(locale, REFUSED,
+                player.sendMessage(menus.messages().render(menus.locales().apply(player), REFUSED,
                     Placeholder.component("reason", retry.reason()), Placeholder.unparsed("answer", text)));
                 rearm(player, taken);
             }
+            case Answer.Later later -> await(player.getUniqueId(), taken, text, later.answer());
         }
+    }
+
+    /**
+     * Keeps the ask until {@code answer} completes, unless the plugin is stopping, a menu opened or a newer ask took
+     * its place, then applies the result on the player's entity thread while the ask is still the one kept.
+     */
+    private void await(UUID id, Pending taken, String text, CompletableFuture<Answer> answer) {
+        if (stopping || menus.session(id).isPresent() || pending.containsKey(id)
+            || judging.putIfAbsent(id, taken) != null) {
+            return;
+        }
+        answer.whenComplete((result, failure) -> hop(id, live -> {
+            if (!judging.remove(id, taken)) {
+                return;
+            }
+            Throwable cause = failure instanceof CompletionException && failure.getCause() != null
+                ? failure.getCause() : failure;
+            if (cause instanceof CancellationException) {
+                finish(live, taken, null, taken.request().origin());
+            } else if (cause != null) {
+                failed(live, taken, cause);
+            } else if (result == null) {
+                failed(live, taken, new NullPointerException("the answer future completed with null"));
+            } else {
+                decide(live, taken, text, result);
+            }
+        }));
+    }
+
+    private void failed(Player player, Pending taken, Throwable failure) {
+        menus.logger().log(Level.WARNING, "gui: a prompt answer failed for " + player.getName() + ": " + failure,
+            failure);
+        menus.errors().report("gui.prompt", failure);
+        player.sendMessage(menus.messages().render(menus.locales().apply(player), Menus.ERROR));
+        finish(player, taken, null, taken.request().origin());
     }
 
     /**
@@ -389,7 +454,8 @@ public final class Prompts {
      */
     private void rearm(Player player, Pending entry) {
         UUID id = player.getUniqueId();
-        if (stopping || menus.session(id).isPresent() || pending.putIfAbsent(id, entry) != null) {
+        if (stopping || menus.session(id).isPresent() || judging.containsKey(id)
+            || pending.putIfAbsent(id, entry) != null) {
             return;
         }
         Duration left = Duration.between(clock.instant(), entry.deadline());

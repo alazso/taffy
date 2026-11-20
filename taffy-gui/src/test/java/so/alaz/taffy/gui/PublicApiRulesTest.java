@@ -22,7 +22,7 @@ class PublicApiRulesTest {
                 ViewMemory.class, Menu.class, MenuSession.class, Menus.class, Menus.Parts.class, Frame.class,
                 Frame.Spec.class, Frame.Entry.class, Button.class, Click.class, ClickHandler.class, Footer.class,
                 MenuListener.class, PromptMode.class, PromptRequest.class, Answer.class, Answer.Accept.class,
-                Answer.Retry.class, CancelLink.class, BedrockPlayers.class, Pending.class,
+                Answer.Retry.class, Answer.Later.class, CancelLink.class, BedrockPlayers.class, Pending.class,
                 Prompts.class, PaperCancelLink.class, AnvilInput.class,
                 AnvilInput.Open.class, PaperPromptListener.class)
             .allSatisfy(type -> assertThat(type.getPackageName()).startsWith(getClass().getPackageName()));

@@ -44,6 +44,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -944,6 +945,240 @@ final class PromptsTest {
         assertThat(state()).isEqualTo(7);
     }
 
+    private Answer accept(int state) {
+        return new Answer.Accept(new Route(Sample.KIND.id(), state, null));
+    }
+
+    @Test
+    void aLaterAnswerTakesNoLineWhileItsFutureRunsAndOpensTheAcceptedRouteOnceItCompletes() {
+        start(PromptMode.CHAT);
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        ask(text -> new Answer.Later(balance));
+
+        assertThat(type("7").isCancelled()).isTrue();
+
+        assertThat(alex.session()).isNull();
+        assertThat(prompts.pending(alex.id)).isNull();
+        assertThat(type("8").isCancelled()).isFalse();
+        balance.complete(accept(7));
+        assertThat(state()).isEqualTo(7);
+        assertThat(alex.said()).hasSize(2);
+    }
+
+    @Test
+    void aLaterAnswerThatRefusesTellsThePlayerAndWaitsForTheNextLine() {
+        start(PromptMode.CHAT);
+        CompletableFuture<Answer> first = new CompletableFuture<>();
+        List<CompletableFuture<Answer>> answers = new ArrayList<>(List.of(first,
+            CompletableFuture.completedFuture(accept(5))));
+        ask(text -> new Answer.Later(answers.removeFirst()));
+        type("nope");
+
+        first.complete(new Answer.Retry(NOT_A_NUMBER));
+
+        assertThat(alex.said().getLast()).isEqualTo("Not a number.\nYou typed: nope");
+        assertThat(prompts.pending(alex.id)).isNotNull();
+        assertThat(type("5").isCancelled()).isTrue();
+        assertThat(state()).isEqualTo(5);
+    }
+
+    @Test
+    void aLaterAnswerThatCompletesWithAnotherLaterWaitsAgain() {
+        start(PromptMode.CHAT);
+        CompletableFuture<Answer> first = new CompletableFuture<>();
+        CompletableFuture<Answer> second = new CompletableFuture<>();
+        ask(text -> new Answer.Later(first));
+        type("7");
+
+        first.complete(new Answer.Later(second));
+        assertThat(alex.session()).isNull();
+        second.complete(accept(7));
+
+        assertThat(state()).isEqualTo(7);
+    }
+
+    @Test
+    void aLaterAnswerWhoseFutureFailsIsLoggedReportedTellsThePlayerAndReopensTheOrigin() {
+        start(PromptMode.CHAT);
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        IllegalStateException failure = new IllegalStateException("no economy");
+        ask(text -> new Answer.Later(balance.thenApply(answer -> answer)));
+        type("7");
+
+        balance.completeExceptionally(failure);
+
+        assertThat(alex.said().getLast()).isEqualTo("Something went wrong. Try again in a moment.");
+        assertThat(state()).isEqualTo(2);
+        assertThat(harness.log.lines())
+            .anyMatch(line -> line.startsWith("WARNING gui: a prompt answer failed for Alex"));
+        assertThat(harness.log.records.getLast().getThrown()).isSameAs(failure);
+        assertThat(harness.reports).containsExactly(new MenuHarness.Report("gui.prompt", failure));
+    }
+
+    @Test
+    void aLaterAnswerWhoseFutureCompletesWithNullIsHandledAsAFailure() {
+        start(PromptMode.CHAT);
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        ask(text -> new Answer.Later(balance));
+        type("7");
+
+        balance.complete(null);
+
+        assertThat(alex.said().getLast()).isEqualTo("Something went wrong. Try again in a moment.");
+        assertThat(state()).isEqualTo(2);
+        assertThat(harness.reports).singleElement().satisfies(report -> {
+            assertThat(report.source()).isEqualTo("gui.prompt");
+            assertThat(report.error()).isInstanceOf(NullPointerException.class)
+                .hasMessage("the answer future completed with null");
+        });
+    }
+
+    @Test
+    void aLaterAnswerWhoseFutureWasCancelledReopensTheOriginWithNoMessageLogOrReport() {
+        start(PromptMode.CHAT);
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        ask(text -> new Answer.Later(balance));
+        type("7");
+        int said = alex.messages.size();
+
+        balance.cancel(false);
+
+        assertThat(state()).isEqualTo(2);
+        assertThat(alex.messages).hasSize(said);
+        assertThat(harness.log.lines()).isEmpty();
+        assertThat(harness.reports).isEmpty();
+    }
+
+    @Test
+    void theResultOfALaterAnswerIsDroppedForAPlayerWhoLeft() {
+        start(PromptMode.CHAT);
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        ask(text -> new Answer.Later(balance));
+        type("7");
+        int opened = sample.menu.sessions.size();
+        int said = alex.messages.size();
+        alex.offline();
+        harness.listener.onQuit(new PlayerQuitEvent(alex.player, Component.empty(),
+            PlayerQuitEvent.QuitReason.DISCONNECTED));
+
+        balance.complete(accept(7));
+
+        assertThat(sample.menu.sessions).hasSize(opened);
+        assertThat(alex.messages).hasSize(said);
+        assertThat(harness.log.lines()).isEmpty();
+        assertThat(harness.reports).isEmpty();
+    }
+
+    @Test
+    void aLaterAnswerStillRunningAtTheDeadlineTimesOutAndItsResultIsDropped() {
+        start(PromptMode.CHAT);
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        ask(text -> new Answer.Later(balance));
+        type("7");
+
+        timer.fire(Prompts.TIMEOUT);
+
+        assertThat(alex.said().getLast()).isEqualTo(TIMED_OUT);
+        assertThat(state()).isEqualTo(2);
+        int opened = sample.menu.sessions.size();
+        balance.complete(accept(7));
+        assertThat(sample.menu.sessions).hasSize(opened);
+        assertThat(state()).isEqualTo(2);
+    }
+
+    @Test
+    void theCancelLinkEndsALaterAnswerStillRunningAndItsResultIsDropped() {
+        start(PromptMode.CHAT);
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        ask(text -> new Answer.Later(balance));
+        type("7");
+
+        link.actions.getFirst().run();
+
+        assertThat(alex.said().getLast()).isEqualTo(STOPPED);
+        balance.complete(accept(7));
+        assertThat(state()).isEqualTo(2);
+    }
+
+    @Test
+    void theResultOfALaterAnswerIsDroppedOnceAnotherMenuOpenedOrANewerAskStarted() {
+        start(PromptMode.CHAT);
+        CompletableFuture<Answer> first = new CompletableFuture<>();
+        CompletableFuture<Answer> second = new CompletableFuture<>();
+        ask(text -> new Answer.Later(first));
+        type("7");
+        harness.menus.open(alex.player, Sample.KIND.id(), null);
+
+        first.complete(accept(7));
+
+        assertThat(state()).isEqualTo(0);
+        ask(text -> new Answer.Later(second));
+        type("8");
+        ask();
+        long newer = token();
+        second.complete(accept(8));
+        assertThat(alex.session()).isNull();
+        assertThat(token()).isEqualTo(newer);
+    }
+
+    @Test
+    void theResultOfALaterAnswerIsDroppedAfterShutdown() {
+        start(PromptMode.CHAT);
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        ask(text -> new Answer.Later(balance));
+        type("7");
+        int opened = sample.menu.sessions.size();
+
+        harness.menus.shutdown();
+        balance.complete(accept(7));
+
+        assertThat(sample.menu.sessions).hasSize(opened);
+        assertThat(alex.session()).isNull();
+    }
+
+    @Test
+    void anAnvilStaysOpenAndSubmitsNothingWhileALaterAnswerRunsAndClosesOnceItIsAccepted() {
+        start(PromptMode.ANVIL);
+        RealAnvil real = real();
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        ask(text -> {
+            judged.add(text);
+            return new Answer.Later(balance);
+        });
+        long token = token();
+        real.typed = "9";
+        real.click(Prompts.ANVIL_RESULT_SLOT);
+
+        assertThat(real.click(Prompts.ANVIL_RESULT_SLOT).isCancelled()).isTrue();
+
+        assertThat(judged).containsExactly("9");
+        assertThat(real.shown).isNotNull();
+        assertThat(real.input.showing(alex.id, token)).isTrue();
+        balance.complete(accept(9));
+        assertThat(real.shown).isNull();
+        assertThat(real.closes).containsExactly(InventoryCloseEvent.Reason.PLUGIN);
+        assertThat(state()).isEqualTo(9);
+    }
+
+    @Test
+    void closingTheAnvilWhileALaterAnswerRunsCancelsTheAskAndItsResultIsDropped() {
+        start(PromptMode.ANVIL);
+        RealAnvil real = real();
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        ask(text -> new Answer.Later(balance));
+        real.typed = "9";
+        real.click(Prompts.ANVIL_RESULT_SLOT);
+
+        real.close(InventoryCloseEvent.Reason.PLAYER);
+
+        assertThat(alex.said().getLast()).isEqualTo(STOPPED);
+        assertThat(state()).isEqualTo(2);
+        int opened = sample.menu.sessions.size();
+        balance.complete(accept(9));
+        assertThat(sample.menu.sessions).hasSize(opened);
+        assertThat(state()).isEqualTo(2);
+    }
+
     @Test
     void noPlayerIsABedrockPlayerWithoutDetection() {
         assertThat(BedrockPlayers.NONE.bedrock(UUID.randomUUID())).isFalse();
@@ -1022,6 +1257,7 @@ final class PromptsTest {
 
         assertThatNullPointerException().isThrownBy(() -> new Answer.Accept(null)).withMessage("next");
         assertThatNullPointerException().isThrownBy(() -> new Answer.Retry(null)).withMessage("reason");
+        assertThatNullPointerException().isThrownBy(() -> new Answer.Later(null)).withMessage("answer");
         assertThatNullPointerException()
             .isThrownBy(() -> new PromptRequest(null, "", origin, judge)).withMessage("question");
         assertThatNullPointerException()

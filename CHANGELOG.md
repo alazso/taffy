@@ -5,6 +5,18 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `Answer.Later(CompletableFuture<Answer>)` is a third result of a `PromptRequest` answer function, for a
+  decision that needs storage or an economy and must not block the player's entity thread. The future completes
+  on any thread and its result is applied on the player's entity thread as a result the function returned: an
+  `Accept` opens its menu, a `Retry` tells the player and waits for the next answer, another `Later` waits again.
+  While the future runs the ask takes no chat line and no anvil submit, and an anvil stays open. The ask's first
+  deadline, the cancel link, a closed anvil, another menu, a newer ask, a quit and `Menus.shutdown` still end it,
+  and the result of a future that completes after that, or for a player who left the server, is dropped. A future
+  that fails or completes with `null` is logged, reported under `gui.prompt`, tells the player `gui.error` and
+  opens the origin, as an answer function that throws does; a cancelled future opens the origin with no message.
+  A plugin's own `switch` over the sealed `Answer` needs a case for `Later` to compile.
+
 ### Fixed
 - `Menus.shutdown` empties the inventory of each open menu and prompt anvil whose viewer the disabling thread
   does not own, which happens only on Folia. Such a menu still stays open with no listener to cancel its clicks,

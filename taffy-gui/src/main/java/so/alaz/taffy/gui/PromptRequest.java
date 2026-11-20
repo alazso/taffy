@@ -12,7 +12,8 @@ import java.util.function.Function;
  * @param initial the text an anvil's name field starts with
  * @param origin the menu that a cancel and a timeout open again
  * @param answer judges the typed text, on the player's entity thread; it must not return {@code null}, and a
- *     {@code null} result is handled as a failure of the function
+ *     {@code null} result is handled as a failure of the function. A function whose decision needs storage or an
+ *     economy returns an {@link Answer.Later} instead of blocking that thread
  */
 public record PromptRequest(Component question, String initial, Route origin, Function<String, Answer> answer) {
 
