@@ -23,8 +23,9 @@ import java.util.logging.Logger;
  *
  * <p>An id is the plugin's key, a colon and the plugin's own id of the item, as in {@code nexo:ruby} or
  * {@code itemsadder:gems:ruby}. {@link #create} also takes the plugin's own id alone, as in {@code ruby} or
- * {@code gems:ruby}. A plugin whose integration is on is still skipped by a call while it is no longer enabled, and
- * while it is still loading its items.
+ * {@code gems:ruby}. A plugin whose integration is on is still skipped by a call while it is no longer enabled.
+ * While it is still loading its items it builds none, and its ids are read only when it reads them from the item's
+ * own data, as Nexo and Oraxen do.
  *
  * <p>Immutable after {@link #detect} and thread-safe. Each call runs the integration plugins on the calling thread,
  * so call on the thread that owns the item. {@link #close} unregisters the listeners detection registered, before the
@@ -36,9 +37,9 @@ public final class CustomItems {
      * The id read from an item.
      *
      * @param id the item's id, or {@code null} when no plugin gave one
-     * @param failed whether a plugin that reads ids could not answer: it threw, it was no longer enabled, or it was
-     *     still loading its items, and was skipped. A {@code null} id with {@code failed} set means the item may be a
-     *     custom item whose id could not be read.
+     * @param failed whether a plugin that reads ids could not answer: it threw, it was no longer enabled, or it
+     *     cannot read ids while it is still loading its items, and was skipped. A {@code null} id with
+     *     {@code failed} set means the item may be a custom item whose id could not be read.
      */
     public record Resolution(@Nullable String id, boolean failed) {
     }
@@ -125,13 +126,14 @@ public final class CustomItems {
      * visible to it and the plugin is enabled first when it is installed. A plugin that is not listed is
      * {@link HookState#NOT_VISIBLE}.
      *
-     * <p>Call on the server thread while the owner is enabled, normally from its {@code onEnable}: when ItemsAdder is
-     * on, its integration registers a listener for the owner, which the server refuses while the owner is not
-     * enabled. That listener stays registered until {@link #close} is called on the result or the owner disables, so
-     * a plugin that detects again, such as from its own reload command, closes the result it holds first.
+     * <p>Call on the server thread while the owner is enabled, normally from its {@code onEnable}: the integration
+     * of ItemsAdder, Nexo or Oraxen that is on registers a listener for the owner, which hears the event that ends
+     * the plugin's load and which the server refuses while the owner is not enabled. Those listeners stay registered
+     * until {@link #close} is called on the result or the owner disables, so a plugin that detects again, such as
+     * from its own reload command, closes the result it holds first.
      *
      * @param owner the plugin that uses the integrations: its server's plugin manager is searched, its logger
-     *     receives every log line, and the ItemsAdder integration registers its listener for it
+     *     receives every log line, and the integrations register their listeners for it
      * @param errors where a failure to build an integration or an item is reported, under {@code hook.<key>}, such
      *     as {@code hook.nexo}
      * @param switchedOn the plugins to look for; any other plugin is not looked at and is
@@ -143,8 +145,8 @@ public final class CustomItems {
         Objects.requireNonNull(owner, "owner");
         Map<CustomItemPlugin, Function<Plugin, CustomItemProvider>> factories = new EnumMap<>(CustomItemPlugin.class);
         factories.put(CustomItemPlugin.ITEMSADDER, plugin -> ItemsAdderProvider.create(owner));
-        factories.put(CustomItemPlugin.NEXO, plugin -> NexoProvider.create());
-        factories.put(CustomItemPlugin.ORAXEN, plugin -> OraxenProvider.create());
+        factories.put(CustomItemPlugin.NEXO, plugin -> NexoProvider.create(owner));
+        factories.put(CustomItemPlugin.ORAXEN, plugin -> OraxenProvider.create(owner));
         factories.put(CustomItemPlugin.HEADDATABASE, plugin -> HeadDatabaseProvider.create());
         return detect(owner, errors, switchedOn,
             new PluginPresence(owner.getServer().getPluginManager(), owner.getLogger()), factories);
@@ -177,9 +179,11 @@ public final class CustomItems {
     /**
      * Reads the id of an item: asks each plugin in turn and gives the first id one of them reads. A plugin that
      * throws is warned about, at most once a minute with its stack the first time, and counts as a failure. A plugin
-     * that is no longer enabled, or is still loading its items, is not asked and counts as a failure too.
-     * HeadDatabase, which only builds items, is never asked and never counts as a failure. A {@code null} or empty
-     * item is no custom item: no plugin is asked, and the result has no id and no failure.
+     * that is no longer enabled is not asked and counts as a failure too, and so does ItemsAdder while it is still
+     * loading its items, since it reads ids from the items it has loaded. Nexo and Oraxen read the id from the
+     * item's own data, so they are asked while they are still loading their items. HeadDatabase, which only builds
+     * items, is never asked and never counts as a failure. A {@code null} or empty item is no custom item: no plugin
+     * is asked, and the result has no id and no failure.
      *
      * @param item the item to read
      * @return the id with no failure, or no id and whether any plugin failed
@@ -197,7 +201,7 @@ public final class CustomItems {
                 failed = true;
                 continue;
             }
-            if (!hook.provider().ready()) {
+            if (!hook.provider().idsReady()) {
                 failed = true;
                 continue;
             }

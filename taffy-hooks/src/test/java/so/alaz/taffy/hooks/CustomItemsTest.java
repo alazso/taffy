@@ -430,6 +430,37 @@ final class CustomItemsTest {
     }
 
     @Test
+    void aPluginThatReadsIdsWhileLoadingAnswersAndBuildsNothingUntilItsItemsLoaded() {
+        FakeProvider nexo = provider(CustomItemPlugin.NEXO).id("emerald", "gem");
+        nexo.ready = false;
+        nexo.idsWhileLoading = true;
+        CustomItems items = detect(EnumSet.of(CustomItemPlugin.NEXO));
+        CustomItems.Built notReady = new CustomItems.Built(null, CustomItems.Built.Reason.NOT_READY);
+
+        assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder switched off; Nexo on,"
+            + " waiting for its items to load; Oraxen switched off; HeadDatabase switched off.");
+        assertThat(items.ready()).isFalse();
+        assertThat(items.statuses().get(1)).isEqualTo(status(CustomItemPlugin.NEXO, HookState.LOADING));
+        assertThat(items.resolve(gem)).isEqualTo(new CustomItems.Resolution("nexo:gem", false));
+        assertThat(items.resolve(dirt)).isEqualTo(new CustomItems.Resolution(null, false));
+        assertThat(items.idOrNull(gem)).isEqualTo("nexo:gem");
+        assertThat(nexo.calls).hasValue(3);
+        assertThat(items.create("nexo:gem")).isNull();
+        assertThat(items.create("gem")).isNull();
+        assertThat(items.build("nexo:gem")).isEqualTo(notReady);
+        assertThat(items.build("gem")).isEqualTo(notReady);
+        assertThat(nexo.calls).hasValue(3);
+
+        nexo.ready = true;
+
+        assertThat(items.ready()).isTrue();
+        assertThat(items.statuses().get(1)).isEqualTo(status(CustomItemPlugin.NEXO, HookState.ON));
+        assertThat(FakeItems.type(items.create("nexo:gem"))).isEqualTo("emerald");
+        assertThat(items.build("gem").reason()).isNull();
+        assertThat(items.idOrNull(gem)).isEqualTo("nexo:gem");
+    }
+
+    @Test
     void aNullOrEmptyItemIsNoCustomItemAndNoPluginIsAsked() {
         provider(CustomItemPlugin.ITEMSADDER).failure = new IllegalStateException("null item");
         provider(CustomItemPlugin.NEXO).ready = false;
@@ -866,11 +897,14 @@ final class CustomItemsTest {
 
             assertThat(items.active()).containsExactly(CustomItemPlugin.values());
             assertThat(items.statuses()).containsExactly(new HookStatus("ItemsAdder", HookState.LOADING, "2.0", null),
-                new HookStatus("Nexo", HookState.ON, "2.0", null), new HookStatus("Oraxen", HookState.ON, "2.0", null),
+                new HookStatus("Nexo", HookState.LOADING, "2.0", null),
+                new HookStatus("Oraxen", HookState.LOADING, "2.0", null),
                 new HookStatus("HeadDatabase", HookState.ON, "2.0", null));
-            assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder on, waiting for its items"
-                + " to load; Nexo on; Oraxen on; HeadDatabase on.");
-            assertThat(listeners).singleElement().isInstanceOf(ItemsAdderProvider.class);
+            assertThat(log.lines()).filteredOn(line -> line.startsWith("INFO")).containsExactly("INFO Custom item"
+                + " plugins: ItemsAdder on, waiting for its items to load; Nexo on, waiting for its items to load;"
+                + " Oraxen on, waiting for its items to load; HeadDatabase on.");
+            assertThat(listeners).extracting(listener -> (Object) listener.getClass())
+                .containsExactly(ItemsAdderProvider.class, NexoProvider.class, OraxenProvider.class);
             assertThat(items.ready()).isFalse();
             assertThat(items.create("hdb:1234")).isSameAs(head);
             assertThat(apis.constructed()).hasSize(1);
@@ -922,6 +956,30 @@ final class CustomItemsTest {
                 .extracting(RegisteredListener::getListener).isInstanceOf(ItemsAdderProvider.class);
             second.close();
             assertThat(handlers.getRegisteredListeners()).isEmpty();
+        } finally {
+            HandlerList.unregisterAll(owner);
+        }
+    }
+
+    @Test
+    void closeUnregistersTheListenersOfNexoAndOraxen() {
+        PluginManager manager = server();
+        install(manager, CustomItemPlugin.NEXO);
+        install(manager, CustomItemPlugin.ORAXEN);
+        HandlerList handlers = registering(manager);
+
+        try {
+            CustomItems items = CustomItems.detect(owner, errors,
+                EnumSet.of(CustomItemPlugin.NEXO, CustomItemPlugin.ORAXEN));
+            assertThat(handlers.getRegisteredListeners())
+                .extracting(registered -> (Object) registered.getListener().getClass())
+                .containsExactly(NexoProvider.class, OraxenProvider.class);
+
+            items.close();
+
+            assertThat(handlers.getRegisteredListeners()).isEmpty();
+            assertThat(items.statuses()).extracting(HookStatus::state).containsExactly(HookState.SWITCHED_OFF,
+                HookState.LOADING, HookState.LOADING, HookState.SWITCHED_OFF);
         } finally {
             HandlerList.unregisterAll(owner);
         }

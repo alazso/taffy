@@ -10,14 +10,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A provider that knows the native ids set per {@link FakeItems} type, with a ready flag, a reads-ids flag, a
- * throwable to throw (checked ones included) and a count of {@code create} and {@code id} calls. {@code create}
- * builds a new {@link FakeItems} item of the type set for the id, amount 1.
+ * flag for reading ids while not ready, a throwable to throw (checked ones included) and a count of {@code create}
+ * and {@code id} calls. {@code create} builds a new {@link FakeItems} item of the type set for the id, amount 1.
  */
 final class FakeProvider implements CustomItemProvider {
 
     final AtomicInteger calls = new AtomicInteger();
     volatile boolean ready = true;
     volatile boolean readsIds = true;
+    volatile boolean idsWhileLoading;
     volatile @Nullable Throwable failure;
     private final Map<String, String> idsByType = new ConcurrentHashMap<>();
 
@@ -29,6 +30,11 @@ final class FakeProvider implements CustomItemProvider {
     @Override
     public boolean ready() {
         return ready;
+    }
+
+    @Override
+    public boolean idsReady() {
+        return ready || idsWhileLoading;
     }
 
     @Override

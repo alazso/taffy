@@ -1,20 +1,60 @@
 package so.alaz.taffy.hooks;
 
+import com.nexomc.nexo.api.events.NexoItemsLoadedEvent;
+import org.bukkit.Server;
+import org.bukkit.event.HandlerList;
+import org.bukkit.event.Listener;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.PluginManager;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
+import so.alaz.taffy.test.CapturedLog;
+import so.alaz.taffy.test.SimulatedClasspath;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 final class NexoProviderTest {
 
+    private final Plugin owner = mock(Plugin.class);
+    private final PluginManager manager = mock(PluginManager.class);
+    private final List<String> order = new ArrayList<>();
+    private final List<Listener> listeners = new ArrayList<>();
+    private final CapturedLog log = new CapturedLog();
     private final ItemStack ruby = mock(ItemStack.class);
     private final ItemStack dirt = mock(ItemStack.class);
     private final List<String> built = new ArrayList<>();
+
+    @BeforeEach
+    void server() {
+        Server server = mock(Server.class);
+        when(owner.getServer()).thenReturn(server);
+        when(owner.getLogger()).thenReturn(log.logger);
+        when(server.getPluginManager()).thenReturn(manager);
+        doAnswer(call -> {
+            order.add("register");
+            listeners.add(call.getArgument(0));
+            return null;
+        }).when(manager).registerEvents(any(Listener.class), eq(owner));
+    }
 
     private NexoProvider provider(Map<String, ItemStack> known, boolean builds) {
         return new NexoProvider(
@@ -24,6 +64,10 @@ final class NexoProviderTest {
                 return builds ? known.get(id) : null;
             },
             item -> item == ruby ? "ruby" : null);
+    }
+
+    private NexoProvider started(BooleanSupplier knowsItems) {
+        return NexoProvider.start(owner, provider(Map.of("ruby", ruby), true), knowsItems);
     }
 
     @Test
@@ -59,15 +103,105 @@ final class NexoProviderTest {
     }
 
     @Test
-    void theProviderIsReadyBeforeNexoLoadsItsItems() {
-        assertThat(provider(Map.of(), true).ready()).isTrue();
+    void theListenerIsRegisteredBeforeTheItemNamesAreRead() {
+        NexoProvider provider = started(() -> {
+            order.add("read");
+            return true;
+        });
+
+        assertThat(order).containsExactly("register", "read");
+        assertThat(listeners).containsExactly((Listener) provider);
+        assertThat(provider.ready()).isTrue();
     }
 
     @Test
-    void theFactoryLinksTheApi() {
-        CustomItemProvider provider = NexoProvider.create();
+    void aNexoThatKnowsNoItemYetBuildsFromTheLoadEvent() {
+        NexoProvider provider = started(() -> false);
+
+        assertThat(provider.ready()).isFalse();
+        provider.loaded(mock(NexoItemsLoadedEvent.class));
+        assertThat(provider.ready()).isTrue();
+        assertThat(log.records).isEmpty();
+    }
+
+    @Test
+    void idsAreReadWhileNexoIsStillLoadingItsItems() {
+        NexoProvider provider = started(() -> false);
+
+        assertThat(provider.ready()).isFalse();
+        assertThat(provider.idsReady()).isTrue();
+        assertThat(provider.readsIds()).isTrue();
+        assertThat(provider.id(ruby)).isEqualTo("ruby");
+    }
+
+    @Test
+    void aLoadEventWhileTheItemNamesAreReadIsKept() {
+        NexoProvider provider = started(() -> {
+            ((NexoProvider) listeners.getFirst()).loaded(mock(NexoItemsLoadedEvent.class));
+            return false;
+        });
+
+        assertThat(provider.ready()).isTrue();
+    }
+
+    @Test
+    void itemNamesThatCannotBeLinkedWaitForTheEvent() {
+        NexoProvider provider = started(() -> {
+            throw new NoSuchMethodError("itemNames");
+        });
+
+        assertThat(provider.ready()).isFalse();
+        assertThat(log.lines()).containsExactly("WARNING Nexo does not say which items it has loaded"
+            + " (java.lang.NoSuchMethodError: itemNames), so Nexo items are built only after NexoItemsLoadedEvent.");
+        provider.loaded(mock(NexoItemsLoadedEvent.class));
+        assertThat(provider.ready()).isTrue();
+    }
+
+    @Test
+    void itemNamesThatThrowFailTheStartAndUnregisterTheListener() {
+        IllegalStateException broken = new IllegalStateException("broken");
+
+        try (MockedStatic<HandlerList> handlers = mockStatic(HandlerList.class)) {
+            assertThatThrownBy(() -> started(() -> {
+                throw broken;
+            })).isSameAs(broken);
+
+            assertThat(listeners).singleElement().isInstanceOf(NexoProvider.class);
+            handlers.verify(() -> HandlerList.unregisterAll(listeners.getFirst()));
+        }
+        assertThat(log.records).isEmpty();
+    }
+
+    @Test
+    void aMissingLoadEventFailsTheStartBeforeTheListenerIsRegistered() throws ReflectiveOperationException {
+        ClassLoader loader = SimulatedClasspath.hiding("so.alaz.taffy.hooks.", NexoItemsLoadedEvent.class.getName());
+        Class<?> hidden = Class.forName(NexoProvider.class.getName(), true, loader);
+        Class<?> hiddenProvider = Class.forName(CustomItemProvider.class.getName(), false, loader);
+        // getDeclaredMethod would resolve the parameter type of every declared method, the event handler included.
+        MethodHandle create = MethodHandles.privateLookupIn(hidden, MethodHandles.lookup())
+            .findStatic(hidden, "create", MethodType.methodType(hiddenProvider, Plugin.class));
+
+        assertThat(hidden.getClassLoader()).isSameAs(loader);
+        assertThatThrownBy(hidden::getDeclaredMethods)
+            .isInstanceOf(NoClassDefFoundError.class)
+            .hasMessageContaining("NexoItemsLoadedEvent");
+        assertThatThrownBy(() -> create.invoke(owner))
+            .isInstanceOf(NoClassDefFoundError.class)
+            .hasMessageContaining("NexoItemsLoadedEvent");
+        verify(manager, never()).registerEvents(any(Listener.class), eq(owner));
+    }
+
+    // NexoItems cannot initialize without the Nexo plugin, so its item names cannot be read here.
+    @Test
+    void theFactoryLinksTheApiAndRegistersTheListener() {
+        CustomItemProvider provider = NexoProvider.create(owner);
 
         assertThat(provider).isInstanceOf(NexoProvider.class);
-        assertThat(provider.ready()).isTrue();
+        assertThat(listeners).containsExactly((Listener) provider);
+        assertThat(provider.ready()).isFalse();
+        assertThat(provider.idsReady()).isTrue();
+        assertThat(log.lines()).singleElement().asString()
+            .startsWith("WARNING Nexo does not say which items it has loaded (")
+            .endsWith("), so Nexo items are built only after NexoItemsLoadedEvent.");
     }
 }

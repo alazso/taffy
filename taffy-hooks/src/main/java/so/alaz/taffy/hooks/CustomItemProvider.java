@@ -10,12 +10,23 @@ import org.jetbrains.annotations.Nullable;
 interface CustomItemProvider {
 
     /**
-     * Whether the plugin has loaded its items. While it has not, {@link #create} and {@link #id} cannot answer yet.
+     * Whether the plugin has loaded its items. While it has not, {@link #create} cannot answer yet, and {@link #id}
+     * can only when {@link #idsReady} says so.
      *
      * @return {@code true} unless the plugin is still loading its items
      */
     default boolean ready() {
         return true;
+    }
+
+    /**
+     * Whether {@link #id} can answer now. A plugin that reads the id from the item's own data answers before it has
+     * loaded its items.
+     *
+     * @return {@link #ready()}, unless the plugin reads ids while it is still loading its items
+     */
+    default boolean idsReady() {
+        return ready();
     }
 
     /**

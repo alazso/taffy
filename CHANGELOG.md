@@ -33,6 +33,16 @@ All notable changes to Taffy are documented here. This project follows
   any plugin. A reference whose text before the first colon names no `CustomItemPlugin` is now offered whole to
   each plugin in order, as a reference without a colon is, and the first item built wins. A reference that starts
   with a plugin's key or alias still goes only to that plugin, and `CustomItemRef` parses as before.
+- `CustomItems` waits for Nexo and Oraxen to load their items before it builds one. Both plugins know no item
+  until their first load ends, so during a server start `create("nexo:ruby")` returned `null` as for an unknown
+  id while `ready()` read `true` and `statuses()` read `ON`. Nexo is now `LOADING` until `NexoItemsLoadedEvent`
+  and Oraxen until `OraxenItemsLoadedEvent`, or `ON` at once when the plugin already knows an item name at
+  detection. While one of them loads, `create` skips it, `build` gives `NOT_READY`, `ready()` is `false` and
+  `statuses()` reads `LOADING`. `resolve` and `idOrNull` still read a Nexo or Oraxen id during the load, since
+  the id is in the item's own data. Each of the two integrations registers a listener for the owner, which
+  `CustomItems.close()` unregisters, so `detect` runs while the owner is enabled, as it already does for
+  ItemsAdder. A Nexo or Oraxen that loaded with no item at all reads `LOADING` after a later `detect` until its
+  next items-loaded event.
 
 ## [0.3.0] - 2026-11-20
 

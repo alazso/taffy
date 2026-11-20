@@ -27,7 +27,30 @@ final class CustomItemProviderTest {
         };
 
         assertThat(provider.ready()).isTrue();
+        assertThat(provider.idsReady()).isTrue();
         assertThat(provider.readsIds()).isTrue();
+    }
+
+    @Test
+    void aProviderReadsIdsOnceItIsReadyUnlessItSaysOtherwise() {
+        CustomItemProvider provider = new CustomItemProvider() {
+            @Override
+            public boolean ready() {
+                return false;
+            }
+
+            @Override
+            public @Nullable ItemStack create(String id) {
+                return null;
+            }
+
+            @Override
+            public @Nullable String id(ItemStack item) {
+                return null;
+            }
+        };
+
+        assertThat(provider.idsReady()).isFalse();
     }
 
     @Test
@@ -60,5 +83,8 @@ final class CustomItemProviderTest {
         provider.ready = false;
 
         assertThat(provider.ready()).isFalse();
+        assertThat(provider.idsReady()).isFalse();
+        provider.idsWhileLoading = true;
+        assertThat(provider.idsReady()).isTrue();
     }
 }
