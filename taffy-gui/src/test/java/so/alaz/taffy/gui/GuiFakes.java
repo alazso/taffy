@@ -17,6 +17,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
@@ -26,6 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -68,7 +70,7 @@ final class GuiFakes {
         }
     }
 
-    // A mocked inventory per create, answering its holder and size, with a FakeCanvas.
+    // A mocked inventory per create, answering its holder and size, with a FakeCanvas that clear() empties.
     static final class FakeInventories implements Inventories {
 
         final List<Inventory> created = new ArrayList<>();
@@ -82,6 +84,10 @@ final class GuiFakes {
             when(inventory.getHolder()).thenReturn(holder);
             when(inventory.getSize()).thenReturn(size);
             FakeCanvas canvas = new FakeCanvas(size);
+            doAnswer(call -> {
+                Arrays.fill(canvas.slots, null);
+                return null;
+            }).when(inventory).clear();
             created.add(inventory);
             titles.add(title);
             canvases.put(inventory, canvas);

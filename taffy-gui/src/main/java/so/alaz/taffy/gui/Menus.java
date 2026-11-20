@@ -480,10 +480,9 @@ public final class Menus {
      * itself: Paper marks the plugin disabled before {@code onDisable} and skips its listeners, so no close event
      * arrives. The menus close even when ending the prompts throws. Nothing opens and nothing is asked afterwards, and
      * a second call does nothing. The menu or prompt anvil of a viewer the calling thread does not own is forgotten
-     * without its closed step and stays open, and once the plugin is disabled no listener cancels its clicks. Such a
-     * viewer can take the copies that menu shows; each carries {@link Parts#preview()}, and the listener of a later
-     * enable deletes one when a click meets it outside a menu. On Paper the disabling thread owns every player, so
-     * this happens only on Folia.
+     * without its closed step and stays open, and once the plugin is disabled no listener cancels its clicks. Its
+     * inventory is emptied from the calling thread, so such a viewer is left with an empty menu and has no copy to
+     * take. On Paper the disabling thread owns every player, so this happens only on Folia.
      */
     public void shutdown() {
         if (stopping) {
@@ -495,9 +494,14 @@ public final class Menus {
             stopping = true;
             for (MenuSession<?> session : List.copyOf(sessions.values())) {
                 Player viewer = session.viewer();
-                if (!session.closed() && viewer.isOnline() && ownedHere.test(viewer)) {
+                if (session.closed()) {
+                    continue;
+                }
+                if (viewer.isOnline() && ownedHere.test(viewer)) {
                     viewer.closeInventory(InventoryCloseEvent.Reason.PLUGIN);
                     closed(session);
+                } else {
+                    session.getInventory().clear();
                 }
             }
             sessions.clear();

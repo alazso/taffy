@@ -5,6 +5,12 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+- `Menus.shutdown` empties the inventory of each open menu and prompt anvil whose viewer the disabling thread
+  does not own, which happens only on Folia. Such a menu still stays open with no listener to cancel its clicks,
+  but it now shows nothing, so its viewer has no menu copy to take. Before, it stayed fully stocked and a copy
+  taken from it was deleted only when a click met it after a later enable.
+
 ## [0.2.2] - 2026-11-20
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

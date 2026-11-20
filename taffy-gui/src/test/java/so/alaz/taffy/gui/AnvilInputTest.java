@@ -189,7 +189,7 @@ final class AnvilInputTest {
     }
 
     @Test
-    void shutdownClosesTheAnvilsOfPlayersTheThreadOwnsAndDropsTheRest() {
+    void shutdownClosesTheAnvilsOfPlayersTheThreadOwnsAndEmptiesTheRest() {
         Player alex = player("Alex", false);
         Player sam = player("Sam", false);
         input.open(alex, QUESTION, "10", 1);
@@ -199,14 +199,15 @@ final class AnvilInputTest {
 
         verify(anvils.get(alex).getTopInventory()).clear();
         verify(alex).closeInventory(InventoryCloseEvent.Reason.PLUGIN);
-        verify(anvils.get(sam).getTopInventory(), never()).clear();
+        verify(anvils.get(sam).getTopInventory()).clear();
         verify(sam, never()).closeInventory(any(InventoryCloseEvent.Reason.class));
+        assertThat(showing.get(sam)).isSameAs(anvils.get(sam));
         assertThat(input.showing(alex.getUniqueId(), 1)).isFalse();
         assertThat(input.showing(sam.getUniqueId(), 2)).isFalse();
     }
 
     @Test
-    void shutdownDropsAnAnvilWhoseViewerIsNoPlayerWithoutAskingOrClearing() {
+    void shutdownEmptiesAnAnvilWhoseViewerIsNoPlayerWithoutAsking() {
         Player alex = player("Alex", false);
         AnvilView view = anvils.get(alex);
         input.open(alex, QUESTION, "10", 1);
@@ -217,7 +218,7 @@ final class AnvilInputTest {
 
         assertThat(asked).isEmpty();
         assertThat(input.showing(alex.getUniqueId(), 1)).isFalse();
-        verify(view.getTopInventory(), never()).clear();
+        verify(view.getTopInventory()).clear();
     }
 
     @Test

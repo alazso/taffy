@@ -724,6 +724,22 @@ final class MenuLifecycleTest {
     }
 
     @Test
+    void shutdownLeavesAViewerTheThreadDoesNotOwnWithAnEmptyMenu() {
+        Sample sample = new Sample(folder);
+        MenuHarness.Viewer elsewhere = sample.harness.viewer("Sam");
+        sample.harness.open(elsewhere, Sample.KIND.id());
+        sample.harness.owned = player -> player != elsewhere.player;
+        assertThat(elsewhere.name(10)).isEqualTo("Act");
+
+        sample.harness.menus.shutdown();
+
+        assertThat(elsewhere.session()).isNotNull();
+        assertThat(sample.harness.inventories.canvases.get(elsewhere.current().getTopInventory()).slots)
+            .containsOnlyNulls();
+        assertThat(sample.menu.closes).containsExactly(false);
+    }
+
+    @Test
     void shutdownRunsTheClosedStepItselfWhenNoCloseEventArrives() {
         Sample sample = new Sample(folder);
         sample.harness.listening = false;

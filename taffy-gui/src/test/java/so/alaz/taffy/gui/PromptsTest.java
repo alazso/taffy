@@ -951,7 +951,7 @@ final class PromptsTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {true, false})
-    void shutdownTakesTheAnvilAwayOnlyFromPlayersThisThreadOwnsAndReopensNothing(boolean ownedHere) {
+    void shutdownTakesTheAnvilAwayFromPlayersThisThreadOwnsEmptiesTheRestAndReopensNothing(boolean ownedHere) {
         start(PromptMode.ANVIL);
         owned = ownedHere;
         ask();
@@ -971,7 +971,7 @@ final class PromptsTest {
             assertThat(real().closes).containsExactly(InventoryCloseEvent.Reason.PLUGIN);
             assertThat(real().shown).isNull();
         } else {
-            verify(view.getTopInventory(), never()).clear();
+            verify(view.getTopInventory()).clear();
             assertThat(real().closes).isEmpty();
             assertThat(real().shown).isSameAs(view);
         }
@@ -1001,7 +1001,7 @@ final class PromptsTest {
     }
 
     @Test
-    void anOfflinePlayersAskIsNotTakenToTheirAnvilAtShutdown() {
+    void anOfflinePlayersAnvilIsEmptiedAndNotClosedAtShutdown() {
         start(PromptMode.ANVIL);
         ask();
         long token = token();
@@ -1012,7 +1012,7 @@ final class PromptsTest {
 
         assertThat(real().input.showing(alex.id, token)).isFalse();
         assertThat(real().closes).isEmpty();
-        verify(view.getTopInventory(), never()).clear();
+        verify(view.getTopInventory()).clear();
     }
 
     @Test

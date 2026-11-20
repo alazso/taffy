@@ -149,8 +149,8 @@ final class AnvilInput {
     }
 
     /**
-     * Takes the anvil away from every player it still shows whom {@code here} accepts, and drops what is kept for the
-     * rest.
+     * Takes the anvil away from every player it still shows whom {@code here} accepts. The anvil of any other
+     * viewer is emptied from the calling thread, stays open and is forgotten.
      *
      * @param here whether the calling thread may act on a player
      */
@@ -160,8 +160,8 @@ final class AnvilInput {
             Open shown = entry.getValue();
             if (shown.view().getPlayer() instanceof Player player && here.test(player)) {
                 close(player, shown.token());
-            } else {
-                open.remove(entry.getKey(), shown);
+            } else if (open.remove(entry.getKey(), shown)) {
+                shown.view().getTopInventory().clear();
             }
         }
     }

@@ -292,8 +292,8 @@ public final class Prompts {
     /**
      * Ends every ask without a message and opens nothing, then or later. An anvil still showing, including one whose
      * answer is still being judged, is taken away from each online player the calling thread owns. The anvil of a
-     * player the calling thread does not own is forgotten and stays open, and once the plugin is disabled no listener
-     * cancels its clicks.
+     * player the calling thread does not own is emptied from the calling thread, forgotten and stays open, and once
+     * the plugin is disabled no listener cancels its clicks.
      */
     void shutdown() {
         stopping = true;
