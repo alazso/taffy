@@ -31,6 +31,8 @@ All notable changes to Taffy are documented here. This project follows
   - a UUID in upper case or without dashes, as `[uuid hidden]`;
   - the quoted user and host of a MySQL or MariaDB account: `'mc_prod'@'db.example.net'` is sent as
     `[user hidden]@[host hidden]`;
+  - the double-quoted name after `user` or `role`, as in PostgreSQL's
+    `password authentication failed for user "mc_prod"`, as `user [user hidden]`;
   - the value after `=` or `:` of a key that holds `password`, `passwd`, `pwd`, `secret`, `token`, `api_key`,
     `access_key` or `private_key`, as in `password=[redacted]`. `(using password: YES)` stays as written;
   - an absolute Unix path of two or more segments, as `[path hidden]`;

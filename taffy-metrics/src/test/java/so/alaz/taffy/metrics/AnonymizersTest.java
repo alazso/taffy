@@ -21,20 +21,21 @@ class AnonymizersTest {
     private static final int AWS_KEY = 4;
     private static final int UUID = 5;
     private static final int MYSQL_ACCOUNT = 6;
-    private static final int QUERY_SECRET = 7;
-    private static final int SECRET_KEY = 8;
-    private static final int SQL = 9;
-    private static final int WINDOWS_PATH = 10;
-    private static final int UNIX_PATH = 11;
-    private static final int DISCORD_WEBHOOK = 12;
-    private static final int HOST = 13;
+    private static final int POSTGRES_USER = 7;
+    private static final int QUERY_SECRET = 8;
+    private static final int SECRET_KEY = 9;
+    private static final int SQL = 10;
+    private static final int WINDOWS_PATH = 11;
+    private static final int UNIX_PATH = 12;
+    private static final int DISCORD_WEBHOOK = 13;
+    private static final int HOST = 14;
 
     private static final String WEBHOOK_ID = "123456789012345678";
     private static final String WEBHOOK_TOKEN = "abcDEF-ghi_JKL";
 
     @Test
-    void thereAreFourteenRulesOfAPatternAndAReplacement() {
-        assertThat(Anonymizers.RULES).hasDimensions(14, 2);
+    void thereAreFifteenRulesOfAPatternAndAReplacement() {
+        assertThat(Anonymizers.RULES).hasDimensions(15, 2);
     }
 
     @Test
@@ -149,6 +150,38 @@ class AnonymizersTest {
         assertThat(apply(MYSQL_ACCOUNT, "Unknown column 'kit' in 'field list'"))
             .isEqualTo("Unknown column 'kit' in 'field list'");
         assertThat(apply(MYSQL_ACCOUNT, "'a' @ 'b'")).isEqualTo("'a' @ 'b'");
+    }
+
+    @Test
+    void theQuotedNameAfterUserOrRoleIsHidden() {
+        assertThat(apply(POSTGRES_USER, "FATAL: password authentication failed for user \"mc_prod\""))
+            .isEqualTo("FATAL: password authentication failed for user [user hidden]");
+        assertThat(apply(POSTGRES_USER, "FATAL: role \"mc_prod\" does not exist"))
+            .isEqualTo("FATAL: role [user hidden] does not exist");
+        assertThat(apply(POSTGRES_USER,
+            "no pg_hba.conf entry for host \"db\", user \"mc_prod\", database \"vouchers\", SSL off"))
+            .isEqualTo("no pg_hba.conf entry for host \"db\", user [user hidden], database \"vouchers\", SSL off");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "select a role first",
+        "Unknown user given",
+        "the user \"said hello\" twice",
+        "role \"\" is empty",
+        "browser \"chrome\"",
+    })
+    void theWordsUserAndRoleWithoutAQuotedNameAreLeftAsWritten(String line) {
+        assertThat(apply(POSTGRES_USER, line)).isEqualTo(line);
+    }
+
+    @Test
+    void thePostgresAuthenticationMessageKeepsItsWordsUnderEveryRule() throws ReflectiveOperationException {
+        String failed = "FATAL: password authentication failed for user \"mc_prod\"";
+
+        assertThat(Anonymizers.anonymize(failed))
+            .isEqualTo("FATAL: password authentication failed for user [user hidden]");
+        assertThat(sent(failed)).isEqualTo("FATAL: password authentication failed for user [user hidden]");
     }
 
     @Test
@@ -372,7 +405,7 @@ class AnonymizersTest {
     @ValueSource(strings = {
         "a", "a.", "a-", "a@", "a.a@", "x@a.", "/a", "/", "://", "a://", "x://a:", "a:", "'", "'a'@", "0", "0-", "f",
         "select ", "select a from ", "update a ", "update a set", "insert  ", "insert or ", "create table ",
-        "password", "password=", "password \"", "token:", " ",
+        "password", "password=", "password \"", "token:", " ", "user ", "user \"", "user \"a",
         "\t", "\\", "C:\\", ".com", "a.com.", "jdbc:", "Bearer ", "?token=", "\"", "-", ".",
     })
     void aLongAdversarialTextIsAnonymizedQuickly(String unit) {

@@ -19,6 +19,9 @@ import java.util.regex.Pattern;
  *   <li>a UUID in either letter case, with its dashes, also inside a longer word such as
  *       {@code data_<uuid>}, or as 32 hex digits without them that no further hex digit touches;</li>
  *   <li>the quoted user and host of a MySQL or MariaDB account, as in {@code 'mc_prod'@'db.example.net'};</li>
+ *   <li>the double-quoted name after the word {@code user} or {@code role} in either letter case, as PostgreSQL
+ *       writes it in {@code password authentication failed for user "mc_prod"}, when the name is 1 to 64
+ *       characters without whitespace;</li>
  *   <li>an {@code api_key}, {@code apikey}, {@code token} or {@code secret} query value;</li>
  *   <li>the value after {@code =} or {@code :} of a key that holds {@code password}, {@code passwd},
  *       {@code pwd}, {@code secret}, {@code token}, {@code api_key}, {@code access_key} or {@code private_key}
@@ -73,6 +76,7 @@ final class Anonymizers {
         {"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
             + "|(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])", "[uuid hidden]"},
         {"'[^'\\s]*'@'[^'\\s]*'", "[user hidden]@[host hidden]"},
+        {"(?i)(\\b(?:user|role)\\s+)\"[^\"\\s]{1,64}\"", "$1[user hidden]"},
         {"([?&](?:api_?key|token|secret)=)[^&\\s]+", "$1[redacted]"},
         {"(?i)((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)[\\w-]{0,20}"
             + "[\"']?\\s*[=:]\\s*)(?!(?:yes|no)\\b)(?:\"[^\"\\n]*\"|'[^'\\n]*'|[^\\s\"'&,;)]+)", "$1[redacted]"},
