@@ -175,7 +175,10 @@ All notable changes to Taffy are documented here. This project follows
   menu, so the handler ran twice, the click sound played twice, and the listener registered first ended every
   session with its own `Menus`, whichever had opened it. A session now belongs to the `Menus` that opened it: every
   listener still cancels the clicks and drags in a menu of any `Menus`, and only the listener of the owning
-  `Menus` runs the handler, plays `Cue.CLICK` and `Cue.FAIL` and ends the session.
+  `Menus` runs the handler, plays `Cue.CLICK` and `Cue.FAIL` and ends the session. The anvil of a `Prompts` ask
+  is left alone by the listener of every `Menus`: before, the listener of a second `Menus` with the same preview
+  key took the anvil's paper for a leaked menu copy, deleted it on a click, which stopped the name field from
+  working, and logged a `preview.leak` warning.
 
 ### Removed
 - Breaking: `Menus.Parts.messages()` and `MenuText.messages()` are gone, since the menus hold a `TextSource` and

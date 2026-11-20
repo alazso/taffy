@@ -13,6 +13,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
@@ -24,8 +25,9 @@ import java.util.function.Predicate;
  * {@link Prompts} builds one for {@link PromptMode#ANVIL} with the menus' {@link PreviewMarker}. Its methods are called
  * by the prompts and the {@link PaperPromptListener} they build.
  *
- * <p>{@link #open} and {@link #close} run on the player's entity thread. {@link #owns}, {@link #showing} and
- * {@link #forget} are safe from any thread, and {@link #shutdown} runs on the thread that disables the plugin.
+ * <p>{@link #open} and {@link #close} run on the player's entity thread. {@link #owns}, {@link #prompt},
+ * {@link #showing} and {@link #forget} are safe from any thread, and {@link #shutdown} runs on the thread that
+ * disables the plugin.
  *
  * <p>Slot 0 holds a PAPER marked with the plugin's {@link PreviewMarker}, whose custom name is the starting text. The
  * name field only works with an item there, and the client sends an empty name for a field equal to the item name of
@@ -36,6 +38,9 @@ final class AnvilInput {
 
     record Open(AnvilView view, long token) {
     }
+
+    // The views every anvil prompt of this class shows, whichever menus built it.
+    private static final Set<InventoryView> SHOWN = ConcurrentHashMap.newKeySet();
 
     private final PreviewMarker marker;
     private final BiFunction<Player, Component, AnvilView> views;
@@ -84,14 +89,17 @@ final class AnvilInput {
         view.getTopInventory().setFirstItem(marker.mark(papers.apply(initial)));
         view.setRepairCost(0);
         Open entry = new Open(view, token);
+        SHOWN.add(view);
         Open replaced = open.put(player.getUniqueId(), entry);
         // A replaced anvil may still be on screen; it is cleared before the new one closes it, so its paper is gone.
         if (replaced != null && replaced.view() != view) {
             replaced.view().getTopInventory().clear();
+            SHOWN.remove(replaced.view());
         }
         player.openInventory(view);
         if (player.getOpenInventory() != view) {
             open.remove(player.getUniqueId(), entry);
+            SHOWN.remove(view);
             view.getTopInventory().clear();
             return false;
         }
@@ -112,6 +120,7 @@ final class AnvilInput {
             return;
         }
         entry.view().getTopInventory().clear();
+        SHOWN.remove(entry.view());
         if (player.isOnline() && player.getOpenInventory() == entry.view()) {
             player.closeInventory(InventoryCloseEvent.Reason.PLUGIN);
         }
@@ -145,7 +154,20 @@ final class AnvilInput {
      * @param player the id of the player
      */
     void forget(UUID player) {
-        open.remove(player);
+        Open gone = open.remove(player);
+        if (gone != null) {
+            SHOWN.remove(gone.view());
+        }
+    }
+
+    /**
+     * Tells whether an anvil prompt of any menus opened the view and still shows it.
+     *
+     * @param view an open inventory view
+     * @return {@code true} for a view of an anvil prompt
+     */
+    static boolean prompt(InventoryView view) {
+        return SHOWN.contains(view);
     }
 
     /**
@@ -162,6 +184,7 @@ final class AnvilInput {
                 close(player, shown.token());
             } else if (open.remove(entry.getKey(), shown)) {
                 shown.view().getTopInventory().clear();
+                SHOWN.remove(shown.view());
             }
         }
     }
@@ -180,6 +203,7 @@ final class AnvilInput {
         Open entry = find(view);
         if (entry != null) {
             open.remove(view.getPlayer().getUniqueId(), entry);
+            SHOWN.remove(view);
         }
         return entry;
     }

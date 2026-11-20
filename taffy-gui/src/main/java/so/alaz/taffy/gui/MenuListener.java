@@ -55,7 +55,7 @@ import java.util.logging.Logger;
  * <p>In any view that is not a menu, a stack carrying the menus' preview key found on the clicked slot, the
  * cursor, a number key's hotbar slot or, for an offhand swap, the offhand is deleted, the click is cancelled and a
  * {@code preview.leak} warning is logged. A drag outside menus with a marked cursor is cancelled and, for a player, the
- * cursor is cleared on the next tick. A view a prompt opened is left to the prompt.
+ * cursor is cleared on the next tick. A view a prompt of any {@code Menus} opened is left to that prompt.
  */
 final class MenuListener implements Listener {
 
@@ -85,7 +85,7 @@ final class MenuListener implements Listener {
     public void onClick(InventoryClickEvent event) {
         InventoryView view = event.getView();
         if (!(view.getTopInventory().getHolder(false) instanceof MenuSession<?> session)) {
-            if (!menus.prompts().owns(view)) {
+            if (!prompt(view)) {
                 leak(event);
             }
             return;
@@ -168,7 +168,7 @@ final class MenuListener implements Listener {
             event.setCancelled(true);
             return;
         }
-        if (menus.prompts().owns(view) || !marker.marked(event.getOldCursor())) {
+        if (prompt(view) || !marker.marked(event.getOldCursor())) {
             return;
         }
         event.setCancelled(true);
@@ -229,6 +229,10 @@ final class MenuListener implements Listener {
     // container the player has at the call.
     private void resync(Player player) {
         menus.tasks().accept(player, player::updateInventory);
+    }
+
+    private boolean prompt(InventoryView view) {
+        return AnvilInput.prompt(view) || menus.prompts().owns(view);
     }
 
     private void leak(InventoryClickEvent event) {

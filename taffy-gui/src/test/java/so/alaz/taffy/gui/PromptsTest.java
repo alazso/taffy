@@ -14,6 +14,7 @@ import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -44,6 +45,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -1080,6 +1082,59 @@ final class PromptsTest {
         assertThat(harness.log.lines()).noneMatch(line -> line.contains("preview.leak"));
         assertThat(prompts.owns(view)).isTrue();
         assertThat(prompts.owns(new FakeView(GuiFakes.foreign(27), alex.inventory, alex.player))).isFalse();
+    }
+
+    @Test
+    void theListenerOfOtherMenusLeavesThePromptAnvilAloneUntilItCloses() {
+        start(PromptMode.ANVIL);
+        MenuListener other = harness.another().menuListener();
+        ask();
+        AnvilView view = real().shown;
+        ItemStack paper = GuiFakes.marked(Material.PAPER, harness.marker);
+        when(view.getItem(0)).thenReturn(paper);
+
+        InventoryClickEvent click = new InventoryClickEvent(view, InventoryType.SlotType.CRAFTING, 0, ClickType.LEFT,
+            InventoryAction.PICKUP_ALL);
+        other.onClick(click);
+        InventoryDragEvent drag = new InventoryDragEvent(view, null, paper, false, Map.of(0, paper));
+        other.onDrag(drag);
+
+        verify(view, never()).setItem(0, null);
+        assertThat(click.isCancelled()).isFalse();
+        assertThat(drag.isCancelled()).isFalse();
+        assertThat(harness.tasks.queue).isEmpty();
+        assertThat(harness.log.lines()).noneMatch(line -> line.contains("preview.leak"));
+        assertThat(AnvilInput.prompt(view)).isTrue();
+
+        real().close(InventoryCloseEvent.Reason.PLAYER);
+
+        assertThat(AnvilInput.prompt(view)).isFalse();
+        other.onClick(click);
+        verify(view).setItem(0, null);
+        assertThat(harness.log.lines()).anyMatch(line -> line.contains("preview.leak"));
+    }
+
+    @Test
+    void anAnvilTakenAwayOrForgottenIsNoPromptAnvilAnyLonger() {
+        start(PromptMode.ANVIL);
+        ask();
+        AnvilView first = real().shown;
+        assertThat(AnvilInput.prompt(first)).isTrue();
+
+        real().input.close(alex.player, token());
+
+        assertThat(AnvilInput.prompt(first)).isFalse();
+        ask();
+        AnvilView second = real().shown;
+        assertThat(AnvilInput.prompt(second)).isTrue();
+        real().input.forget(alex.id);
+        assertThat(AnvilInput.prompt(second)).isFalse();
+        real().shown = null;
+        ask();
+        AnvilView third = real().shown;
+        owned = false;
+        harness.menus.shutdown();
+        assertThat(AnvilInput.prompt(third)).isFalse();
     }
 
     @Test

@@ -6,7 +6,8 @@ import java.util.UUID;
 
 /**
  * The prompt calls menus make: opening a menu ends a pending prompt, a quit forgets it, a view a prompt opened (an
- * anvil) is the prompt's own, so the leak rule leaves it alone, and the menus' shutdown ends every prompt first.
+ * anvil) is the prompt's own, so the leak rule leaves it alone, as it leaves the anvil of the prompts of any other
+ * menus, and the menus' shutdown ends every prompt first.
  */
 interface MenuPrompts {
 
