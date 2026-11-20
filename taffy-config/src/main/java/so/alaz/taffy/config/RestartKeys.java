@@ -3,7 +3,6 @@ package so.alaz.taffy.config;
 import org.bukkit.configuration.ConfigurationSection;
 
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Predicate;
@@ -20,8 +19,10 @@ public final class RestartKeys {
      * <p>{@code restartOnly} is asked about every path of both configurations that holds a value. A path is
      * dotted and relative to the section passed, such as {@code storage.type} when the root is passed. It is
      * never asked about a path that holds a section, so a section present in both is not reported: the keys
-     * beneath it are. Values compare with {@link Objects#equals}, which makes a list one value. A value that
-     * only one of the two has is reported; an empty section is not.
+     * beneath it are. A list is one value. Values compare by content: a list entry by entry in order, a group of
+     * keys inside a list key by key, and a {@code !!binary} value byte by byte. Any other value compares with
+     * {@link Object#equals}, so a number written in another form counts as a change: {@code 3306} and
+     * {@code 3306.0} differ. A value that only one of the two has is reported; an empty section is not.
      *
      * <p>Values are read with {@link ConfigurationSection#get(String)}, which answers a missing key with the
      * default of a configuration that has defaults attached. A key removed from such a configuration is not
@@ -38,7 +39,7 @@ public final class RestartKeys {
         collect(before, restartOnly, paths);
         collect(after, restartOnly, paths);
         return paths.stream()
-            .filter(path -> !Objects.equals(before.get(path), after.get(path)))
+            .filter(path -> !Values.same(before.get(path), after.get(path)))
             .toList();
     }
 

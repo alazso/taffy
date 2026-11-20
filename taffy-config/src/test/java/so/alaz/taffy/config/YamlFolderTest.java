@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import so.alaz.taffy.test.FakeFolders;
 
 import java.io.IOException;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
@@ -113,7 +114,7 @@ final class YamlFolderTest {
     void namesWithAnotherEndingAreIgnored() throws Exception {
         write("shop.yml.bak", "title: Backup\n");
         write("shop.yml.tmp", "title: Partial\n");
-        write("bank.yaml", "title: Bank\n");
+        write("bank.yaml.bak", "title: Bank\n");
         write("notes.txt", "not yaml: [\n");
         write("yml", "title: Bare\n");
 
@@ -121,6 +122,42 @@ final class YamlFolderTest {
 
         assertThat(loaded.entries()).isEmpty();
         assertThat(loaded.errors()).isEmpty();
+    }
+
+    @Test
+    void aFileWithTheLongSuffixIsReportedWithTheNameToGiveIt() throws Exception {
+        write("bank.yaml", "title: Bank\n");
+        write("Menu.YAML", "title: [\n");
+        write("a.yml", "rows: 6\n");
+        write("shop.yml", "title: Shop\n");
+        write(".yaml", "title: Bare\n");
+        write(".hidden.yaml", "title: Hidden\n");
+        Files.createDirectories(folder().resolve("old.yaml"));
+        YamlFolder folder = new YamlFolder(folder());
+
+        YamlFolder.Loaded<String> loaded = folder.load(TITLE);
+
+        assertThat(loaded.entries()).containsExactly(Map.entry("shop", "Shop"));
+        assertThat(loaded.errors()).containsExactly(
+            "Menu.YAML: rename it to Menu.yml to have it read",
+            "a.yml: title is missing",
+            "bank.yaml: rename it to bank.yml to have it read");
+        assertThat(folder.loadOne("bank", TITLE)).isNull();
+    }
+
+    @Test
+    void aNameThatStartsWithADotIsSkippedWithoutALine() throws Exception {
+        Files.write(folder().resolve("._shop.yml"), new byte[] {0, 5, 22, 7, (byte) 0xFF, (byte) 0xFE});
+        write(".hidden.yml", "title: Hidden\n");
+        write("shop.yml", "title: Shop\n");
+        YamlFolder folder = new YamlFolder(folder());
+
+        YamlFolder.Loaded<String> loaded = folder.load(TITLE);
+
+        assertThat(loaded.entries()).containsExactly(Map.entry("shop", "Shop"));
+        assertThat(loaded.errors()).isEmpty();
+        assertThat(folder.loadOne("._shop", TITLE)).isNull();
+        assertThat(folder.loadOne(".hidden", TITLE)).isNull();
     }
 
     @Test
@@ -171,7 +208,34 @@ final class YamlFolderTest {
         YamlFolder.Loaded<String> loaded = new YamlFolder(folder()).load(TITLE);
 
         assertThat(loaded.entries()).containsOnlyKeys("shop");
-        assertThat(loaded.errors()).containsExactly("bank.yml is not saved as UTF-8");
+        assertThat(loaded.errors())
+            .containsExactly("bank.yml is not saved as UTF-8: the first byte that is not UTF-8 is on line 1");
+    }
+
+    @Test
+    void aLenientFolderLoadsAFileSavedInALegacyCodePageAndWarnsOncePerFile() throws Exception {
+        Charset windows1252 = Charset.forName("windows-1252");
+        Files.write(folder().resolve("bank.yml"),
+            "rows: 3\n# caf\u00e9\ntitle: Caf\u00e9 \u20ac\n".getBytes(windows1252));
+        Files.write(folder().resolve("cafe.yml"), "title: \"Caf\u00e9\n".getBytes(windows1252));
+        write("shop.yml", "title: Shop\n");
+        List<String> warnings = new ArrayList<>();
+        YamlFolder strict = new YamlFolder(folder());
+
+        YamlFolder.Loaded<String> loaded = strict.lenient(warnings::add).load(TITLE);
+
+        assertThat(loaded.entries()).containsExactly(Map.entry("bank", "Caf\uFFFD \uFFFD"), Map.entry("shop", "Shop"));
+        assertThat(loaded.errors()).singleElement(InstanceOfAssertFactories.STRING)
+            .startsWith("cafe.yml is not valid YAML: ");
+        assertThat(warnings).containsExactly(
+            "bank.yml is not saved as UTF-8, so each byte that is not UTF-8 is read as the replacement character"
+                + " U+FFFD; the first is on line 2. Save the file as UTF-8.",
+            "cafe.yml is not saved as UTF-8, so each byte that is not UTF-8 is read as the replacement character"
+                + " U+FFFD; the first is on line 1. Save the file as UTF-8.");
+        assertThat(strict.load(TITLE).entries()).containsOnlyKeys("shop");
+        assertThat(strict.lenient(warnings::add).loadOne("bank", TITLE).entries())
+            .containsExactly(Map.entry("bank", "Caf\uFFFD \uFFFD"));
+        assertThat(warnings).hasSize(3);
     }
 
     @Test
@@ -183,7 +247,8 @@ final class YamlFolderTest {
 
         assertThat(loaded.entries()).containsOnlyKeys("shop");
         assertThat(loaded.errors()).singleElement(InstanceOfAssertFactories.STRING)
-            .startsWith("cannot read " + named + ": ");
+            .startsWith("cannot read bank.yml: ")
+            .doesNotContain(named.toString());
     }
 
     @Test
@@ -211,6 +276,36 @@ final class YamlFolderTest {
 
         assertThat(loaded.entries()).containsOnlyKeys("shop");
         assertThat(loaded.errors()).containsExactly("bank.yml: IllegalStateException the menu is locked");
+    }
+
+    @Test
+    void anUncheckedFailureIsHandedToTheFailureConsumerWithItsFileName() throws Exception {
+        write("bank.yml", "title: Bank\n");
+        write("empty.yml", "title: Empty\n");
+        write("plain.yml", "rows: 6\n");
+        write("shop.yml", "title: Shop\n");
+        Map<String, Throwable> failures = new LinkedHashMap<>();
+        IllegalStateException bug = new IllegalStateException("the menu is locked");
+        YamlFolder.Parser<String> parser = (id, file, yaml) -> switch (id) {
+            case "bank" -> throw bug;
+            case "empty" -> null;
+            default -> TITLE.parse(id, file, yaml);
+        };
+        YamlFolder folder = new YamlFolder(folder(), failures::put);
+
+        YamlFolder.Loaded<String> loaded = folder.load(parser);
+
+        assertThat(loaded.entries()).containsExactly(Map.entry("shop", "Shop"));
+        assertThat(loaded.errors()).containsExactly(
+            "bank.yml: IllegalStateException the menu is locked",
+            "empty.yml: NullPointerException the parser returned null",
+            "plain.yml: title is missing");
+        assertThat(failures).containsOnlyKeys("bank.yml", "empty.yml");
+        assertThat(failures.get("bank.yml")).isSameAs(bug);
+        assertThat(failures.get("empty.yml")).isInstanceOf(NullPointerException.class);
+        failures.clear();
+        assertThat(folder.lenient(line -> { }).loadOne("bank", parser).errors()).hasSize(1);
+        assertThat(failures).containsOnlyKeys("bank.yml");
     }
 
     @Test

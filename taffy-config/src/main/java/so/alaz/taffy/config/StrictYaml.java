@@ -15,8 +15,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringReader;
 import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CoderResult;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystemException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -27,12 +31,13 @@ import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Reads YAML and never replaces a document it cannot use with an empty configuration. A file that cannot be
  * read, a missing one included, a file larger than 16 MiB, bytes that are not UTF-8, text the YAML parser
  * rejects, a top level that is not a mapping and a second document in the same text each give a
- * {@link ConfigLoadException}.
+ * {@link ConfigLoadException}. {@link #readLenient} alone accepts bytes that are not UTF-8.
  *
  * <p>An anchor used inside the node it names, and aliases that together repeat more than 100000 nodes, also
  * give a {@link ConfigLoadException}: building either one would exhaust the stack or the memory.
@@ -115,29 +120,90 @@ public final class StrictYaml {
      *
      * @param source the name of the file in the failure message, such as {@code config.yml}
      * @throws ConfigLoadException when the file holds a byte sequence that is not UTF-8 (the message is
-     *     {@code source}, then {@code " is not saved as UTF-8"}), when the file is larger than 16 MiB (the
-     *     message is {@code source}, then {@code " is larger than 16 MiB"}), when it cannot be read for any
-     *     other reason, a missing file included (the message is {@code "cannot read "}, the path of the file,
-     *     {@code ": "}, then the simple class name and the message of the I/O failure), or when its text does
-     *     not parse
+     *     {@code source}, then {@code " is not saved as UTF-8: the first byte that is not UTF-8 is on line "},
+     *     then the number of that line, counted from 1), when the file is larger than 16 MiB (the message is
+     *     {@code source}, then {@code " is larger than 16 MiB"}), when it cannot be read for any other reason,
+     *     a missing file included (the message is {@code "cannot read "}, {@code source}, {@code ": "}, then
+     *     the simple class name of the I/O failure, followed by a space and its reason when it states one; the
+     *     path of the file is not in the message, and the I/O failure is the cause), or when its text does not
+     *     parse
      */
     public static YamlConfiguration read(Path file, String source) throws ConfigLoadException {
+        return parse(decode(bytes(file, source), source), source);
+    }
+
+    /**
+     * Reads {@code file} as {@link #read(Path, String)} does, except that a byte sequence that is not UTF-8
+     * does not fail the read: each one is read as the replacement character U+FFFD, as a file saved in a
+     * legacy code page such as Windows-1252 has for every character outside ASCII. The text that results is
+     * parsed, so a replaced character ends up in a value, a key or a comment, or makes the YAML invalid.
+     *
+     * @param source the name of the file in the warning and in the failure message, such as {@code config.yml}
+     * @param warnings receives one line, on the calling thread, when the file held at least one byte sequence
+     *     that is not UTF-8: {@code <source> is not saved as UTF-8, so each byte that is not UTF-8 is read as the
+     *     replacement character U+FFFD; the first is on line <n>. Save the file as UTF-8.}, with the lines
+     *     counted from 1. It receives nothing for a file that is UTF-8.
+     * @throws ConfigLoadException as {@link #read(Path, String)} does, except for bytes that are not UTF-8
+     */
+    public static YamlConfiguration readLenient(Path file, String source, Consumer<String> warnings)
+        throws ConfigLoadException {
+        byte[] content = bytes(file, source);
+        int line = malformedLine(content);
+        if (line == 0) {
+            return parse(decode(content, source), source);
+        }
+        warnings.accept(source + " is not saved as UTF-8, so each byte that is not UTF-8 is read as the replacement"
+            + " character U+FFFD; the first is on line " + line + ". Save the file as UTF-8.");
+        return parse(new String(content, StandardCharsets.UTF_8), source);
+    }
+
+    /** The bytes of {@code file}, which fails as {@link #read(Path, String)} states for a file it cannot read. */
+    static byte[] bytes(Path file, String source) throws ConfigLoadException {
         byte[] content;
         try (InputStream in = Files.newInputStream(file)) {
             content = in.readNBytes(MAX_FILE_BYTES + 1);
         } catch (IOException failure) {
-            throw new ConfigLoadException("cannot read " + file + ": " + describe(failure), failure);
+            throw new ConfigLoadException("cannot read " + source + ": " + describe(failure), failure);
         }
         if (content.length > MAX_FILE_BYTES) {
             throw new ConfigLoadException(source + " is larger than 16 MiB");
         }
-        String text;
+        return content;
+    }
+
+    /** The text of {@code content}, failing as {@link #read(Path, String)} states for bytes that are not UTF-8. */
+    static String decode(byte[] content, String source) throws ConfigLoadException {
         try {
-            text = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(content)).toString();
+            return StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(content)).toString();
         } catch (CharacterCodingException notUtf8) {
-            throw new ConfigLoadException(source + " is not saved as UTF-8", notUtf8);
+            throw new ConfigLoadException(source + " is not saved as UTF-8: the first byte that is not UTF-8 is on"
+                + " line " + malformedLine(content), notUtf8);
         }
-        return parse(text, source);
+    }
+
+    /**
+     * The line, counted from 1, of the first byte sequence of {@code content} that is not UTF-8, or 0 when
+     * {@code content} is UTF-8. A line ends at a line feed.
+     */
+    static int malformedLine(byte[] content) {
+        CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder();
+        ByteBuffer in = ByteBuffer.wrap(content);
+        CharBuffer out = CharBuffer.allocate(8192);
+        CoderResult result = decoder.decode(in, out, true);
+        while (result.isOverflow()) {
+            out.clear();
+            result = decoder.decode(in, out, true);
+        }
+        if (!result.isError()) {
+            return 0;
+        }
+        int line = 1;
+        for (int index = 0; index < in.position(); index++) {
+            if (content[index] == '\n') {
+                line++;
+            }
+        }
+        return line;
     }
 
     /**
@@ -145,6 +211,10 @@ public final class StrictYaml {
      * {@link YamlConfiguration#loadFromString}, which reports it.
      */
     private static void checkAliases(String text, String source) throws ConfigLoadException {
+        // An alias is written with * and resolves only to an anchor written with &, so a text without both has none.
+        if (text.indexOf('*') < 0 || text.indexOf('&') < 0) {
+            return;
+        }
         // The limits match those YamlConfiguration composes with, so any text it accepts is checked here.
         LoaderOptions options = new LoaderOptions();
         options.setMaxAliasesForCollections(Integer.MAX_VALUE);
@@ -201,7 +271,13 @@ public final class StrictYaml {
         return children;
     }
 
-    private static String describe(IOException failure) {
-        return failure.getClass().getSimpleName() + " " + failure.getMessage();
+    /**
+     * The simple class name of {@code failure}, then a space and its reason when it states one. The message of a
+     * {@link FileSystemException} starts with the path of its file, so only its reason is used.
+     */
+    static String describe(Throwable failure) {
+        String reason = failure instanceof FileSystemException onFile ? onFile.getReason() : failure.getMessage();
+        String name = failure.getClass().getSimpleName();
+        return reason == null || reason.isBlank() ? name : name + " " + reason;
     }
 }

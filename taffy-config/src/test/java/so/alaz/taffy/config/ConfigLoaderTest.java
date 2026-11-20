@@ -3,6 +3,8 @@ package so.alaz.taffy.config;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import so.alaz.taffy.test.CapturedLog;
 
 import java.io.ByteArrayInputStream;
@@ -22,6 +24,7 @@ import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -199,11 +202,11 @@ final class ConfigLoaderTest {
         loader(SHIPPED_V2).load();
 
         assertThat(log.lines()).singleElement().asString().startsWith("WARNING config.yml is version 9");
-        assertThat(ConfigLoader.version(" 3 ")).isEqualTo(3);
-        assertThat(ConfigLoader.version(2.0)).isEqualTo(2);
-        assertThat(ConfigLoader.version("two")).isZero();
-        assertThat(ConfigLoader.version("12345678901")).isZero();
-        assertThat(ConfigLoader.version(null)).isZero();
+        assertThat(ConfigLoader.version(" 3 ", 0)).isEqualTo(3);
+        assertThat(ConfigLoader.version(2.0, 0)).isEqualTo(2);
+        assertThat(ConfigLoader.version("two", 4)).isEqualTo(4);
+        assertThat(ConfigLoader.version("12345678901", 4)).isEqualTo(4);
+        assertThat(ConfigLoader.version(null, 0)).isZero();
     }
 
     @Test
@@ -213,7 +216,7 @@ final class ConfigLoaderTest {
 
         assertThatThrownBy(() -> loader(SHIPPED_V2).load())
             .isInstanceOf(ConfigLoadException.class)
-            .hasMessage("config.yml is not saved as UTF-8");
+            .hasMessage("config.yml is not saved as UTF-8: the first byte that is not UTF-8 is on line 1");
     }
 
     @Test
@@ -670,7 +673,9 @@ final class ConfigLoaderTest {
 
         assertThatThrownBy(() -> new ConfigLoader(blocker, shipped(SHIPPED_V2), log.logger).load())
             .isInstanceOf(ConfigLoadException.class)
-            .hasMessageStartingWith("cannot write ");
+            .hasMessageStartingWith("cannot write config.yml: ")
+            .hasMessageNotContaining(folder.toString())
+            .hasCauseInstanceOf(IOException.class);
     }
 
     @Test
@@ -679,7 +684,9 @@ final class ConfigLoaderTest {
 
         assertThatThrownBy(() -> loader(SHIPPED_V2).load())
             .isInstanceOf(ConfigLoadException.class)
-            .hasMessageStartingWith("cannot read ");
+            .hasMessageStartingWith("cannot read config.yml: ")
+            .hasMessageNotContaining(folder.toString())
+            .hasCauseInstanceOf(IOException.class);
     }
 
     @Test
@@ -716,6 +723,263 @@ final class ConfigLoaderTest {
         assertThat(Files.readString(configFile())).isEqualTo(SHIPPED_V2);
         assertThat(loaded.getBoolean("new-group.flag")).isTrue();
         assertThat(log.lines()).containsExactly(WROTE_DEFAULT, WROTE_DEFAULT);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "modules: {}\n",
+        "config-version: \"2\"\n",
+        "config-version: 0\n",
+        "config-version: -1\n",
+        "config-version: 2.0\n",
+        "config-version: two\n",
+        "config-version: 99999999999\n",
+        "config-version:\n"})
+    void aShippedFileWithoutAWholeNumberVersionStopsTheFirstLoadAndWritesNothing(String shippedText) {
+        assertThatThrownBy(() -> loader(shippedText).load())
+            .isInstanceOf(ConfigLoadException.class)
+            .hasMessage("the config.yml inside the plugin jar has no whole number of 1 or more under config-version")
+            .hasNoCause();
+        assertThat(configFile()).doesNotExist();
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void aShippedFileWithoutAVersionLeavesAnOwnerFileAsItIs() throws Exception {
+        Files.writeString(configFile(), OWNER_V1);
+
+        assertThatThrownBy(() -> loader("config-version: \"2\"\nnew-group:\n  flag: true\n").load())
+            .isInstanceOf(ConfigLoadException.class)
+            .hasMessage("the config.yml inside the plugin jar has no whole number of 1 or more under config-version");
+        assertThat(Files.readString(configFile())).isEqualTo(OWNER_V1);
+        try (Stream<Path> files = Files.list(folder)) {
+            assertThat(files).containsExactly(configFile());
+        }
+    }
+
+    @Test
+    void aFileWithoutAVersionAtTheBaselineIsNeitherWrittenNorCopied() throws Exception {
+        String owner = "# written by an earlier release\nmy-key: 7\n";
+        Files.writeString(configFile(), owner);
+
+        YamlConfiguration loaded = loader(SHIPPED_V2.replace("config-version: 2", "config-version: 1"))
+            .baselineVersion(1)
+            .load();
+
+        assertThat(loaded.getInt("my-key")).isEqualTo(7);
+        assertThat(loaded.contains("config-version")).isFalse();
+        assertThat(loaded.contains("new-group.flag")).isFalse();
+        assertThat(Files.readString(configFile())).isEqualTo(owner);
+        try (Stream<Path> files = Files.list(folder)) {
+            assertThat(files).containsExactly(configFile());
+        }
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void aFileWithoutAVersionIsUpgradedFromTheBaselineOnceTheShippedVersionIsHigher() throws Exception {
+        String owner = "# written by an earlier release\nmy-key: 7\n";
+        Files.writeString(configFile(), owner);
+
+        YamlConfiguration loaded = loader(SHIPPED_V2).baselineVersion(1).load();
+
+        assertThat(loaded.getInt("config-version")).isEqualTo(2);
+        assertThat(loaded.getInt("my-key")).isEqualTo(7);
+        assertThat(reread().getInt("config-version")).isEqualTo(2);
+        assertThat(reread().getBoolean("new-group.flag")).isTrue();
+        assertThat(Files.readString(folder.resolve("config.yml.v1.bak"))).isEqualTo(owner);
+        assertThat(folder.resolve("config.yml.v0.bak")).doesNotExist();
+        assertThat(log.lines()).containsExactly("INFO Upgraded config.yml from version 1 to 2 and added"
+            + " modules.chat.enabled, new-group.flag; the previous file is kept as config.yml.v1.bak.");
+    }
+
+    @Test
+    void aVersionThatIsNotANumberCountsAsTheBaseline() throws Exception {
+        String owner = "config-version: latest\nmy-key: 7\n";
+        Files.writeString(configFile(), owner);
+
+        loader(SHIPPED_V2).baselineVersion(2).load();
+
+        assertThat(Files.readString(configFile())).isEqualTo(owner);
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void theBaselineDoesNotApplyToAFileThatHoldsAVersion() throws Exception {
+        Files.writeString(configFile(), OWNER_V1);
+
+        loader(SHIPPED_V2).baselineVersion(2).load();
+
+        assertThat(reread().getInt("config-version")).isEqualTo(2);
+        assertThat(Files.readString(folder.resolve("config.yml.v1.bak"))).isEqualTo(OWNER_V1);
+    }
+
+    @Test
+    void baselineVersionGivesACopyAndRefusesANegativeVersion() throws Exception {
+        Files.writeString(configFile(), "my-key: 7\n");
+        ConfigLoader loader = loader(SHIPPED_V2);
+
+        assertThat(loader.baselineVersion(2)).isNotSameAs(loader);
+        assertThatThrownBy(() -> loader.baselineVersion(-1))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the baseline version is -1; expected 0 or more");
+        loader.load();
+
+        assertThat(folder.resolve("config.yml.v0.bak")).exists();
+    }
+
+    @Test
+    void aLongTextStaysOnOneLineThroughAnUpgrade() throws Exception {
+        String message = "<gradient:#ff0000:#00ff00>Willkommen auf dem Server</gradient> " + "sehr lang ".repeat(14)
+            + "<gray>und noch ein Satz: mit Doppelpunkt, #Raute und 'Anfuehrungszeichen'";
+        assertThat(message).hasSizeGreaterThan(200);
+        Files.writeString(configFile(), "config-version: 1\nmessage: \"" + message + "\"\nlines:\n  - \"" + message
+            + "\"\n");
+
+        YamlConfiguration loaded = loader(SHIPPED_V2).load();
+
+        assertThat(loaded.getString("message")).isEqualTo(message);
+        assertThat(reread().getString("message")).isEqualTo(message);
+        assertThat(reread().getStringList("lines")).containsExactly(message);
+        assertThat(Files.readAllLines(configFile())).filteredOn(line -> line.startsWith("message:"))
+            .singleElement().asString().contains("Anfuehrungszeichen");
+        assertThat(Files.readAllLines(configFile())).filteredOn(line -> line.contains("Anfuehrungszeichen"))
+            .hasSize(2);
+    }
+
+    @Test
+    void aFileWithCarriageReturnsUpgradesAndTheCopyKeepsItByteForByte() throws Exception {
+        byte[] owner = ("\uFEFF" + OWNER_V1.replace("\n", "\r\n")).getBytes(StandardCharsets.UTF_8);
+        Files.write(configFile(), owner);
+
+        YamlConfiguration loaded = loader(SHIPPED_V2).load();
+
+        assertThat(Files.readAllBytes(folder.resolve("config.yml.v1.bak"))).isEqualTo(owner);
+        assertThat(loaded.getBoolean("modules.chat.enabled")).isFalse();
+        YamlConfiguration onDisk = reread();
+        assertThat(onDisk.getInt("config-version")).isEqualTo(2);
+        assertThat(onDisk.getBoolean("modules.chat.enabled")).isFalse();
+        assertThat(onDisk.getInt("my-key")).isEqualTo(7);
+        assertThat(onDisk.getBoolean("new-group.flag")).isTrue();
+        assertThat(onDisk.getComments("modules.chat.enabled")).containsExactly("The owner turned this off.");
+        assertThat(Files.readString(configFile())).doesNotContain("\r").doesNotContain("\uFEFF");
+    }
+
+    @Test
+    void unusualCharactersSurviveAnUpgrade() throws Exception {
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("emoji", "gg \uD83D\uDE00 \u2764");
+        values.put("legacy", "\u00a7aGr\u00fcn & \u00a7lfett");
+        values.put("cjk", "\u4f60\u597d\u3001\u4e16\u754c");
+        values.put("tabbed", "a\tb");
+        values.put("two-lines", "first\nsecond\n");
+        values.put("spaced", "  padded  ");
+        values.put("yaml-like", "yes: [not, a, list] # nor a comment");
+        values.put("numeric", "0451");
+        values.put("empty", "");
+        values.put("backslash", "C:\\Server\\plugins \\n");
+        values.put("quotes", "\"double\" and 'single'");
+        YamlConfiguration owner = new YamlConfiguration();
+        owner.set("config-version", 1);
+        values.forEach(owner::set);
+        Files.writeString(configFile(), owner.saveToString());
+
+        YamlConfiguration loaded = loader(SHIPPED_V2).load();
+
+        YamlConfiguration onDisk = reread();
+        assertThat(onDisk.getInt("config-version")).isEqualTo(2);
+        values.forEach((key, value) -> {
+            assertThat(loaded.getString(key)).as(key).isEqualTo(value);
+            assertThat(onDisk.get(key)).as(key).isEqualTo(value);
+        });
+        assertThat(log.lines()).singleElement().asString().startsWith("INFO Upgraded config.yml from version 1 to 2");
+    }
+
+    @Test
+    void aBinaryValueOfTheOwnerIsWrittenBack() throws Exception {
+        Files.writeString(configFile(), "config-version: 1\nicon: !!binary aGVsbG8=\n");
+
+        loader(SHIPPED_V2).load();
+
+        assertThat(reread().get("icon")).isEqualTo("hello".getBytes(StandardCharsets.UTF_8));
+        assertThat(reread().getInt("config-version")).isEqualTo(2);
+    }
+
+    @Test
+    void aTextTheWriterCannotWriteKeepsTheFileAndWritesNoCopy() throws Exception {
+        String owner = "config-version: 1\nmessage: \"a\\ud83db\"\n";
+        Files.writeString(configFile(), owner);
+
+        YamlConfiguration loaded = loader(SHIPPED_V2).load();
+
+        assertThat(loaded.getInt("config-version")).isEqualTo(2);
+        assertThat(loaded.getBoolean("new-group.flag")).isTrue();
+        assertThat(loaded.getString("message")).isEqualTo("a\ud83db");
+        assertThat(Files.readString(configFile())).isEqualTo(owner);
+        try (Stream<Path> files = Files.list(folder)) {
+            assertThat(files).containsExactly(configFile());
+        }
+        assertThat(log.lines()).singleElement().asString()
+            .startsWith("WARNING Could not save the upgraded config.yml: its settings cannot be written as YAML (")
+            .endsWith("). The upgraded settings are used and the save is tried again the next time the settings are"
+                + " loaded.");
+    }
+
+    @Test
+    void aTextTheWriterWouldTurnIntoBinaryKeepsTheFileAndWritesNoCopy() throws Exception {
+        String owner = "config-version: 1\nsounds:\n  bell: \"ding\\a\"\n";
+        Files.writeString(configFile(), owner);
+
+        YamlConfiguration loaded = loader(SHIPPED_V2).load();
+
+        assertThat(loaded.getString("sounds.bell")).isEqualTo("ding\u0007");
+        assertThat(loaded.getBoolean("new-group.flag")).isTrue();
+        assertThat(Files.readString(configFile())).isEqualTo(owner);
+        try (Stream<Path> files = Files.list(folder)) {
+            assertThat(files).containsExactly(configFile());
+        }
+        assertThat(log.lines()).containsExactly("WARNING Could not save the upgraded config.yml: the value of"
+            + " sounds.bell would not be read back as it is. The upgraded settings are used and the save is tried"
+            + " again the next time the settings are loaded.");
+    }
+
+    @Test
+    void theCopyReplacesAnEarlierCopyAndLeavesNoTemporaryFile() throws Exception {
+        Files.writeString(configFile(), OWNER_V1);
+        Files.writeString(folder.resolve("config.yml.v1.bak"), "an earlier copy\n");
+        Files.writeString(folder.resolve("config.yml.v1.bak.tmp"), "cut off");
+
+        loader(SHIPPED_V2).load();
+
+        assertThat(Files.readString(folder.resolve("config.yml.v1.bak"))).isEqualTo(OWNER_V1);
+        assertThat(reread().getInt("config-version")).isEqualTo(2);
+        assertThat(leftovers()).isEmpty();
+    }
+
+    @Test
+    void theCopyGetsThePermissionsOfTheFile() throws Exception {
+        assumeTrue(Files.getFileStore(folder).supportsFileAttributeView(PosixFileAttributeView.class),
+            "this file system has no POSIX permissions");
+        Files.writeString(configFile(), OWNER_V1);
+        Set<PosixFilePermission> ownerOnly = PosixFilePermissions.fromString("rw-------");
+        Files.setPosixFilePermissions(configFile(), ownerOnly);
+
+        loader(SHIPPED_V2).load();
+
+        assertThat(Files.getPosixFilePermissions(folder.resolve("config.yml.v1.bak"))).isEqualTo(ownerOnly);
+    }
+
+    @Test
+    void anOwnerKeyedSectionInsideAnotherIsRefused() {
+        Map<String, Set<String>> nested = Map.of("kits", Set.of(), "kits.special", Set.of());
+
+        assertThatThrownBy(() -> ownerKeyedLoader(SHIPPED_KITS, nested))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the owner-keyed section kits.special lies inside the owner-keyed section kits");
+        assertThatThrownBy(() -> ownerKeyedLoader(SHIPPED_KITS, Map.of(" ", Set.of())))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("an owner-keyed section has a blank path");
+        ownerKeyedLoader(SHIPPED_KITS, Map.of("kits", Set.of(), "kits-extra", Set.of(), "menus.kits", Set.of()));
     }
 
     private ConfigLoader loader(String shippedText) {

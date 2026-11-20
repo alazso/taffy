@@ -91,6 +91,31 @@ final class RestartKeysTest {
     }
 
     @Test
+    void aBinaryValueIsComparedByItsBytes() throws Exception {
+        String startup = """
+            storage:
+              key: !!binary aGVsbG8=
+              keys:
+                - !!binary aGVsbG8=
+                - {name: spare, value: !!binary d29ybGQ=}
+            """;
+
+        assertThat(RestartKeys.changed(yaml(startup), yaml(startup), RESTART_ONLY)).isEmpty();
+        assertThat(RestartKeys.changed(yaml(startup), yaml(startup.replace("key: !!binary aGVsbG8=",
+            "key: !!binary d29ybGQ=")), RESTART_ONLY)).containsExactly("storage.key");
+        assertThat(RestartKeys.changed(yaml(startup), yaml(startup.replace("value: !!binary d29ybGQ=",
+            "value: !!binary aGVsbG8=")), RESTART_ONLY)).containsExactly("storage.keys");
+    }
+
+    @Test
+    void aNumberWrittenInAnotherFormCountsAsAChange() throws Exception {
+        assertThat(RestartKeys.changed(yaml("storage:\n  port: 3306\n"), yaml("storage:\n  port: 3306.0\n"),
+            RESTART_ONLY)).containsExactly("storage.port");
+        assertThat(RestartKeys.changed(yaml("storage:\n  port: 3306\n"), yaml("storage:\n  port: 0xCEA\n"),
+            RESTART_ONLY)).isEmpty();
+    }
+
+    @Test
     void theRuleIsAskedAboutValuesAndNeverAboutSections() throws Exception {
         List<String> asked = new ArrayList<>();
 

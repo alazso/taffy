@@ -4,6 +4,8 @@ import org.bukkit.configuration.ConfigurationSection;
 import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.Durations;
 
+import java.math.BigInteger;
+import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -61,6 +63,9 @@ public final class ConfigReader {
     private static final String QUOTE_DATE_TIME =
         " must be in quotes, because YAML reads a date and time written without them in UTC";
     private static final int DESCRIBE_LIMIT = 100;
+    private static final String WHOLE = "a whole number";
+    private static final String INT_RANGE = WHOLE + " from " + Integer.MIN_VALUE + " to " + Integer.MAX_VALUE;
+    private static final String LONG_RANGE = WHOLE + " from " + Long.MIN_VALUE + " to " + Long.MAX_VALUE;
 
     private final ConfigurationSection root;
     private final Consumer<String> warnings;
@@ -79,7 +84,8 @@ public final class ConfigReader {
     /**
      * The whole number at {@code path}, or {@code fallback} when the key is absent. Only a value YAML reads as
      * an {@code int} is accepted: a text, a decimal and a whole number outside the {@code int} range each give
-     * {@code fallback} and a warning.
+     * {@code fallback} and a warning. The warning expects {@code a whole number}, and for a whole number
+     * outside the {@code int} range {@code a whole number from -2147483648 to 2147483647}.
      */
     public int integer(String path, int fallback) {
         Object value = present(path);
@@ -89,14 +95,15 @@ public final class ConfigReader {
         if (value instanceof Integer number) {
             return number;
         }
-        return invalid(path, value, "a whole number", fallback);
+        return invalid(path, value, beyondInt(value) ? INT_RANGE : WHOLE, fallback);
     }
 
     /**
      * Reads as {@link #integer(String, int)} does, then checks the number against {@code min} and {@code max},
      * both included. A number outside them gives {@code fallback} and the warning
-     * {@code <path> is <value>; expected <min> to <max>, so <fallback> is used.} A value that is not a whole
-     * number gives only the warning of {@link #integer(String, int)}.
+     * {@code <path> is <value>; expected <min> to <max>, so <fallback> is used.}, a whole number outside the
+     * {@code int} range included. A value that is not a whole number gives only the warning of
+     * {@link #integer(String, int)}.
      *
      * @throws IllegalArgumentException when {@code min} is greater than {@code max} or {@code fallback} is
      *     outside them
@@ -106,18 +113,23 @@ public final class ConfigReader {
             throw new IllegalArgumentException(
                 "the fallback " + fallback + " of " + path + " is not within " + min + " to " + max);
         }
-        int value = integer(path, fallback);
-        if (value < min || value > max) {
-            warn(path + " is " + value + "; expected " + min + " to " + max + ", so " + fallback + " is used.");
+        Object value = present(path);
+        if (value == null) {
             return fallback;
         }
-        return value;
+        if (value instanceof Integer number && number >= min && number <= max) {
+            return number;
+        }
+        return invalid(path, value, value instanceof Integer || beyondInt(value) ? min + " to " + max : WHOLE,
+            fallback);
     }
 
     /**
      * The whole number at {@code path}, or {@code fallback} when the key is absent. A value YAML reads as an
      * {@code int} or a {@code long} is accepted: a text, a decimal and a whole number outside the {@code long}
-     * range each give {@code fallback} and a warning.
+     * range each give {@code fallback} and a warning. The warning expects {@code a whole number}, and for a
+     * whole number outside the {@code long} range
+     * {@code a whole number from -9223372036854775808 to 9223372036854775807}.
      */
     public long whole(String path, long fallback) {
         Object value = present(path);
@@ -127,7 +139,7 @@ public final class ConfigReader {
         if (value instanceof Integer || value instanceof Long) {
             return ((Number) value).longValue();
         }
-        return invalid(path, value, "a whole number", fallback);
+        return invalid(path, value, value instanceof BigInteger ? LONG_RANGE : WHOLE, fallback);
     }
 
     /**
@@ -202,14 +214,16 @@ public final class ConfigReader {
 
     /**
      * The whole number at {@code path}, or {@code null} when the key is absent. Any other value gives
-     * {@code null} and a warning that ends with {@code fallbackText} as what is used in its place.
+     * {@code null} and a warning that ends with {@code fallbackText} as what is used in its place. The warning
+     * expects {@code a whole number}, and for a whole number outside the {@code int} range
+     * {@code a whole number from -2147483648 to 2147483647}.
      */
     public @Nullable Integer optionalInteger(String path, String fallbackText) {
         Object value = present(path);
         if (value == null || value instanceof Integer) {
             return (Integer) value;
         }
-        warnInvalid(path, value, "a whole number", fallbackText);
+        warnInvalid(path, value, beyondInt(value) ? INT_RANGE : WHOLE, fallbackText);
         return null;
     }
 
@@ -422,9 +436,11 @@ public final class ConfigReader {
     /**
      * The single value at {@code path}, turned into a {@code T} by {@code parser}, or {@code fallback} when the
      * key is absent. {@code parser} receives the text form of the value and rejects it by throwing
-     * {@link IllegalArgumentException}. A rejected value, a list and a group of keys each give {@code fallback}
-     * and a warning built from {@code expected}. The message of the exception is not shown, and {@code parser}
-     * is not called for a list or a group of keys.
+     * {@link IllegalArgumentException} or {@link DateTimeException}, which the parsers of {@code java.time}
+     * throw: {@code LocalTime::parse} for {@code 25:99} and {@code ZoneId::of} for a zone that does not exist.
+     * A rejected value, a list and a group of keys each give {@code fallback} and a warning built from
+     * {@code expected}. The message of the exception is not shown, and {@code parser} is not called for a list
+     * or a group of keys. Any other exception of {@code parser} is thrown on to the caller.
      *
      * <p>An unquoted date such as {@code 2026-12-31}, which YAML reads as midnight UTC, is a single value here
      * too, and {@code parser} receives it written {@code yyyy-MM-dd}, as YAML read it. YAML reads an unquoted
@@ -473,7 +489,7 @@ public final class ConfigReader {
         }
         try {
             return parser.apply(text);
-        } catch (IllegalArgumentException rejected) {
+        } catch (IllegalArgumentException | DateTimeException rejected) {
             warnInvalid(path, value, expected, shown);
             return fallback;
         }
@@ -625,6 +641,11 @@ public final class ConfigReader {
     private static boolean midnightUtc(Date date) {
         Instant instant = date.toInstant();
         return instant.equals(instant.truncatedTo(ChronoUnit.DAYS));
+    }
+
+    /** Whether YAML read {@code value} as a whole number too large or too small for an {@code int}. */
+    private static boolean beyondInt(Object value) {
+        return value instanceof Long || value instanceof BigInteger;
     }
 
     /** {@link #value}, with a blank text read as absent. */

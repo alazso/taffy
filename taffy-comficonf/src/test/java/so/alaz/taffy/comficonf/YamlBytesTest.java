@@ -50,7 +50,7 @@ final class YamlBytesTest {
 
         assertThatThrownBy(() -> StrictYaml.read(atLimit, "config.yml"))
             .isInstanceOf(ConfigLoadException.class)
-            .hasMessage("config.yml is not saved as UTF-8");
+            .hasMessage("config.yml is not saved as UTF-8: the first byte that is not UTF-8 is on line 1");
         Throwable refused = catchThrowable(() -> StrictYaml.read(over, "config.yml"));
         assertThat(refused).isInstanceOf(ConfigLoadException.class);
         assertThatThrownBy(() -> YamlBytes.read(over, "config.yml")).hasMessage(refused.getMessage());

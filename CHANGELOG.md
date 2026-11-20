@@ -34,6 +34,22 @@ All notable changes to Taffy are documented here. This project follows
   `requireSSL`, `verifyServerCertificate`, `trustServerCertificate`, `disableSslHostnameVerification`,
   `sslfactory`, `allowPublicKeyRetrieval`, `useAffectedRows` and `socketTimeout`. `Server.toString()` shows the
   socket timeout and the names of the properties, never their values.
+- `ConfigLoader.baselineVersion(int)` gives a loader that reads an owner's `config.yml` without a usable
+  `config-version` as that version, where it counts as version 0. A plugin whose earlier releases shipped the file
+  without the key sets the baseline to the layout those releases wrote: with `baselineVersion(1)` and a shipped
+  `config-version: 1` such a file is neither rewritten nor copied, and once the shipped version is 2 it is upgraded
+  from 1 and kept as `config.yml.v1.bak`. A file that holds a version is not affected.
+- `StrictYaml.readLenient(Path, String, Consumer<String>)`, `YamlFolder.lenient(Consumer<String>)` and
+  `Messages.loadLenient(Path, Supplier, Logger, String, boolean)` read a file that is not saved as UTF-8, such as
+  one an owner saved as Windows-1252: each byte sequence that is not UTF-8 is read as the replacement character
+  U+FFFD, and one warning per file names the file and the first line with a replaced character
+  (`vouchers/gold.yml is not saved as UTF-8, so each byte that is not UTF-8 is read as the replacement character
+  U+FFFD; the first is on line 3. Save the file as UTF-8.`). A lenient `Messages` keeps the other keys of such a
+  language file, where the file was skipped as a whole. Strict reading stays the default of all three, and
+  `ConfigLoader` and the bundled language file are always read strictly.
+- `new YamlFolder(Path, BiConsumer<String, Throwable>)` hands the consumer the file name and the exception whenever
+  the read or the parser throws a `RuntimeException`, so a bug in a plugin's parser can be logged with its stack
+  trace. The file still gets its line in `Loaded.errors()` and the other files still load.
 
 ### Changed
 - Breaking: `StorageSettings`, `StorageSettings.Server` and `StorageSettings.Pool` are final classes with no public
@@ -98,6 +114,39 @@ All notable changes to Taffy are documented here. This project follows
   gives `data-1.4.0_build.7-<time>.db` and a version with a path separator cannot leave the `backups` folder.
   Backups an earlier release wrote are still counted and pruned. A tool that looks a backup up by the version
   replaces those characters the same way.
+- Breaking: `ConfigLoader.load` throws `ConfigLoadException` with `the config.yml inside the plugin jar has no
+  whole number of 1 or more under config-version` when the shipped file has no `config-version`, or has one that is
+  quoted, a decimal, text, below 1 or above 2147483647. It throws on every load, the first start included, and
+  writes nothing. Such a shipped file counted as version 0, so no owner's file was ever upgraded and nothing was
+  logged. Write `config-version: 1`, without quotes, into the shipped `config.yml`; a plugin whose released
+  versions shipped the file without the key also calls `baselineVersion(1)`, so the files owners have are left as
+  they are.
+- Breaking: the message of `StrictYaml.read` for a file that is not UTF-8 names the line: `<source> is not saved as
+  UTF-8: the first byte that is not UTF-8 is on line <n>`, where it ended after `UTF-8`. The same message is the
+  error line of `YamlFolder` for such a file and the message of `ConfigLoader.load` for such a `config.yml`. Code
+  that compares the whole message compares its start: `message.startsWith(source + " is not saved as UTF-8")`.
+- Breaking: the messages for a file or folder that cannot be read or written no longer hold its path.
+  `StrictYaml.read` gives `cannot read <source>: <exception class>`, followed by a space and the reason when the
+  I/O failure states one (`cannot read config.yml: NoSuchFileException`), where it gave
+  `cannot read <path>: <exception class> <path>`. `ConfigLoader.load` gives `cannot write config.yml: ...` and
+  `YamlFolder.load` gives `cannot read the folder <folder name>: ...` in the same form, and so does the reason in
+  the `Could not save the upgraded config.yml` warning. The I/O failure is still the cause, so a logged stack trace
+  holds the path. Code that read the path out of the message takes it from the `Path` it passed, or from
+  `FileSystemException.getFile()` of the cause.
+- Breaking: `YamlFolder` skips every file whose name starts with a dot, without an error line, so a hidden file and
+  the `._<name>.yml` files macOS writes beside a file are no longer reported as files that are not UTF-8, and
+  `loadOne` returns `null` for an id that starts with a dot. `YamlFolder.load` also adds the error line
+  `<name>.yaml: rename it to <name>.yml to have it read` for a regular file whose name ends in `.yaml`, which was
+  skipped without a word. Give an entry file a name that does not start with a dot, and rename a `.yaml` file to
+  `.yml` or drop its line from `Loaded.errors()`.
+- Breaking: `new ConfigLoader(Path, Supplier, Logger, Map)` throws `IllegalArgumentException` when a listed
+  owner-keyed path is blank or when one listed section lies inside another, such as `kits.special` beside `kits`.
+  The Javadoc already ruled out the second, and which of the two sections applied to a key was not defined. List
+  each owner-keyed section once and none inside another.
+- The warning of `Messages` for a language file that is not UTF-8 names the line:
+  `lang/<name> is not saved as UTF-8 (the first byte that is not UTF-8 is on line <n>), so its messages are not
+  used.` A file that is not valid YAML or cannot be read keeps `lang/<name> is not valid YAML saved as UTF-8, so
+  its messages are not used.`
 
 ### Fixed
 - The checksum of a migration script ignores line endings and a leading byte order mark: it is taken over the text
@@ -128,6 +177,30 @@ All notable changes to Taffy are documented here. This project follows
   points back to this rule. It also states that on MySQL and MariaDB a select without `forUpdate()` that runs
   again inside one `TxWork` sees the transaction's first snapshot (`REPEATABLE READ`), so a loop that reads,
   computes and writes until its write counts a row runs one `TxWork` per attempt or reads with `forUpdate()`.
+- The save of a `ConfigLoader` upgrade writes every text on one line. A text longer than 80 columns, such as a
+  MiniMessage line, was folded over several indented lines. The class Javadoc lists what the save may still
+  change: quotes, the form of a number, a date or `true`/`false`, the place of an added key (after the keys the
+  owner has in that section), comments inside a list, line endings and a byte order mark.
+- A `ConfigLoader` upgrade whose text cannot be produced no longer throws out of `load`: a text with half of a
+  surrogate pair (`"a\ud83db"`) made the YAML writer throw a `RuntimeException` after the `.bak` copy was written.
+  The text is now produced before anything is written, parsed again and compared with the upgraded settings. When
+  it cannot be produced, or a value would not be read back as it is (the writer turns a text with a control
+  character such as `"\a"` into `!!binary`, which loads as bytes), nothing is written, no copy is made, the warning
+  `Could not save the upgraded config.yml: ...` names the reason and `load` returns the upgraded settings.
+- The `config.yml.v<N>.bak` copy of a `ConfigLoader` upgrade is written through a temporary file that is flushed to
+  the device before the upgraded file replaces the original, so a power loss cannot leave an upgraded file beside
+  an empty copy. The copy holds the bytes the upgrade read and gets the POSIX permissions of `config.yml`.
+- `ConfigReader.parsed` treats a `DateTimeException` of the parser as a rejection, as it treats an
+  `IllegalArgumentException`: `LocalTime::parse` for `25:99` and `ZoneId::of` for `Mars/Phobos` give the fallback
+  and the warning, where the `DateTimeParseException` or `ZoneRulesException` left `parsed` and failed the load.
+  Any other exception of the parser is still thrown on.
+- `ConfigReader.integer` and `optionalInteger` tell an owner the range for a whole number that does not fit an
+  `int`: `limit is 5000000000; expected a whole number from -2147483648 to 2147483647, so 10 is used.`, where the
+  warning said `expected a whole number`. `integer(path, fallback, min, max)` names its own range
+  (`expected 1 to 10`), and `whole` names the `long` range for a number beyond it.
+- `RestartKeys.changed` compares a `!!binary` value by its bytes, also inside a list, where an unchanged binary
+  value was reported as changed on every reload. Its Javadoc states that a number written in another form
+  (`3306` and `3306.0`) counts as a change.
 
 ## [0.3.2] - 2026-11-20
 

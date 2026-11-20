@@ -16,6 +16,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
@@ -52,6 +53,13 @@ final class MessagesTest {
           - "<prefix><red>First <count>"
           - "{count} more"
         single: "§6Only {count}"
+        """;
+
+    private static final String GERMAN = """
+        prefix: "[D] "
+        # shown after a delivery
+        parcel.delivered: "<prefix>Geliefert f\u00fcr <count> \u20ac."
+        parcel.held: "Gehalten: <count>."
         """;
 
     private static final MiniMessage MINI = MiniMessage.miniMessage();
@@ -127,9 +135,65 @@ final class MessagesTest {
         Messages messages = Messages.load(folder, bundled(), log.logger);
 
         assertThat(plain(messages, Locale.FRANCE, "parcel.delivered")).isEqualTo("[P] Delivered: 7.");
-        assertThat(log.lines()).containsExactly(
-            "WARNING lang/fr.yml is not valid YAML saved as UTF-8, so its messages are not used.");
+        assertThat(log.lines()).containsExactly("WARNING lang/fr.yml is not saved as UTF-8 (the first byte that is"
+            + " not UTF-8 is on line 1), so its messages are not used.");
         assertThat(messages.loadedLanguages()).containsExactly("en");
+    }
+
+    @Test
+    void aLanguageFileSavedInALegacyCodePageIsSkippedWithTheLineOfTheFirstSuchByte() throws IOException {
+        writeWindows1252("de.yml", GERMAN);
+
+        Messages messages = Messages.load(folder, bundled(), log.logger);
+
+        assertThat(plain(messages, Locale.GERMANY, "parcel.held")).isEqualTo("Held: 7.");
+        assertThat(log.lines()).containsExactly("WARNING lang/de.yml is not saved as UTF-8 (the first byte that is"
+            + " not UTF-8 is on line 3), so its messages are not used.");
+        assertThat(messages.loadedLanguages()).containsExactly("en");
+    }
+
+    @Test
+    void aLenientLoadKeepsTheKeysOfAFileSavedInALegacyCodePage() throws IOException {
+        writeWindows1252("de.yml", GERMAN);
+        String replaced = "WARNING lang/de.yml is not saved as UTF-8, so each byte that is not UTF-8 is read as the"
+            + " replacement character U+FFFD; the first is on line 3. Save the file as UTF-8.";
+
+        Messages messages = Messages.loadLenient(folder, bundled(), log.logger, "en", true);
+
+        assertThat(plain(messages, Locale.GERMANY, "parcel.held")).isEqualTo("Gehalten: 7.");
+        assertThat(plain(messages, Locale.GERMANY, "parcel.delivered")).isEqualTo("[D] Geliefert f\uFFFDr 7 \uFFFD.");
+        assertThat(plain(messages, Locale.ENGLISH, "parcel.held")).isEqualTo("Held: 7.");
+        assertThat(messages.loadedLanguages()).containsExactlyInAnyOrder("en", "de");
+        assertThat(log.lines()).containsExactly(replaced);
+
+        messages.reload();
+
+        assertThat(log.lines()).containsExactly(replaced, replaced);
+    }
+
+    @Test
+    void aLenientLoadStillSkipsAFileThatIsNotValidYamlAndReadsAUtf8FileWithoutAWarning() throws IOException {
+        writeWindows1252("fr.yml", "parcel.held: \"Retenu \u00e0 <count>\n");
+        write("de.yml", GERMAN);
+
+        Messages messages = Messages.loadLenient(folder, bundled(), log.logger, null, true);
+
+        assertThat(plain(messages, Locale.GERMANY, "parcel.delivered")).isEqualTo("[D] Geliefert f\u00fcr 7 \u20ac.");
+        assertThat(messages.loadedLanguages()).containsExactlyInAnyOrder("en", "de");
+        assertThat(log.lines()).containsExactly(
+            "WARNING lang/fr.yml is not saved as UTF-8, so each byte that is not UTF-8 is read as the replacement"
+                + " character U+FFFD; the first is on line 1. Save the file as UTF-8.",
+            "WARNING lang/fr.yml is not valid YAML saved as UTF-8, so its messages are not used.");
+    }
+
+    @Test
+    void aLenientLoadStillRefusesABundledFileThatIsNotUtf8() {
+        byte[] notUtf8 = "prefix: \"caf\u00e9\"\n".getBytes(StandardCharsets.ISO_8859_1);
+
+        assertThatThrownBy(
+            () -> Messages.loadLenient(folder, () -> new ByteArrayInputStream(notUtf8), log.logger, "en", true))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("the bundled en.yml is missing or unreadable");
     }
 
     @Test
@@ -811,6 +875,11 @@ final class MessagesTest {
     private void write(String name, String content) throws IOException {
         Files.createDirectories(folder.resolve("lang"));
         Files.writeString(folder.resolve("lang").resolve(name), content);
+    }
+
+    private void writeWindows1252(String name, String content) throws IOException {
+        Files.createDirectories(folder.resolve("lang"));
+        Files.write(folder.resolve("lang").resolve(name), content.getBytes(Charset.forName("windows-1252")));
     }
 
     private static Supplier<InputStream> listed() {

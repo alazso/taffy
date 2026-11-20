@@ -11,8 +11,10 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.Reader;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CoderResult;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
@@ -73,6 +75,7 @@ public final class Messages {
     private final Logger logger;
     private final String defaultLocale;
     private final boolean perPlayer;
+    private final boolean lenient;
     private final Map<String, List<String>> fallback;
 
     /** Locale code in lower case to that file's templates. Replaced as a whole and never changed afterwards. */
@@ -84,6 +87,7 @@ public final class Messages {
         Logger logger,
         String defaultLocale,
         boolean perPlayer,
+        boolean lenient,
         Map<String, List<String>> fallback
     ) {
         this.folder = folder;
@@ -91,6 +95,7 @@ public final class Messages {
         this.logger = logger;
         this.defaultLocale = defaultLocale;
         this.perPlayer = perPlayer;
+        this.lenient = lenient;
         this.fallback = fallback;
     }
 
@@ -106,7 +111,10 @@ public final class Messages {
     /**
      * Writes the bundled English file into {@code dataFolder/lang/en.yml} when that file is absent, then reads every
      * {@code .yml} file in that folder. A file that cannot be read is skipped with a warning, and the keys each file
-     * lacks are listed in one warning per file. Two files whose names read as one locale, such as
+     * lacks are listed in one warning per file. A file that holds a byte sequence that is not UTF-8, as one saved in
+     * a legacy code page such as Windows-1252 does, is skipped as a whole with the warning
+     * {@code lang/<name> is not saved as UTF-8 (the first byte that is not UTF-8 is on line <n>), so its messages
+     * are not used.}; {@link #loadLenient} reads such a file. Two files whose names read as one locale, such as
      * {@code pt-BR.yml} and {@code pt_br.yml}, are reported with a warning that names the one used: the one the
      * folder listing gives last. A folder that cannot be written or listed is reported with a warning and the
      * bundled English text is used. A default locale other than en that has no file is reported with a warning as
@@ -125,12 +133,45 @@ public final class Messages {
         @Nullable String defaultLocale,
         boolean perPlayer
     ) {
-        Map<String, List<String>> fallback = read(bundled);
+        return load(dataFolder, bundled, logger, defaultLocale, perPlayer, false);
+    }
+
+    /**
+     * Loads the messages as {@link #load(Path, Supplier, Logger, String, boolean)} does, except that a language file
+     * with a byte sequence that is not UTF-8 is not skipped: each such sequence is read as the replacement character
+     * U+FFFD, so the keys of the file stay in use and only the characters saved in another encoding are lost. One
+     * warning per file and per load or reload names the file and the first line with a replaced character:
+     * {@code lang/<name> is not saved as UTF-8, so each byte that is not UTF-8 is read as the replacement character
+     * U+FFFD; the first is on line <n>. Save the file as UTF-8.} A file that is not valid YAML once it is read that
+     * way is still skipped, and the bundled file is still read strictly.
+     *
+     * @throws IllegalStateException when the bundled file is missing, is not valid UTF-8 or is not valid YAML
+     */
+    public static Messages loadLenient(
+        Path dataFolder,
+        Supplier<@Nullable InputStream> bundled,
+        Logger logger,
+        @Nullable String defaultLocale,
+        boolean perPlayer
+    ) {
+        return load(dataFolder, bundled, logger, defaultLocale, perPlayer, true);
+    }
+
+    private static Messages load(
+        Path dataFolder,
+        Supplier<@Nullable InputStream> bundled,
+        Logger logger,
+        @Nullable String defaultLocale,
+        boolean perPlayer,
+        boolean lenient
+    ) {
+        byte[] content = bytes(bundled);
+        Map<String, List<String>> fallback = content == null || malformedLine(content) > 0 ? null : values(content);
         if (fallback == null) {
             throw new IllegalStateException("the bundled " + FALLBACK + ".yml is missing or unreadable");
         }
         Messages messages = new Messages(
-            dataFolder.resolve(FOLDER), bundled, logger, normalizeLocale(defaultLocale), perPlayer, fallback);
+            dataFolder.resolve(FOLDER), bundled, logger, normalizeLocale(defaultLocale), perPlayer, lenient, fallback);
         messages.reload();
         return messages;
     }
@@ -184,7 +225,19 @@ public final class Messages {
                 for (Path file : files) {
                     String name = file.getFileName().toString();
                     String locale = code(name.substring(0, name.length() - ".yml".length()));
-                    Map<String, List<String>> values = read(() -> open(file));
+                    byte[] content = bytes(() -> open(file));
+                    int malformedLine = content == null ? 0 : malformedLine(content);
+                    if (malformedLine > 0 && !lenient) {
+                        logger.warning(FOLDER + "/" + name + " is not saved as UTF-8 (the first byte that is not UTF-8"
+                            + " is on line " + malformedLine + "), so its messages are not used.");
+                        continue;
+                    }
+                    if (malformedLine > 0) {
+                        logger.warning(FOLDER + "/" + name + " is not saved as UTF-8, so each byte that is not UTF-8"
+                            + " is read as the replacement character U+FFFD; the first is on line " + malformedLine
+                            + ". Save the file as UTF-8.");
+                    }
+                    Map<String, List<String>> values = content == null ? null : values(content);
                     if (values == null) {
                         logger.warning(FOLDER + "/" + name + " is not valid YAML saved as UTF-8, so its messages are"
                             + " not used.");
@@ -409,19 +462,48 @@ public final class Messages {
         }
     }
 
-    /**
-     * Flat keys with their lines, or {@code null} when the source is missing, is not valid UTF-8 or is not valid
-     * YAML.
-     */
-    private static @Nullable Map<String, List<String>> read(Supplier<@Nullable InputStream> source) {
+    /** The bytes of the source, or {@code null} when it is missing or cannot be read. */
+    private static byte @Nullable [] bytes(Supplier<@Nullable InputStream> source) {
         try (InputStream in = source.get()) {
-            if (in == null) {
-                return null;
+            return in == null ? null : in.readAllBytes();
+        } catch (IOException unreadable) {
+            return null;
+        }
+    }
+
+    /**
+     * The line, counted from 1, of the first byte sequence of {@code content} that is not UTF-8, or 0 when
+     * {@code content} is UTF-8. A line ends at a line feed.
+     */
+    private static int malformedLine(byte[] content) {
+        CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder();
+        ByteBuffer in = ByteBuffer.wrap(content);
+        CharBuffer out = CharBuffer.allocate(8192);
+        CoderResult result = decoder.decode(in, out, true);
+        while (result.isOverflow()) {
+            out.clear();
+            result = decoder.decode(in, out, true);
+        }
+        if (!result.isError()) {
+            return 0;
+        }
+        int line = 1;
+        for (int index = 0; index < in.position(); index++) {
+            if (content[index] == '\n') {
+                line++;
             }
+        }
+        return line;
+    }
+
+    /**
+     * Flat keys with their lines, or {@code null} when {@code content} is not valid YAML. A byte sequence that is
+     * not UTF-8 is read as the replacement character U+FFFD.
+     */
+    private static @Nullable Map<String, List<String>> values(byte[] content) {
+        try {
             YamlConfiguration yaml = new YamlConfiguration();
-            try (Reader reader = new InputStreamReader(in, StandardCharsets.UTF_8.newDecoder())) {
-                yaml.load(reader);
-            }
+            yaml.loadFromString(new String(content, StandardCharsets.UTF_8));
             Map<String, List<String>> values = new HashMap<>();
             for (String key : yaml.getKeys(true)) {
                 Object value = yaml.get(key);
@@ -435,7 +517,7 @@ public final class Messages {
                 }
             }
             return values;
-        } catch (IOException | InvalidConfigurationException | RuntimeException unreadable) {
+        } catch (InvalidConfigurationException | RuntimeException unreadable) {
             return null;
         }
     }

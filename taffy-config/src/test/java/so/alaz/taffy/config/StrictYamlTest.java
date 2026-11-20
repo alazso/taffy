@@ -10,6 +10,7 @@ import org.yaml.snakeyaml.scanner.ScannerException;
 
 import java.io.IOException;
 import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
@@ -22,6 +23,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 final class StrictYamlTest {
+
+    private static final Charset WINDOWS_1252 = Charset.forName("windows-1252");
+
+    private static final String VOUCHER = """
+        material: PAPER
+        # the name a player sees
+        name: "<gold>Gutschein f\u00fcr 5 \u20ac"
+        lore:
+          - "Einl\u00f6sen mit Rechtsklick"
+          - plain
+        uses: 3
+        """;
 
     @TempDir
     private Path folder;
@@ -85,8 +98,83 @@ final class StrictYamlTest {
 
         assertThatThrownBy(() -> StrictYaml.read(configFile(), "menus/main.yml"))
             .isInstanceOf(ConfigLoadException.class)
-            .hasMessage("menus/main.yml is not saved as UTF-8")
+            .hasMessage("menus/main.yml is not saved as UTF-8: the first byte that is not UTF-8 is on line 1")
             .hasCauseInstanceOf(CharacterCodingException.class);
+    }
+
+    @Test
+    void theMessageOfAFileNotSavedAsUtf8NamesTheLineOfTheFirstSuchByte() throws Exception {
+        Files.write(configFile(), VOUCHER.getBytes(WINDOWS_1252));
+
+        assertThatThrownBy(() -> StrictYaml.read(configFile(), "vouchers/gold.yml"))
+            .isInstanceOf(ConfigLoadException.class)
+            .hasMessage("vouchers/gold.yml is not saved as UTF-8: the first byte that is not UTF-8 is on line 3");
+    }
+
+    @Test
+    void aLenientReadLoadsAFileSavedInALegacyCodePageWithOneWarning() throws Exception {
+        Files.write(configFile(), VOUCHER.getBytes(WINDOWS_1252));
+        List<String> warnings = new ArrayList<>();
+
+        YamlConfiguration yaml = StrictYaml.readLenient(configFile(), "vouchers/gold.yml", warnings::add);
+
+        assertThat(yaml.getString("material")).isEqualTo("PAPER");
+        assertThat(yaml.getString("name")).isEqualTo("<gold>Gutschein f\uFFFDr 5 \uFFFD");
+        assertThat(yaml.getStringList("lore")).containsExactly("Einl\uFFFDsen mit Rechtsklick", "plain");
+        assertThat(yaml.getInt("uses")).isEqualTo(3);
+        assertThat(warnings).containsExactly("vouchers/gold.yml is not saved as UTF-8, so each byte that is not UTF-8"
+            + " is read as the replacement character U+FFFD; the first is on line 3. Save the file as UTF-8.");
+    }
+
+    @Test
+    void aLenientReadOfAUtf8FileGivesNoWarning() throws Exception {
+        Files.writeString(configFile(), VOUCHER + "kept: \"\uFFFD\"\n");
+        List<String> warnings = new ArrayList<>();
+
+        YamlConfiguration yaml = StrictYaml.readLenient(configFile(), "vouchers/gold.yml", warnings::add);
+
+        assertThat(yaml.getString("name")).isEqualTo("<gold>Gutschein f\u00fcr 5 \u20ac");
+        assertThat(yaml.getString("kept")).isEqualTo("\uFFFD");
+        assertThat(warnings).isEmpty();
+    }
+
+    @Test
+    void aLenientReadStillRefusesInvalidYamlAndAMissingFile() throws Exception {
+        Files.write(configFile(), "name: Caf\u00e9\nlore: [\n".getBytes(WINDOWS_1252));
+        List<String> warnings = new ArrayList<>();
+
+        assertThatThrownBy(() -> StrictYaml.readLenient(configFile(), "config.yml", warnings::add))
+            .isInstanceOf(ConfigLoadException.class)
+            .hasMessageStartingWith("config.yml is not valid YAML: ");
+        assertThat(warnings).hasSize(1);
+        assertThatThrownBy(() -> StrictYaml.readLenient(folder.resolve("absent.yml"), "absent.yml", warnings::add))
+            .isInstanceOf(ConfigLoadException.class)
+            .hasMessage("cannot read absent.yml: NoSuchFileException");
+    }
+
+    @Test
+    void theLineOfTheFirstByteThatIsNotUtf8IsCountedAcrossALargeFile() {
+        byte[] head = "# filler line of a comment\n".repeat(1000).getBytes(StandardCharsets.UTF_8);
+        byte[] cutOff = Arrays.copyOf(head, head.length + 7);
+        System.arraycopy("x: \"\u20ac".getBytes(StandardCharsets.UTF_8), 0, cutOff, head.length, 7);
+
+        assertThat(StrictYaml.malformedLine(head)).isZero();
+        assertThat(StrictYaml.malformedLine(Arrays.copyOf(cutOff, cutOff.length - 1))).isEqualTo(1001);
+        assertThat(StrictYaml.malformedLine(cutOff)).isZero();
+        assertThat(StrictYaml.malformedLine(new byte[0])).isZero();
+    }
+
+    @Test
+    void aTextWithAnAsteriskOrAnAmpersandButNoAliasIsParsed() throws Exception {
+        assertThat(StrictYaml.parse("motd: \"*** welcome ***\"\n", "config.yml").getString("motd"))
+            .isEqualTo("*** welcome ***");
+        assertThat(StrictYaml.parse("motd: Tom & Jerry\n", "config.yml").getString("motd")).isEqualTo("Tom & Jerry");
+        assertThat(StrictYaml.parse("motd: \"&a*bold*\"\n", "config.yml").getString("motd")).isEqualTo("&a*bold*");
+        assertThat(StrictYaml.parse("base: &b {rows: 6}\ncopy: *b\n", "config.yml").getInt("copy.rows"))
+            .isEqualTo(6);
+        assertThatThrownBy(() -> StrictYaml.parse("copy: *missing\n", "config.yml"))
+            .isInstanceOf(ConfigLoadException.class)
+            .hasMessageStartingWith("config.yml is not valid YAML: ");
     }
 
     @Test
@@ -286,7 +374,7 @@ final class StrictYamlTest {
 
         assertThatThrownBy(() -> StrictYaml.read(absent, "absent.yml"))
             .isInstanceOf(ConfigLoadException.class)
-            .hasMessage("cannot read " + absent + ": NoSuchFileException " + absent)
+            .hasMessage("cannot read absent.yml: NoSuchFileException")
             .hasCauseInstanceOf(NoSuchFileException.class);
     }
 
@@ -296,7 +384,8 @@ final class StrictYamlTest {
 
         assertThatThrownBy(() -> StrictYaml.read(configFile(), "config.yml"))
             .isInstanceOf(ConfigLoadException.class)
-            .hasMessageStartingWith("cannot read " + configFile() + ": ")
+            .hasMessageStartingWith("cannot read config.yml: ")
+            .hasMessageNotContaining(folder.toString())
             .hasCauseInstanceOf(IOException.class);
     }
 

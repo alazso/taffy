@@ -9,6 +9,9 @@ import so.alaz.taffy.test.JvmDefaults;
 import java.math.BigInteger;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -115,7 +118,7 @@ final class ConfigReaderTest {
             "flag is \"maybe\"; expected true or false, so true is used.",
             "wait is 3; expected " + Durations.EXPECTED + ", so 30s is used.",
             "tax is \"200%\"; expected a percent from 0% to 100% such as 5%, so 0% is used.",
-            "big is 99999999999; expected a whole number, so 1 is used.",
+            "big is 99999999999; expected a whole number from -2147483648 to 2147483647, so 1 is used.",
             "group should hold keys beneath it, so its value is ignored.",
             "nested is a group of keys; expected true or false, so false is used.");
     }
@@ -458,6 +461,56 @@ final class ConfigReaderTest {
         assertThat(reader.root()).isSameAs(yaml);
         assertThat(reader.readPaths()).isEmpty();
         assertThat(reader.unreadKeys()).containsExactly("a");
+    }
+
+    @Test
+    void aWholeNumberOutsideTheIntRangeIsToldItsRange() throws Exception {
+        ConfigReader reader = reader("""
+            big: 5000000000
+            huge: 99999999999999999999
+            negative: -5000000000
+            word: lots
+            """);
+
+        assertThat(reader.integer("big", 1)).isEqualTo(1);
+        assertThat(reader.integer("huge", 1)).isEqualTo(1);
+        assertThat(reader.integer("big", 5, 1, 10)).isEqualTo(5);
+        assertThat(reader.integer("negative", 5, 1, 10)).isEqualTo(5);
+        assertThat(reader.integer("huge", 5, 1, 10)).isEqualTo(5);
+        assertThat(reader.integer("word", 5, 1, 10)).isEqualTo(5);
+        assertThat(reader.optionalInteger("big", "no limit")).isNull();
+
+        assertThat(warnings).containsExactly(
+            "big is 5000000000; expected a whole number from -2147483648 to 2147483647, so 1 is used.",
+            "huge is 99999999999999999999; expected a whole number from -2147483648 to 2147483647, so 1 is used.",
+            "big is 5000000000; expected 1 to 10, so 5 is used.",
+            "negative is -5000000000; expected 1 to 10, so 5 is used.",
+            "huge is 99999999999999999999; expected 1 to 10, so 5 is used.",
+            "word is \"lots\"; expected a whole number, so 5 is used.",
+            "big is 5000000000; expected a whole number from -2147483648 to 2147483647, so no limit is used.");
+    }
+
+    @Test
+    void parsedTreatsADateTimeExceptionOfTheParserAsARejection() throws Exception {
+        ConfigReader reader = reader("""
+            reset-at: "25:99"
+            opens-at: "18:30"
+            zone: Mars/Phobos
+            home: Europe/Berlin
+            """);
+
+        assertThat(reader.parsed("reset-at", LocalTime.NOON, "a time such as 18:30", LocalTime::parse))
+            .isEqualTo(LocalTime.NOON);
+        assertThat(reader.parsed("opens-at", LocalTime.NOON, "a time such as 18:30", LocalTime::parse))
+            .isEqualTo(LocalTime.of(18, 30));
+        assertThat(reader.<ZoneId>parsed("zone", ZoneOffset.UTC, "UTC", "a zone such as Europe/Berlin", ZoneId::of))
+            .isEqualTo(ZoneOffset.UTC);
+        assertThat(reader.<ZoneId>parsed("home", ZoneOffset.UTC, "UTC", "a zone such as Europe/Berlin", ZoneId::of))
+            .isEqualTo(ZoneId.of("Europe/Berlin"));
+
+        assertThat(warnings).containsExactly(
+            "reset-at is \"25:99\"; expected a time such as 18:30, so 12:00 is used.",
+            "zone is \"Mars/Phobos\"; expected a zone such as Europe/Berlin, so UTC is used.");
     }
 
     @Test
@@ -1051,7 +1104,8 @@ final class ConfigReaderTest {
         assertThat(warnings).containsExactly(
             "word is \"lots\"; expected a whole number, so 3 is used.",
             "half is 1.5; expected a whole number, so 3 is used.",
-            "huge is 99999999999999999999; expected a whole number, so 3 is used.",
+            "huge is 99999999999999999999; expected a whole number from -9223372036854775808 to"
+                + " 9223372036854775807, so 3 is used.",
             "quoted is \"12\"; expected a whole number, so 3 is used.",
             "group is a group of keys; expected a whole number, so 3 is used.");
     }
