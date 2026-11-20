@@ -18,14 +18,17 @@ import java.util.function.Predicate;
 
 // NexoItems.idFromItem reads the id from the item's own PDC, so it answers before Nexo has loaded its items.
 // NexoItems.exists and itemFromId read Nexo's item registry, which is empty until Nexo first loads its items, so the
-// provider builds from NexoItemsLoadedEvent, or at once when Nexo already knows an item name. A Nexo that loaded no
-// item at all knows no name, so a provider created after that load waits for the next NexoItemsLoadedEvent. The flag
-// only goes from false to true, so it needs no lock.
+// provider builds from NexoItemsLoadedEvent, or at once when Nexo already knows an item name. A NexoItemsLoadedEvent
+// seen by any provider is remembered for the server run, so a provider created later builds at once. A Nexo that
+// loaded no item at all knows no name, so a provider created after a load that no provider saw waits for the next
+// NexoItemsLoadedEvent. Both flags only go from false to true, so they need no lock.
 final class NexoProvider implements CustomItemProvider, Listener {
 
     private final Predicate<String> exists;
     private final Function<String, @Nullable ItemStack> build;
     private final Function<ItemStack, @Nullable String> idOf;
+    private static volatile boolean seenLoad;
+
     private volatile boolean loaded;
 
     NexoProvider(Predicate<String> exists, Function<String, @Nullable ItemStack> build,
@@ -58,6 +61,10 @@ final class NexoProvider implements CustomItemProvider, Listener {
     // event.
     static NexoProvider start(Plugin owner, NexoProvider provider, BooleanSupplier knowsItems) {
         owner.getServer().getPluginManager().registerEvents(provider, owner);
+        if (seenLoad) {
+            provider.loaded = true;
+            return provider;
+        }
         try {
             if (knowsItems.getAsBoolean()) {
                 provider.loaded = true;
@@ -72,9 +79,14 @@ final class NexoProvider implements CustomItemProvider, Listener {
         return provider;
     }
 
+    static void forgetLoad() {
+        seenLoad = false;
+    }
+
     // May run on any thread.
     @EventHandler(priority = EventPriority.MONITOR)
     public void loaded(NexoItemsLoadedEvent event) {
+        seenLoad = true;
         loaded = true;
     }
 

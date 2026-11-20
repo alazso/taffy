@@ -18,15 +18,19 @@ import java.util.function.Predicate;
 
 // OraxenItems.getIdByItem reads the id from the item's own PDC, so it answers before Oraxen has loaded its items.
 // OraxenItems.exists and getItemById read Oraxen's item registry, which is empty until Oraxen first loads its items,
-// so the provider builds from OraxenItemsLoadedEvent, or at once when Oraxen already knows an item name. An Oraxen
-// that loaded no item at all knows no name, so a provider created after that load waits for the next
-// OraxenItemsLoadedEvent. The flag only goes from false to true, so it needs no lock. OraxenItems has a static
-// initializer that needs the Oraxen plugin, and the class initializes when its item names are first read.
+// so the provider builds from OraxenItemsLoadedEvent, or at once when Oraxen already knows an item name. An
+// OraxenItemsLoadedEvent seen by any provider is remembered for the server run, so a provider created later builds
+// at once. An Oraxen that loaded no item at all knows no name, so a provider created after a load that no provider
+// saw waits for the next OraxenItemsLoadedEvent. Both flags only go from false to true, so they need no lock.
+// OraxenItems has a static initializer that needs the Oraxen plugin, and the class initializes when its item names
+// are first read.
 final class OraxenProvider implements CustomItemProvider, Listener {
 
     private final Predicate<String> exists;
     private final Function<String, @Nullable ItemStack> build;
     private final Function<ItemStack, @Nullable String> idOf;
+    private static volatile boolean seenLoad;
+
     private volatile boolean loaded;
 
     OraxenProvider(Predicate<String> exists, Function<String, @Nullable ItemStack> build,
@@ -59,6 +63,10 @@ final class OraxenProvider implements CustomItemProvider, Listener {
     // event.
     static OraxenProvider start(Plugin owner, OraxenProvider provider, BooleanSupplier knowsItems) {
         owner.getServer().getPluginManager().registerEvents(provider, owner);
+        if (seenLoad) {
+            provider.loaded = true;
+            return provider;
+        }
         try {
             if (knowsItems.getAsBoolean()) {
                 provider.loaded = true;
@@ -73,9 +81,14 @@ final class OraxenProvider implements CustomItemProvider, Listener {
         return provider;
     }
 
+    static void forgetLoad() {
+        seenLoad = false;
+    }
+
     // May run on any thread.
     @EventHandler(priority = EventPriority.MONITOR)
     public void loaded(OraxenItemsLoadedEvent event) {
+        seenLoad = true;
         loaded = true;
     }
 

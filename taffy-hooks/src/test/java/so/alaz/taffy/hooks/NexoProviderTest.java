@@ -45,6 +45,7 @@ final class NexoProviderTest {
 
     @BeforeEach
     void server() {
+        NexoProvider.forgetLoad();
         Server server = mock(Server.class);
         when(owner.getServer()).thenReturn(server);
         when(owner.getLogger()).thenReturn(log.logger);
@@ -122,6 +123,22 @@ final class NexoProviderTest {
         provider.loaded(mock(NexoItemsLoadedEvent.class));
         assertThat(provider.ready()).isTrue();
         assertThat(log.records).isEmpty();
+    }
+
+    @Test
+    void aProviderStartedAfterALoadEventAnotherProviderSawBuildsWithoutReadingTheItemNames() {
+        NexoProvider first = started(() -> false);
+        assertThat(first.ready()).isFalse();
+        first.loaded(mock(NexoItemsLoadedEvent.class));
+
+        NexoProvider second = started(() -> {
+            order.add("read");
+            return false;
+        });
+
+        assertThat(second.ready()).isTrue();
+        assertThat(listeners).containsExactly((Listener) first, (Listener) second);
+        assertThat(order).containsExactly("register", "register");
     }
 
     @Test

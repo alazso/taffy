@@ -45,6 +45,7 @@ final class OraxenProviderTest {
 
     @BeforeEach
     void server() {
+        OraxenProvider.forgetLoad();
         Server server = mock(Server.class);
         when(owner.getServer()).thenReturn(server);
         when(owner.getLogger()).thenReturn(log.logger);
@@ -122,6 +123,22 @@ final class OraxenProviderTest {
         provider.loaded(mock(OraxenItemsLoadedEvent.class));
         assertThat(provider.ready()).isTrue();
         assertThat(log.records).isEmpty();
+    }
+
+    @Test
+    void aProviderStartedAfterALoadEventAnotherProviderSawBuildsWithoutReadingTheItemNames() {
+        OraxenProvider first = started(() -> false);
+        assertThat(first.ready()).isFalse();
+        first.loaded(mock(OraxenItemsLoadedEvent.class));
+
+        OraxenProvider second = started(() -> {
+            order.add("read");
+            return false;
+        });
+
+        assertThat(second.ready()).isTrue();
+        assertThat(listeners).containsExactly((Listener) first, (Listener) second);
+        assertThat(order).containsExactly("register", "register");
     }
 
     @Test

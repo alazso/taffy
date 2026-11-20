@@ -41,6 +41,7 @@ final class HeadDatabaseProviderTest {
 
     @BeforeEach
     void server() {
+        HeadDatabaseProvider.forgetLoad();
         Server server = mock(Server.class);
         when(owner.getServer()).thenReturn(server);
         when(owner.getLogger()).thenReturn(log.logger);
@@ -133,6 +134,21 @@ final class HeadDatabaseProviderTest {
     }
 
     @Test
+    void aProviderCreatedAfterALoadEventAnotherProviderSawBuildsWithoutAskingForARandomHead() {
+        try (MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class)) {
+            CustomItemProvider first = HeadDatabaseProvider.create(owner);
+            assertThat(first.ready()).isFalse();
+            ((HeadDatabaseProvider) first).loaded(new DatabaseLoadEvent(0));
+
+            CustomItemProvider second = HeadDatabaseProvider.create(owner);
+
+            assertThat(second.ready()).isTrue();
+            assertThat(listeners).containsExactly((Listener) first, (Listener) second);
+            assertThat(apis.constructed()).hasSize(1);
+        }
+    }
+
+    @Test
     void aLoadEventWhileTheRandomHeadIsAskedForIsKept() {
         try (MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class, (api, context) ->
             when(api.getRandomHead()).thenAnswer(call -> {
@@ -149,6 +165,7 @@ final class HeadDatabaseProviderTest {
         for (Throwable thrown : List.of(new IllegalArgumentException("bound must be positive"),
             new NoSuchMethodError("getRandomHead"))) {
             listeners.clear();
+            HeadDatabaseProvider.forgetLoad();
             try (MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class, (api, context) ->
                 when(api.getRandomHead()).thenThrow(thrown))) {
                 CustomItemProvider provider = HeadDatabaseProvider.create(owner);

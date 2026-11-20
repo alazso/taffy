@@ -132,12 +132,13 @@ public final class CustomItems {
      * on the result or the owner disables, so a plugin that detects again, such as from its own reload command,
      * closes the result it holds first.
      *
-     * <p>A plugin that had loaded its items before this call is {@link HookState#ON} at once. HeadDatabase has no
-     * query for whether its database is loaded, so it is asked for a random head and is on at once when it gives
-     * one. A HeadDatabase whose database holds no head gives none, as one that is still loading does, so it is
-     * {@link HookState#LOADING} until its next {@code DatabaseLoadEvent}. Nexo and Oraxen are on at once when they
-     * know an item name, so one that loaded with no item at all is {@link HookState#LOADING} until its next
-     * items-loaded event.
+     * <p>A plugin that had loaded its items before this call is {@link HookState#ON} at once. Nexo, Oraxen and
+     * HeadDatabase are on at once when an earlier detection in this server run heard the event that ends their load.
+     * Otherwise HeadDatabase, which has no query for whether its database is loaded, is asked for a random head and
+     * is on at once when it gives one. A HeadDatabase whose database holds no head gives none, as one that is still
+     * loading does, so it is {@link HookState#LOADING} until its next {@code DatabaseLoadEvent}. Nexo and Oraxen are
+     * otherwise on at once when they know an item name, so one that loaded with no item at all is
+     * {@link HookState#LOADING} until its next items-loaded event.
      *
      * @param owner the plugin that uses the integrations: its server's plugin manager is searched, its logger
      *     receives every log line, and the integrations register their listeners for it

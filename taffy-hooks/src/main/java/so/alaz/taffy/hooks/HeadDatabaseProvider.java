@@ -12,10 +12,13 @@ import org.jetbrains.annotations.Nullable;
 
 // Builds heads only: no item is read back as a head id. HeadDatabase knows no id until it has loaded its database,
 // shortly after startup, so the provider builds from DatabaseLoadEvent. HeadDatabase-API has no query for whether
-// the database is loaded, so a provider created after the load asks for a random head and builds at once when it
-// gets one. A database that loaded with no head at all gives none, so a provider created after that load waits for
-// the next DatabaseLoadEvent. The flag only goes from false to true, so it needs no lock.
+// the database is loaded. A DatabaseLoadEvent seen by any provider is remembered for the server run, so a provider
+// created later builds at once. A provider created after a load that no provider saw asks for a random head and
+// builds at once when it gets one. A database that loaded with no head at all gives none, so that provider waits for
+// the next DatabaseLoadEvent. Both flags only go from false to true, so they need no lock.
 final class HeadDatabaseProvider implements CustomItemProvider, Listener {
+
+    private static volatile boolean seenLoad;
 
     private volatile boolean loaded;
 
@@ -33,10 +36,14 @@ final class HeadDatabaseProvider implements CustomItemProvider, Listener {
         ApiLink.staticMethod(DatabaseLoadEvent.class, "getHandlerList", HandlerList.class);
         HeadDatabaseProvider provider = new HeadDatabaseProvider();
         owner.getServer().getPluginManager().registerEvents(provider, owner);
-        if (holdsAHead()) {
+        if (seenLoad || holdsAHead()) {
             provider.loaded = true;
         }
         return provider;
+    }
+
+    static void forgetLoad() {
+        seenLoad = false;
     }
 
     // The API does not say what getRandomHead does before the database is loaded, so a call that throws counts as
@@ -52,6 +59,7 @@ final class HeadDatabaseProvider implements CustomItemProvider, Listener {
     // May run on any thread.
     @EventHandler(priority = EventPriority.MONITOR)
     public void loaded(DatabaseLoadEvent event) {
+        seenLoad = true;
         loaded = true;
     }
 

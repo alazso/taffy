@@ -62,6 +62,9 @@ final class CustomItemsTest {
 
     @BeforeEach
     void owner() {
+        NexoProvider.forgetLoad();
+        OraxenProvider.forgetLoad();
+        HeadDatabaseProvider.forgetLoad();
         when(owner.getLogger()).thenReturn(log.logger);
         errors.install((source, error) -> reports.add(Map.entry(source, error)));
     }
