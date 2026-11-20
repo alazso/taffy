@@ -15,7 +15,6 @@ import so.alaz.taffy.platform.EntityUnavailableException;
 import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.platform.Messages;
 
-import java.time.Clock;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -33,6 +32,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.logging.Level;
@@ -112,7 +112,7 @@ public final class Menus {
     }
 
     private final Parts parts;
-    private final Clock clock;
+    private final LongSupplier nanos;
     private final PreviewMarker marker;
     private final Inventories inventories;
     private final Predicate<Player> ownedHere;
@@ -137,21 +137,21 @@ public final class Menus {
      */
     public Menus(Parts parts) {
         this(parts, marker -> new PaperInventories(parts.server(), marker),
-            player -> parts.server().isOwnedByCurrentRegion(player), Menus::showable, Clock.systemUTC());
+            player -> parts.server().isOwnedByCurrentRegion(player), Menus::showable, System::nanoTime);
     }
 
     Menus(Parts parts, Function<PreviewMarker, Inventories> inventories, Predicate<Player> ownedHere,
-          Predicate<Material> item, Clock clock) {
+          Predicate<Material> item, LongSupplier nanos) {
         this.parts = Objects.requireNonNull(parts, "parts");
         this.item = item;
-        this.clock = clock;
+        this.nanos = nanos;
         this.marker = new PreviewMarker(parts.preview());
         this.inventories = inventories.apply(marker);
         this.ownedHere = ownedHere;
         this.feedback = new Feedback(parts.sounds());
         this.layouts = parts.layouts();
         this.text = new MenuText(parts.messages());
-        this.debounce = new Debounce(() -> parts.settings().clickDebounce(), clock);
+        this.debounce = new Debounce(() -> parts.settings().clickDebounce(), nanos);
         this.listener = new MenuListener(this);
     }
 
@@ -598,7 +598,7 @@ public final class Menus {
         }
         prompts.end(viewer.getUniqueId());
         MenuLayout layout = layouts.get(menu.kind().id());
-        MenuSession<S> session = new MenuSession<>(viewer, menu, layout, state, back, clock.instant());
+        MenuSession<S> session = new MenuSession<>(viewer, menu, layout, state, back, nanos.getAsLong());
         Locale locale = parts.locales().apply(viewer);
         Component title = menu.title(new Frame<>(this, session, locale));
         session.attach(inventories.create(session, layout.size(), title));

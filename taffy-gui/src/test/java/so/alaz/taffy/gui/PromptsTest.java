@@ -37,7 +37,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -201,7 +200,7 @@ final class PromptsTest {
     @Test
     void aRefusedAnswerSaysWhyRepeatsTheInputAsTextAndTakesTheNextLineBeforeTheFirstDeadline() {
         start(PromptMode.CHAT);
-        Instant asked = harness.clock.instant();
+        long asked = harness.clock.getAsLong();
         ask();
         harness.advance(Duration.ofSeconds(10));
 
@@ -209,7 +208,7 @@ final class PromptsTest {
 
         assertThat(alex.said().getLast()).isEqualTo("Not a number.\nYou typed: <red>nope");
         assertThat(alex.session()).isNull();
-        assertThat(prompts.pending(alex.id).deadline()).isEqualTo(asked.plus(Prompts.TIMEOUT));
+        assertThat(prompts.pending(alex.id).deadline()).isEqualTo(asked + Prompts.TIMEOUT.toNanos());
         assertThat(timer.waits()).containsExactly(Prompts.TIMEOUT, Duration.ofSeconds(20));
         assertThat(type("5").isCancelled()).isTrue();
         assertThat(state()).isEqualTo(5);

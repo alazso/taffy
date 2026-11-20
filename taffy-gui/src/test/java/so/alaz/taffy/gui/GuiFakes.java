@@ -10,11 +10,7 @@ import so.alaz.taffy.platform.EntityThread;
 import so.alaz.taffy.platform.EntityUnavailableException;
 import so.alaz.taffy.test.FakeItems;
 
-import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -26,6 +22,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.function.LongSupplier;
 
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
@@ -132,31 +129,20 @@ final class GuiFakes {
         }
     }
 
-    // A clock that stands still until advanced.
-    static final class MutableClock extends Clock {
+    // A nanosecond time source that stands still until advanced. It starts 10 seconds before Long.MAX_VALUE, so a
+    // test that advances further reads values that wrapped around, as System.nanoTime may.
+    static final class Ticker implements LongSupplier {
 
-        private volatile Instant now;
+        static final long START = Long.MAX_VALUE - Duration.ofSeconds(10).toNanos();
 
-        MutableClock(Instant now) {
-            this.now = now;
-        }
+        private volatile long now = START;
 
         void advance(Duration step) {
-            now = now.plus(step);
+            now += step.toNanos();
         }
 
         @Override
-        public ZoneId getZone() {
-            return ZoneOffset.UTC;
-        }
-
-        @Override
-        public Clock withZone(ZoneId zone) {
-            return this;
-        }
-
-        @Override
-        public Instant instant() {
+        public long getAsLong() {
             return now;
         }
     }

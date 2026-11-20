@@ -48,6 +48,10 @@ All notable changes to Taffy are documented here. This project follows
   lines no longer shows the answer to other players or the console. The `PaperPromptListener` Javadoc now states
   that the event still reaches every handler that does not ignore cancelled events, at any priority, so such a
   handler can read the answer.
+- The click debounce, the open arming of a menu and the 30 second deadline of a `Prompts` ask measure elapsed
+  time with `System.nanoTime()`. They read the wall clock before, so a clock stepped back by a time
+  synchronisation or by hand dropped every menu click until the clock passed the old time again, and a clock
+  stepped forward let a click through early and timed a refused ask out at once.
 - `Menus.shutdown` empties the inventory of each open menu and prompt anvil whose viewer the disabling thread
   does not own, which happens only on Folia. Such a menu still stays open with no listener to cancel its clicks,
   but it now shows nothing, so its viewer has no menu copy to take. Before, it stayed fully stocked and a copy

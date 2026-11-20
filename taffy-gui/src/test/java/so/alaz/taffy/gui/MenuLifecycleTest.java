@@ -952,7 +952,7 @@ final class MenuLifecycleTest {
         MenuSession<?> session = sample.session();
         assertThat(session.route()).isEqualTo(new Route(Sample.KIND.id(), 4, back));
         assertThat(session.generation()).isEqualTo(1);
-        assertThat(session.openedAt()).isEqualTo(MenuHarness.START.plus(Sample.SETTLED));
+        assertThat(session.openedAt()).isEqualTo(GuiFakes.Ticker.START + Sample.SETTLED.toNanos());
         assertThat(session.menu()).isSameAs(sample.menu);
         assertThatThrownBy(() -> new Route("main", null, null)).isInstanceOf(NullPointerException.class);
     }

@@ -12,7 +12,6 @@ import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.EntityUnavailableException;
 import so.alaz.taffy.platform.ErrorReports;
 
-import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
@@ -27,6 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.logging.Level;
 
@@ -105,7 +105,7 @@ public final class Prompts {
     private final @Nullable AnvilInput anvil;
     private final CancelLink cancelLink;
     private final Predicate<Player> ownScreen;
-    private final Clock clock;
+    private final LongSupplier nanos;
     private final Map<UUID, Pending> pending = new ConcurrentHashMap<>();
     private final Map<UUID, Pending> judging = new ConcurrentHashMap<>();
     private final Set<UUID> legacyLines = ConcurrentHashMap.newKeySet();
@@ -129,11 +129,11 @@ public final class Prompts {
      */
     public Prompts(Menus menus, PromptMode mode, BedrockPlayers bedrock, BiConsumer<Runnable, Duration> timer) {
         this(menus, mode, bedrock, timer, anvilFor(menus, mode), new PaperCancelLink(), Prompts::ownScreen,
-            Clock.systemUTC());
+            System::nanoTime);
     }
 
     Prompts(Menus menus, PromptMode mode, BedrockPlayers bedrock, BiConsumer<Runnable, Duration> timer,
-            @Nullable AnvilInput anvil, CancelLink cancelLink, Predicate<Player> ownScreen, Clock clock) {
+            @Nullable AnvilInput anvil, CancelLink cancelLink, Predicate<Player> ownScreen, LongSupplier nanos) {
         Objects.requireNonNull(menus, "menus");
         Objects.requireNonNull(mode, "mode");
         Objects.requireNonNull(bedrock, "bedrock");
@@ -153,7 +153,7 @@ public final class Prompts {
         this.anvil = anvil;
         this.cancelLink = cancelLink;
         this.ownScreen = ownScreen;
-        this.clock = clock;
+        this.nanos = nanos;
         menus.prompts(new Link());
         this.listener = new PaperPromptListener(this);
     }
@@ -198,7 +198,8 @@ public final class Prompts {
         PromptMode shown = !onBedrock && mode == PromptMode.ANVIL && anvil != null ? PromptMode.ANVIL
             : PromptMode.CHAT;
         end(id);
-        Pending entry = new Pending(tokens.incrementAndGet(), shown, request, clock.instant().plus(TIMEOUT), player);
+        Pending entry = new Pending(tokens.incrementAndGet(), shown, request, nanos.getAsLong() + TIMEOUT.toNanos(),
+            player);
         pending.put(id, entry);
         if (!show(player, entry)) {
             pending.remove(id, entry);
@@ -479,7 +480,7 @@ public final class Prompts {
             || pending.putIfAbsent(id, entry) != null) {
             return;
         }
-        Duration left = Duration.between(clock.instant(), entry.deadline());
+        Duration left = Duration.ofNanos(entry.deadline() - nanos.getAsLong());
         if (!left.isPositive()) {
             expire(id, entry.token());
             return;

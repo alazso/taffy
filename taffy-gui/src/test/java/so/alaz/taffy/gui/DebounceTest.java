@@ -6,21 +6,19 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 final class DebounceTest {
 
-    private static final Instant START = Instant.parse("2026-11-15T12:00:00Z");
     private static final UUID ALEX = UUID.randomUUID();
     private static final UUID SAM = UUID.randomUUID();
 
     @TempDir
     Path folder;
 
-    private final GuiFakes.MutableClock clock = new GuiFakes.MutableClock(START);
+    private final GuiFakes.Ticker clock = new GuiFakes.Ticker();
     private final Debounce debounce = new Debounce(() -> Duration.ofMillis(250), clock);
 
     @Test
@@ -68,10 +66,26 @@ final class DebounceTest {
     }
 
     @Test
-    void settledIsTrueOnceTheWindowPassedSinceAnInstant() {
-        assertThat(debounce.settled(clock.instant())).isFalse();
-        clock.advance(Duration.ofMillis(250));
-        assertThat(debounce.settled(START)).isTrue();
+    void settledIsTrueOnceTheWindowPassedSinceAReading() {
+        assertThat(debounce.settled(clock.getAsLong())).isFalse();
+        clock.advance(Duration.ofMillis(249));
+        assertThat(debounce.settled(GuiFakes.Ticker.START)).isFalse();
+        clock.advance(Duration.ofMillis(1));
+        assertThat(debounce.settled(GuiFakes.Ticker.START)).isTrue();
+    }
+
+    @Test
+    void theWindowIsMeasuredAcrossATimeSourceThatWrapsAround() {
+        long opened = clock.getAsLong();
+        debounce.pass(ALEX, "home:open");
+        clock.advance(Duration.ofSeconds(10).plusMillis(100));
+        assertThat(clock.getAsLong()).isNegative();
+
+        assertThat(debounce.settled(opened)).isTrue();
+        assertThat(debounce.pass(ALEX, "home:open")).isTrue();
+        clock.advance(Duration.ofMillis(100));
+        assertThat(debounce.pass(ALEX, "home:open")).isFalse();
+        assertThat(debounce.settled(clock.getAsLong())).isFalse();
     }
 
     @Test

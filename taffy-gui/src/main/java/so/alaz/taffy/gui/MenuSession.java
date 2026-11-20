@@ -5,7 +5,6 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.jetbrains.annotations.Nullable;
 
-import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 
@@ -21,7 +20,7 @@ public final class MenuSession<S> implements InventoryHolder {
     private final Menu<S> menu;
     private final MenuLayout layout;
     private final @Nullable Route back;
-    private final Instant openedAt;
+    private final long openedAt;
     private S state;
     private @Nullable Object data;
     private int generation;
@@ -34,7 +33,7 @@ public final class MenuSession<S> implements InventoryHolder {
     private boolean handoff;
     private boolean closedInHandoff;
 
-    MenuSession(Player viewer, Menu<S> menu, MenuLayout layout, S state, @Nullable Route back, Instant openedAt) {
+    MenuSession(Player viewer, Menu<S> menu, MenuLayout layout, S state, @Nullable Route back, long openedAt) {
         this.viewer = viewer;
         this.menu = menu;
         this.layout = layout;
@@ -134,7 +133,8 @@ public final class MenuSession<S> implements InventoryHolder {
         this.data = data;
     }
 
-    Instant openedAt() {
+    /** The reading of the menus' nanosecond time source when the session was created. */
+    long openedAt() {
         return openedAt;
     }
 
