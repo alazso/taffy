@@ -243,7 +243,8 @@ public final class ComfiConfConnection {
     /**
      * The lock the plugin holds around each of its own writes of {@code file}, so that a ComfiConf apply racing the
      * write reports a conflict instead of replacing it. While {@link #connect} registered a resource, it is the lock
-     * an apply of {@code file} holds from its revision check to the move of the new content over the file.
+     * an apply of {@code file} holds from its read of the file to the move of the new content over the file, and a
+     * read of the file holds while it reads.
      * Otherwise, and when the link throws a {@link RuntimeException} or {@link LinkageError}, which is logged as the
      * class description states, it is one lock of this connection that no apply takes.
      *

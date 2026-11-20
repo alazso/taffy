@@ -31,8 +31,8 @@ public interface ComfiConfLink {
     void close();
 
     /**
-     * The lock a ComfiConf apply of {@code file} holds from its revision check to the move of the new content over
-     * the file. The same path gives the same lock on every call.
+     * The lock a ComfiConf apply of {@code file} holds from its read of the file to the move of the new content over
+     * the file, and a read of the file holds while it reads. The same path gives the same lock on every call.
      *
      * @param file the settings file
      * @return the lock, never {@code null}
