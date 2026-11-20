@@ -60,6 +60,11 @@ All notable changes to Taffy are documented here. This project follows
   the bare words `select`, `insert`, `update` and `delete`, so `Failed to update balance for shop 12: timeout
   after 5003ms` was sent as `Failed to [sql hidden]`; such a message is now sent as written. A statement of
   another shape, such as `SELECT 1`, is no longer hidden.
+- `Metrics.shutdown()` waits at most 5 seconds for the final FastStats send. The send runs on a daemon thread
+  named `taffy-metrics-final-send`, and when it has not finished after 5 seconds `shutdown()` returns while the
+  send goes on, on that thread. It ran on the disabling thread with no limit, so a stalled name lookup or a
+  response that never finished delayed the server stop. A chart supplier read during the final send now runs on
+  that thread, and an interrupt on the calling thread ends the wait at once and stays set.
 
 ## [0.2.0] - 2026-11-19
 

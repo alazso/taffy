@@ -10,12 +10,16 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.zip.GZIPInputStream;
 
 /**
  * An HTTP server on the loopback address and a free port that answers every request with {@code 200} and records
  * its path and gunzipped body. {@link #point()} sends both FastStats services to it; {@link #close()} stops it and
  * points them back at the closed port the test task sets.
+ *
+ * <p>After {@link #stall()}, a request is recorded and answered with the {@code 200} status line and headers, and
+ * its response body stays open until {@link #release()} or {@link #close()}.
  */
 final class LoopbackSink implements AutoCloseable {
 
@@ -29,6 +33,8 @@ final class LoopbackSink implements AutoCloseable {
 
     final List<Request> requests = new CopyOnWriteArrayList<>();
     private final HttpServer server;
+    private final CountDownLatch released = new CountDownLatch(1);
+    private volatile boolean stalled;
 
     LoopbackSink() throws IOException {
         server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
@@ -44,6 +50,17 @@ final class LoopbackSink implements AutoCloseable {
         System.setProperty(ERROR_SERVER, url);
     }
 
+    /** Leaves the response body of every later request open. */
+    void stall() {
+        stalled = true;
+    }
+
+    /** Ends the response bodies {@link #stall()} left open, and answers later requests in full. */
+    void release() {
+        stalled = false;
+        released.countDown();
+    }
+
     /** The paths of the requests received so far, in order. */
     List<String> paths() {
         return requests.stream().map(Request::path).toList();
@@ -56,12 +73,21 @@ final class LoopbackSink implements AutoCloseable {
                 body = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             }
             requests.add(new Request(exchange.getRequestMethod(), exchange.getRequestURI().getPath(), body));
-            exchange.sendResponseHeaders(200, -1);
+            if (!stalled) {
+                exchange.sendResponseHeaders(200, -1);
+                return;
+            }
+            exchange.sendResponseHeaders(200, 0);
+            exchange.getResponseBody().flush();
+            released.await();
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
         }
     }
 
     @Override
     public void close() {
+        release();
         server.stop(0);
         System.setProperty(METRICS_SERVER, CLOSED_PORT);
         System.setProperty(ERROR_SERVER, CLOSED_PORT);

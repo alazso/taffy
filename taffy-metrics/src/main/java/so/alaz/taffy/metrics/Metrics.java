@@ -5,6 +5,7 @@ import dev.faststats.bukkit.BukkitContext;
 import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.ErrorReports;
 
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import java.util.logging.Logger;
@@ -57,6 +58,12 @@ import java.util.logging.Logger;
  * after {@link #shutdown()} they read {@code false} or {@code null}.
  */
 public final class Metrics {
+
+    /** How long {@link #shutdown()} waits for the final FastStats send. */
+    static final Duration FINAL_SEND_WAIT = Duration.ofSeconds(5);
+
+    /** The name of the daemon thread the final FastStats send runs on. */
+    static final String FINAL_SEND_THREAD = "taffy-metrics-final-send";
 
     private final org.bstats.bukkit.@Nullable Metrics bStats;
     final @Nullable BukkitContext fastStats;
@@ -189,14 +196,17 @@ public final class Metrics {
 
     /**
      * Stops submission for every provider that started. In order: the error sink is cleared, the Taffy usage chart
-     * stops without a final send, bStats stops, and FastStats sends its last errors and metrics on the calling thread
-     * and stops. A step that fails does not stop the next. Idempotent, and never throws. The JVM default uncaught
-     * exception handler is left as it is.
+     * stops without a final send, bStats stops, and FastStats sends its last errors and metrics and stops. A step
+     * that fails does not stop the next. Idempotent, and never throws. The JVM default uncaught exception handler is
+     * left as it is.
      *
-     * <p>The final send makes one request for errors and one for metrics, on the calling thread. Each has 3 second
-     * connect and request timeouts, which do not cover a stalled name lookup or a response that never finishes, so on
-     * a stalled network this call can block the disabling thread for tens of seconds. No thread is started to bound
-     * it, since such a thread would outlive the plugin's class loader.
+     * <p>The final send makes one request for errors and one for metrics on a daemon thread named
+     * {@code taffy-metrics-final-send}, and this call waits at most 5 seconds for it, holding no lock. A send that
+     * finishes sooner ends the wait. Each request has 3 second connect and request timeouts, which do not cover a
+     * stalled name lookup or a response that never finishes. When the 5 seconds pass first, this call returns and
+     * the send goes on, on that thread, until it finishes or the JVM exits, which can be after the plugin's class
+     * loader was closed. The chart suppliers the final send reads run on that thread. An interrupt, also one already
+     * set on the calling thread when this is called, ends the wait at once and stays set.
      */
     public void shutdown() {
         if (!shutDown.compareAndSet(false, true)) {
@@ -210,7 +220,19 @@ public final class Metrics {
             quietly(bStats::shutdown);
         }
         if (fastStats != null) {
-            quietly(fastStats::shutdown);
+            quietly(() -> finalSend(fastStats));
+        }
+    }
+
+    /** Shuts {@code context} down on a daemon thread and waits at most {@link #FINAL_SEND_WAIT} for it. */
+    private static void finalSend(BukkitContext context) {
+        Thread sender = new Thread(() -> quietly(context::shutdown), FINAL_SEND_THREAD);
+        sender.setDaemon(true);
+        sender.start();
+        try {
+            sender.join(FINAL_SEND_WAIT);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
         }
     }
 

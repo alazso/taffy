@@ -117,8 +117,9 @@
  * <h2>At disable</h2>
  *
  * <p>{@link so.alaz.taffy.metrics.Metrics#shutdown()} is the last step of disable, after
- * {@code DiscordWebhook.close}. FastStats then sends the plugin's last errors and metrics on the disabling thread, so
- * the reports raised by the earlier shutdown steps are sent too.
+ * {@code DiscordWebhook.close}. FastStats then sends the plugin's last errors and metrics, so the reports raised by
+ * the earlier shutdown steps are sent too. The send runs on a daemon thread, and the disabling thread waits at most
+ * 5 seconds for it, as {@link so.alaz.taffy.metrics.Metrics#shutdown()} describes.
  *
  * <h2>The Taffy usage chart</h2>
  *

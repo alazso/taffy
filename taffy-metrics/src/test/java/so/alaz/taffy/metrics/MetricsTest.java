@@ -19,12 +19,14 @@ import so.alaz.taffy.platform.Scheduler;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.logging.Logger;
 
@@ -541,6 +543,82 @@ class MetricsTest {
             .extracting(LoopbackSink.Request::body).asString()
             .contains("IllegalStateException")
             .contains("supplier broken");
+    }
+
+    @Test
+    void theFinalSendWaitsFiveSecondsOnADaemonThreadOfItsOwn() throws IOException {
+        assertThat(Metrics.FINAL_SEND_WAIT).isEqualTo(Duration.ofSeconds(5));
+        assertThat(Metrics.FINAL_SEND_THREAD).isEqualTo("taffy-metrics-final-send");
+        AtomicReference<Thread> sender = new AtomicReference<>();
+        fixture.writeFastStatsConfig(true, true, true);
+        Metrics metrics = new MetricsBuilder(fixture.plugin, errors, true)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN)
+            .addChart(MetricChart.number("item_count", () -> {
+                sender.set(Thread.currentThread());
+                return 7;
+            }))
+            .start();
+        started.add(metrics);
+
+        metrics.shutdown();
+
+        assertThat(sender.get()).isNotNull().isNotSameAs(Thread.currentThread());
+        assertThat(sender.get().getName()).isEqualTo(Metrics.FINAL_SEND_THREAD);
+        assertThat(sender.get().isDaemon()).isTrue();
+        assertThat(sender.get().isAlive()).isFalse();
+        assertThat(sink.paths()).containsExactly("/v1/collect");
+    }
+
+    @Test
+    void aFinalSendAgainstAStalledSinkReturnsWithinTheWait() throws IOException, InterruptedException {
+        Metrics metrics = startFastStats(true, true, true);
+        sink.stall();
+
+        long before = System.nanoTime();
+        metrics.shutdown();
+        Duration took = Duration.ofNanos(System.nanoTime() - before);
+
+        Thread sender = finalSendThread();
+        assertThat(sender).isNotNull();
+        assertThat(sender.isAlive()).isTrue();
+        assertThat(took).isBetween(Metrics.FINAL_SEND_WAIT.minusMillis(100), Metrics.FINAL_SEND_WAIT.plusSeconds(2));
+        assertThat(sink.paths()).containsExactly("/v1/collect");
+        assertThat(metrics.fastStatsSdk()).isNull();
+
+        sink.release();
+        sender.join(TimeUnit.SECONDS.toMillis(10));
+        assertThat(sender.isAlive()).isFalse();
+    }
+
+    @Test
+    void anInterruptEndsTheWaitForTheFinalSendAndStaysSet() throws IOException, InterruptedException {
+        Metrics metrics = startFastStats(true, true, true);
+        sink.stall();
+        Thread.currentThread().interrupt();
+
+        long before = System.nanoTime();
+        try {
+            metrics.shutdown();
+        } finally {
+            assertThat(Thread.interrupted()).isTrue();
+        }
+        Duration took = Duration.ofNanos(System.nanoTime() - before);
+
+        assertThat(took).isLessThan(Metrics.FINAL_SEND_WAIT.minusSeconds(2));
+        Thread sender = finalSendThread();
+        sink.release();
+        if (sender != null) {
+            sender.join(TimeUnit.SECONDS.toMillis(10));
+            assertThat(sender.isAlive()).isFalse();
+        }
+        assertThat(sink.paths()).containsExactly("/v1/collect");
+    }
+
+    /** The live thread a final send runs on, or {@code null} when none runs. */
+    private static @Nullable Thread finalSendThread() {
+        return Thread.getAllStackTraces().keySet().stream()
+            .filter(thread -> thread.getName().equals(Metrics.FINAL_SEND_THREAD))
+            .findFirst().orElse(null);
     }
 
     @Test

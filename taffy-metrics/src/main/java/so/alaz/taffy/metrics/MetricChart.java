@@ -32,8 +32,8 @@ import java.util.regex.Pattern;
  *       touches storage.</li>
  *   <li>It may run on any thread: bStats reads it on the server's main thread (its own thread on Folia),
  *       FastStats on its asynchronous submission task, again whenever it assembles an error report, and
- *       once more during the final send at disable, which may come after the plugin's storage has
- *       closed.</li>
+ *       once more during the final send at disable, on the thread of that send, which may come after the
+ *       plugin's storage has closed.</li>
  *   <li>A supplier that throws makes that value absent from that report. On FastStats the throwable is
  *       also reported to the plugin's global error tracker, when FastStats error tracking is on, on every
  *       read that throws.</li>
