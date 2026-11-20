@@ -56,8 +56,12 @@ import java.util.logging.Logger;
  * them, and only the menus that opened a session run its button handlers, play its sounds and end it.
  *
  * <p>Opening a menu while the viewer has another open is a hand-off: the previous session's close is not the viewer
- * leaving, so its {@link Menu#closed(MenuSession, boolean)} gets {@code left = false}. Once {@link #shutdown()} ran the
- * menus are stopping and nothing opens again.
+ * leaving, so its {@link Menu#closed(MenuSession, boolean)} gets {@code left = false}. A prompt that takes over
+ * through {@link Prompts#ask(Player, PromptRequest)} is a hand-off too. A session never opens again once its
+ * {@code closed} ran: the menu a hand-off or a prompt opens is a new session, and a prompt whose ask ends with no
+ * menu opened, because the player quit, died or has another inventory open, tells
+ * {@link PromptRequest#abandoned()} and no menu. Once {@link #shutdown()} ran the menus are stopping and nothing
+ * opens again.
  *
  * <p>The menus register their own listener as a listener of {@link Parts#plugin()} when they are built, so a menu
  * never opens without it, and the plugin registers nothing. At disable the plugin calls {@link #shutdown()}, which

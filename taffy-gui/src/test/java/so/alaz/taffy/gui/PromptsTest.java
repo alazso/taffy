@@ -78,6 +78,7 @@ final class PromptsTest {
     private @Nullable RealAnvil real;
     private final Set<UUID> bedrock = new HashSet<>();
     private final List<String> judged = new ArrayList<>();
+    private final List<PromptEnd> ends = new ArrayList<>();
     private boolean owned = true;
     private Sample sample;
     private MenuHarness harness;
@@ -125,10 +126,11 @@ final class PromptsTest {
         ask(this::judge);
     }
 
+    // Every end the prompts tell the request of an ask made here is added to ends.
     private void ask(Function<String, Answer> judge) {
         MenuSession<?> session = alex.session();
         Route origin = session == null ? new Route(Sample.KIND.id(), 2, null) : session.route();
-        prompts.ask(alex.player, new PromptRequest(Component.text("Price?"), "10", origin, judge));
+        prompts.ask(alex.player, new PromptRequest(Component.text("Price?"), "10", origin, judge, ends::add));
     }
 
     private long token() {
@@ -1584,6 +1586,271 @@ final class PromptsTest {
     void theListenerAndTheAnvilRefuseANullPart() {
         assertThatNullPointerException().isThrownBy(() -> new AnvilInput(null)).withMessage("marker");
         assertThatNullPointerException().isThrownBy(() -> new PaperPromptListener(null)).withMessage("prompts");
+    }
+
+    @Test
+    void anAskThatEndsWithAMenuOpenedTellsNoEnd() {
+        start(PromptMode.CHAT);
+        ask();
+        type("many");
+        type("7");
+        ask();
+        type("cancel");
+        ask();
+        timer.fire(Prompts.TIMEOUT);
+        ask(text -> {
+            throw new IllegalStateException("boom");
+        });
+        type("7");
+
+        assertThat(state()).isEqualTo(7);
+        assertThat(sample.menu.sessions).hasSize(5);
+        assertThat(ends).isEmpty();
+    }
+
+    @Test
+    void aTimeoutThatCannotOpenTheOriginEndsAsTimedOut() {
+        start(PromptMode.CHAT);
+        ask();
+        alex.foreign(GuiFakes.foreign(27));
+
+        timer.fire(Prompts.TIMEOUT);
+
+        assertThat(ends).containsExactly(PromptEnd.TIMED_OUT);
+        when(alex.player.isDead()).thenReturn(true);
+        alex.view = null;
+        ask();
+        timer.fire(Prompts.TIMEOUT);
+        assertThat(ends).containsExactly(PromptEnd.TIMED_OUT, PromptEnd.TIMED_OUT);
+        assertThat(alex.session()).isNull();
+    }
+
+    @Test
+    void aCancelThatCannotOpenTheOriginEndsAsCancelled() {
+        start(PromptMode.CHAT);
+        ask();
+        alex.foreign(GuiFakes.foreign(27));
+
+        type("cancel");
+
+        assertThat(alex.said().getLast()).isEqualTo(STOPPED);
+        assertThat(ends).containsExactly(PromptEnd.CANCELLED);
+        ask();
+        alex.foreign(GuiFakes.foreign(27));
+        link.actions.getLast().run();
+        link.actions.getLast().run();
+        assertThat(ends).containsExactly(PromptEnd.CANCELLED, PromptEnd.CANCELLED);
+    }
+
+    @Test
+    void aQuitEndsAPendingAskAndAnAskWhoseLaterAnswerRunsAsLeft() {
+        start(PromptMode.CHAT);
+        ask();
+
+        harness.listener.onQuit(new PlayerQuitEvent(alex.player, Component.empty(),
+            PlayerQuitEvent.QuitReason.DISCONNECTED));
+
+        assertThat(ends).containsExactly(PromptEnd.LEFT);
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        ask(text -> new Answer.Later(balance));
+        type("7");
+        alex.offline();
+        prompts.quit(alex.id);
+        balance.complete(accept(7));
+        timer.fire(Prompts.TIMEOUT);
+        assertThat(ends).containsExactly(PromptEnd.LEFT, PromptEnd.LEFT);
+    }
+
+    @Test
+    void anAskTakenForAPlayerWhoIsGoneEndsAsLeft() {
+        start(PromptMode.CHAT);
+        ask();
+        harness.entity.online.remove(alex.id);
+
+        timer.fire(Prompts.TIMEOUT);
+
+        assertThat(ends).containsExactly(PromptEnd.LEFT);
+        prompts.quit(alex.id);
+        assertThat(ends).containsExactly(PromptEnd.LEFT);
+        assertThat(harness.log.lines()).isEmpty();
+    }
+
+    @Test
+    void anAcceptedAnswerOfADeadPlayerEndsAsLeft() {
+        start(PromptMode.CHAT);
+        ask();
+        int opened = sample.menu.sessions.size();
+        when(alex.player.isDead()).thenReturn(true);
+
+        type("7");
+
+        assertThat(judged).containsExactly("7");
+        assertThat(sample.menu.sessions).hasSize(opened);
+        assertThat(ends).containsExactly(PromptEnd.LEFT);
+    }
+
+    @Test
+    void anotherMenuAndANewerAskEndAnAskAsReplaced() {
+        start(PromptMode.CHAT);
+        ask();
+
+        harness.open(alex, Sample.KIND.id());
+
+        assertThat(ends).containsExactly(PromptEnd.REPLACED);
+        ask();
+        ask();
+        assertThat(ends).containsExactly(PromptEnd.REPLACED, PromptEnd.REPLACED);
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        ask(text -> new Answer.Later(balance));
+        type("7");
+        harness.menus.open(alex.player, Sample.KIND.id(), null);
+        balance.complete(accept(7));
+        timer.fire(Prompts.TIMEOUT);
+        assertThat(ends).containsExactly(PromptEnd.REPLACED, PromptEnd.REPLACED, PromptEnd.REPLACED,
+            PromptEnd.REPLACED);
+    }
+
+    @Test
+    void anotherInventoryOverTheAnvilEndsTheAskAsReplaced() {
+        start(PromptMode.ANVIL);
+        ask();
+
+        prompts.surfaceClosed(alex.id, token(), InventoryCloseEvent.Reason.OPEN_NEW);
+        timer.fire(Prompts.TIMEOUT);
+
+        assertThat(ends).containsExactly(PromptEnd.REPLACED);
+    }
+
+    @Test
+    void anAnswerWhoseMenuOrAnvilCannotShowOverAnotherInventoryEndsTheAskAsReplaced() {
+        start(PromptMode.ANVIL);
+        ask();
+        real().replaced();
+        alex.foreign(GuiFakes.foreign(27));
+
+        prompts.anvilClick(alex.id, token(), Prompts.ANVIL_RESULT_SLOT, "8");
+
+        assertThat(ends).containsExactly(PromptEnd.REPLACED);
+        alex.view = null;
+        ask();
+        real().replaced();
+        alex.foreign(GuiFakes.foreign(27));
+        prompts.anvilClick(alex.id, token(), Prompts.ANVIL_RESULT_SLOT, "many");
+        assertThat(ends).containsExactly(PromptEnd.REPLACED);
+        harness.drain();
+        timer.fire(Prompts.TIMEOUT);
+        assertThat(ends).containsExactly(PromptEnd.REPLACED, PromptEnd.REPLACED);
+    }
+
+    @Test
+    void aRefusedAnswerWhoseAnvilTheServerWillNotShowAgainEndsTheAskAsReplaced() {
+        start(PromptMode.ANVIL);
+        ask();
+        long token = token();
+        real().replaced();
+        real().refuse = true;
+
+        prompts.anvilClick(alex.id, token, Prompts.ANVIL_RESULT_SLOT, "lots");
+        harness.drain();
+
+        assertThat(ends).containsExactly(PromptEnd.REPLACED);
+    }
+
+    @Test
+    void aRefusedAnswerDecidedAfterAnotherMenuOpenedEndsTheAskAsReplaced() {
+        start(PromptMode.CHAT);
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        List<CompletableFuture<Answer>> first = new ArrayList<>(List.of(balance));
+        ask(text -> first.isEmpty() ? new Answer.Retry(NOT_A_NUMBER) : new Answer.Later(first.removeFirst()));
+        type("7");
+        timer.fire(Prompts.TIMEOUT);
+        assertThat(ends).isEmpty();
+
+        ask(text -> {
+            harness.menus.open(alex.player, Sample.KIND.id(), null);
+            return new Answer.Retry(NOT_A_NUMBER);
+        });
+        type("many");
+
+        assertThat(prompts.pending(alex.id)).isNull();
+        assertThat(ends).containsExactly(PromptEnd.REPLACED);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void shutdownEndsAnAskAsCancelledForAPlayerTheDisablingThreadOwnsAndTellsNoEndForAnother(boolean ownedHere) {
+        start(PromptMode.CHAT);
+        ask();
+        owned = ownedHere;
+
+        harness.menus.shutdown();
+        timer.fire(Prompts.TIMEOUT);
+
+        assertThat(ends).isEqualTo(ownedHere ? List.of(PromptEnd.CANCELLED) : List.of());
+    }
+
+    @Test
+    void shutdownEndsAnAskWhoseLaterAnswerRunsAsCancelledOnce() {
+        start(PromptMode.CHAT);
+        CompletableFuture<Answer> balance = new CompletableFuture<>();
+        ask(text -> new Answer.Later(balance));
+        type("7");
+
+        harness.menus.shutdown();
+        balance.complete(accept(7));
+
+        assertThat(ends).containsExactly(PromptEnd.CANCELLED);
+    }
+
+    @Test
+    void anAnvilTheServerRefusesToOpenTellsNoEnd() {
+        start(PromptMode.ANVIL);
+        real().refuse = true;
+
+        ask();
+
+        assertThat(sample.menu.closes).containsExactly(true);
+        assertThat(ends).isEmpty();
+    }
+
+    @Test
+    void anAbandonedStepThatThrowsIsLoggedAndReportedAndTheAskStillEnds() {
+        start(PromptMode.CHAT);
+        IllegalStateException boom = new IllegalStateException("boom");
+        prompts.ask(alex.player, new PromptRequest(Component.text("Price?"), "10", new Route(Sample.KIND.id(), 2,
+            null), this::judge).abandoned(end -> {
+                throw boom;
+            }));
+
+        prompts.quit(alex.id);
+
+        assertThat(prompts.pending(alex.id)).isNull();
+        assertThat(harness.log.lines()).singleElement().asString().startsWith(
+            "WARNING gui: the abandoned step of a prompt for Alex failed: java.lang.IllegalStateException: boom");
+        assertThat(harness.reports).containsExactly(new MenuHarness.Report("gui.prompt", boom));
+    }
+
+    @Test
+    void aRequestBuiltFromFourPartsIgnoresItsEndAndGivesACopyWithAnotherAbandonedStep() {
+        Route origin = new Route(Sample.KIND.id(), 2, null);
+        Function<String, Answer> judge = this::judge;
+        PromptRequest plain = new PromptRequest(Component.text("Price?"), "10", origin, judge);
+
+        plain.abandoned().accept(PromptEnd.LEFT);
+        PromptRequest told = plain.abandoned(ends::add);
+        told.abandoned().accept(PromptEnd.TIMED_OUT);
+
+        assertThat(plain).isEqualTo(new PromptRequest(Component.text("Price?"), "10", origin, judge));
+        assertThat(told.question()).isEqualTo(plain.question());
+        assertThat(told.initial()).isEqualTo("10");
+        assertThat(told.origin()).isEqualTo(origin);
+        assertThat(told.answer()).isSameAs(judge);
+        assertThat(ends).containsExactly(PromptEnd.TIMED_OUT);
+        assertThatNullPointerException().isThrownBy(() -> plain.abandoned(null)).withMessage("abandoned");
+        assertThatNullPointerException().isThrownBy(() -> new PromptRequest(Component.empty(), "", origin, judge,
+            null)).withMessage("abandoned");
+        assertThat(PromptEnd.values()).containsExactly(PromptEnd.TIMED_OUT, PromptEnd.LEFT, PromptEnd.REPLACED,
+            PromptEnd.CANCELLED);
     }
 
     // The harness shows a player with no view open their own inventory, held by the player.

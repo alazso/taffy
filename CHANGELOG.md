@@ -42,8 +42,24 @@ All notable changes to Taffy are documented here. This project follows
   and the per-button click debounce follows the key, so a row that moved to another slot is still debounced.
   `Frame.Entry` has `key` as a fifth record component; `Entry.click`, `Entry.display` and the four-argument
   constructor give a row with no key, and `exclusively()` keeps the key.
+- `PromptRequest.abandoned(Consumer<PromptEnd>)` gives a question a step that runs once when its ask ends and the
+  prompts open no menu for it, with how it ended as the new enum `PromptEnd`: `TIMED_OUT` and `CANCELLED` when
+  the origin could not open because the player is dead, offline or has another plugin's inventory open, `LEFT`
+  when the player quit or was gone, `REPLACED` when another menu, a newer ask or another inventory took the place
+  of the ask, and `CANCELLED` also when `Menus.shutdown` ends the ask of a player the disabling thread owns.
+  Before, nothing told a menu that had handed its session to an ask, with `Menu.closed(session, false)`, that the
+  ask would never open it again, so what it kept for the reopened menu, such as escrowed items, was lost. An ask
+  that opens a menu, its origin or the route of an `Answer.Accept`, calls nothing, and neither does one whose
+  anvil the server refused to open, which closes the menu with `left = true`. The step runs on the player's
+  entity thread, except `LEFT` for a player who is gone, and one that throws is logged and reported under
+  `gui.prompt`. `PromptRequest` has `abandoned` as a fifth record component, and the four-argument constructor
+  gives a request whose step does nothing. `PromptEnd` and `PromptMode` may gain constants in a later release,
+  as their Javadoc now states, so a `switch` over either has a `default` branch.
 
 ### Changed
+- Breaking: a record pattern over `PromptRequest` needs a fifth component, for `abandoned`. Every `new
+  PromptRequest(question, initial, origin, answer)` compiles and behaves as before. Add the component to the
+  pattern, as in `PromptRequest(var question, var initial, var origin, var answer, var abandoned)`.
 - Breaking: a click on a menu slot is dropped for the click debounce window (250 ms by default) after a redraw
   put another button in that slot, as a click within that window of the menu opening already is. Before, a click
   that arrived just after `Menus.rerender` or a load redrew the menu ran the handler of whatever the slot showed
@@ -142,6 +158,10 @@ All notable changes to Taffy are documented here. This project follows
   until `busy(false)`, a load that ends or a handler that throws, which is how a handler whose work runs outside
   `Menus.load`, such as a claim that calls back on the viewer's thread, holds the session and releases it in the
   callback. `MenuSession.busy()` still reads `false` inside the handler of the first click.
+- The `Menu.closed` and `Menus` Javadoc state what `left = false` covers: these menus opened another menu in
+  place of the session, a prompt took over through `Prompts.ask`, or the menus are stopping. They also state
+  that a session never opens again once `closed` ran, since the menu a prompt opens afterwards is a new session,
+  so what a session holds outside its state is released or moved out in `closed` whatever `left` is.
 - A plugin with two `Menus`, such as one for player menus and one for admin menus, runs a button's handler once
   per click. Each `Menus` registers its own listener, and before, both listeners dispatched every click in any
   menu, so the handler ran twice, the click sound played twice, and the listener registered first ended every

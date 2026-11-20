@@ -71,9 +71,16 @@ public interface Menu<S> {
     /**
      * Runs once the session ended. Does nothing by default.
      *
+     * <p>The session never opens again after this call, whatever {@code left} is: a menu that opens in its place, and
+     * the origin a prompt opens when its ask ends, is a new session built from a {@link Route}. What the session held
+     * outside its state, such as escrowed items, is therefore released here or moved out, for a prompt into its
+     * {@link PromptRequest}, whose {@link PromptRequest#abandoned()} runs when the ask ends and the prompts open no
+     * menu.
+     *
      * @param session the session that ended
      * @param left {@code true} when the viewer left on their own (closed it, quit, died, or another plugin's menu
-     *     replaced it), {@code false} when this {@link Menus} replaced it or is stopping
+     *     replaced it), {@code false} when this {@link Menus} opened another menu in its place, a prompt built over
+     *     it took over through {@link Prompts#ask(Player, PromptRequest)}, or it is stopping
      */
     default void closed(MenuSession<S> session, boolean left) {
     }

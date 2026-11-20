@@ -13,6 +13,7 @@ import so.alaz.taffy.platform.EntityUnavailableException;
 import so.alaz.taffy.platform.ErrorReports;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -40,7 +41,8 @@ import java.util.logging.Level;
  * stripped of surrounding whitespace and cut to {@link #MAX_LENGTH} characters. A refused answer keeps the ask waiting
  * until its first deadline, {@link #TIMEOUT} after it was asked. Submit, cancel and timeout open a menu again unless
  * the player is dead or offline, has another plugin's inventory open, or the plugin is stopping; an ask ended by
- * another menu, another plugin's inventory, a newer ask or a quit opens nothing.
+ * another menu, another plugin's inventory, a newer ask or a quit opens nothing. An ask that ends with no menu opened
+ * for it calls {@link PromptRequest#abandoned()} once with a {@link PromptEnd}.
  *
  * <p>The plugin's lang files hold the text under these keys: {@link #QUESTION} (the question, with the
  * {@code <question>} value), {@link #HINT} (the chat hint, with the cancel word as {@code <word>}),
@@ -191,7 +193,8 @@ public final class Prompts {
 
     /**
      * Asks the player in place of the menu they have open. Replaces any ask still pending for the player without a
-     * message. Nothing happens once {@link Menus#shutdown()} ran, or when the server refused to open the anvil. Call on
+     * message, which tells that ask's {@link PromptRequest#abandoned()} {@link PromptEnd#REPLACED}. Nothing happens
+     * once {@link Menus#shutdown()} ran, or when the server refused to open the anvil. Call on
      * the player's entity thread, outside an inventory event; a {@link ClickHandler} calls
      * {@link #askLater(Player, PromptRequest)} instead.
      *
@@ -277,7 +280,10 @@ public final class Prompts {
      */
     void surfaceClosed(UUID player, long token, InventoryCloseEvent.Reason reason) {
         if (reason == InventoryCloseEvent.Reason.OPEN_NEW) {
-            takeWaiting(player, token);
+            Pending taken = takeWaiting(player, token);
+            if (taken != null) {
+                abandon(taken, PromptEnd.REPLACED);
+            }
             return;
         }
         cancel(player, token);
@@ -287,7 +293,8 @@ public final class Prompts {
     void cancel(UUID player, long token) {
         Pending taken = takeWaiting(player, token);
         if (taken != null) {
-            hop(player, live -> finish(live, taken, CANCELLED, taken.request().origin()));
+            hop(player, taken, live -> finish(live, taken, CANCELLED, taken.request().origin(),
+                PromptEnd.CANCELLED));
         }
     }
 
@@ -295,32 +302,41 @@ public final class Prompts {
     void expire(UUID player, long token) {
         Pending taken = takeWaiting(player, token);
         if (taken != null) {
-            hop(player, live -> finish(live, taken, TIMED_OUT, taken.request().origin()));
+            hop(player, taken, live -> finish(live, taken, TIMED_OUT, taken.request().origin(),
+                PromptEnd.TIMED_OUT));
         }
     }
 
     /**
-     * Ends the player's ask, pending or waiting for its {@link Answer.Later}, without a message and opens nothing.
-     * Call on the player's entity thread.
+     * Ends the player's ask, pending or waiting for its {@link Answer.Later}, as {@link PromptEnd#REPLACED}, without a
+     * message, and opens nothing. Call on the player's entity thread.
      */
     void end(UUID player) {
         Pending entry = pending.remove(player);
         if (entry != null) {
             closeSurface(entry.player(), entry);
+            abandon(entry, PromptEnd.REPLACED);
         }
         Pending judged = judging.remove(player);
         if (judged != null) {
             closeSurface(judged.player(), judged);
+            abandon(judged, PromptEnd.REPLACED);
         }
     }
 
-    /** Forgets the ask of a player who quit, and what the anvil keeps for them. */
+    /** Ends the ask of a player who quit as {@link PromptEnd#LEFT}, and forgets what the anvil keeps for them. */
     void quit(UUID player) {
-        pending.remove(player);
-        judging.remove(player);
+        Pending entry = pending.remove(player);
+        Pending judged = judging.remove(player);
         legacyLines.remove(player);
         if (anvil != null) {
             anvil.forget(player);
+        }
+        if (entry != null) {
+            abandon(entry, PromptEnd.LEFT);
+        }
+        if (judged != null) {
+            abandon(judged, PromptEnd.LEFT);
         }
     }
 
@@ -333,14 +349,31 @@ public final class Prompts {
      * Ends every ask without a message and opens nothing, then or later. An anvil still showing, including one whose
      * answer is still being judged, is taken away from each online player the calling thread owns. The anvil of a
      * player the calling thread does not own is emptied from the calling thread, forgotten and stays open, and once
-     * the plugin is disabled no listener cancels its clicks.
+     * the plugin is disabled no listener cancels its clicks. Each ended ask of an online player the calling thread
+     * owns ends as {@link PromptEnd#CANCELLED}.
      */
     void shutdown() {
         stopping = true;
-        pending.clear();
-        judging.clear();
-        if (anvil != null) {
-            anvil.shutdown(player -> player.isOnline() && menus.ownedHere().test(player));
+        List<Pending> ended = new ArrayList<>();
+        for (Map<UUID, Pending> asks : List.of(pending, judging)) {
+            for (UUID id : List.copyOf(asks.keySet())) {
+                Pending entry = asks.remove(id);
+                if (entry != null) {
+                    ended.add(entry);
+                }
+            }
+        }
+        Predicate<Player> here = player -> player.isOnline() && menus.ownedHere().test(player);
+        try {
+            if (anvil != null) {
+                anvil.shutdown(here);
+            }
+        } finally {
+            for (Pending entry : ended) {
+                if (here.test(entry.player())) {
+                    abandon(entry, PromptEnd.CANCELLED);
+                }
+            }
         }
     }
 
@@ -378,7 +411,7 @@ public final class Prompts {
     /** Judges text for an ask the caller took, on the player's entity thread. */
     void answer(UUID player, Pending taken, String text) {
         String answer = clean(text);
-        hop(player, live -> settle(live, taken, answer));
+        hop(player, taken, live -> settle(live, taken, answer));
     }
 
     /** The text without surrounding whitespace, cut to {@link #MAX_LENGTH} characters. */
@@ -428,7 +461,7 @@ public final class Prompts {
     private void settle(Player player, Pending taken, String text) {
         Locale locale = menus.locales().apply(player);
         if (text.equalsIgnoreCase(cancelWord(locale)) || text.equalsIgnoreCase(DEFAULT_CANCEL_WORD)) {
-            finish(player, taken, CANCELLED, taken.request().origin());
+            finish(player, taken, CANCELLED, taken.request().origin(), PromptEnd.CANCELLED);
             return;
         }
         Answer result;
@@ -443,7 +476,7 @@ public final class Prompts {
 
     private void decide(Player player, Pending taken, String text, Answer result) {
         switch (result) {
-            case Answer.Accept accept -> finish(player, taken, null, accept.next());
+            case Answer.Accept accept -> finish(player, taken, null, accept.next(), null);
             case Answer.Retry retry -> {
                 player.sendMessage(menus.source().render(menus.locales().apply(player), REFUSED,
                     Placeholder.component("reason", retry.reason()), Placeholder.unparsed("answer", text)));
@@ -455,21 +488,23 @@ public final class Prompts {
 
     /**
      * Keeps the ask until {@code answer} completes, unless the plugin is stopping, a menu opened or a newer ask took
-     * its place, then applies the result on the player's entity thread while the ask is still the one kept.
+     * its place, which ends the ask, then applies the result on the player's entity thread while the ask is still the
+     * one kept.
      */
     private void await(UUID id, Pending taken, String text, CompletableFuture<Answer> answer) {
         if (stopping || menus.session(id).isPresent() || pending.containsKey(id)
             || judging.putIfAbsent(id, taken) != null) {
+            abandon(taken, stopping ? PromptEnd.CANCELLED : PromptEnd.REPLACED);
             return;
         }
-        answer.whenComplete((result, failure) -> hop(id, live -> {
+        answer.whenComplete((result, failure) -> hop(id, null, live -> {
             if (!judging.remove(id, taken)) {
                 return;
             }
             Throwable cause = failure instanceof CompletionException && failure.getCause() != null
                 ? failure.getCause() : failure;
             if (cause instanceof CancellationException) {
-                finish(live, taken, null, taken.request().origin());
+                finish(live, taken, null, taken.request().origin(), null);
             } else if (cause != null) {
                 failed(live, taken, cause);
             } else if (result == null) {
@@ -485,17 +520,19 @@ public final class Prompts {
             failure);
         menus.errors().report("gui.prompt", failure);
         player.sendMessage(menus.source().render(menus.locales().apply(player), Menus.ERROR));
-        finish(player, taken, null, taken.request().origin());
+        finish(player, taken, null, taken.request().origin(), null);
     }
 
     /**
-     * Puts a refused ask back under its token with its first deadline, unless a newer ask or a menu took its place. An
-     * anvil no longer showing comes back on the next tick; with another inventory open then, the ask ends.
+     * Puts a refused ask back under its token with its first deadline, unless a newer ask or a menu took its place,
+     * which ends the ask. An anvil no longer showing comes back on the next tick; with another inventory open then, or
+     * when the server refuses to show it, the ask ends.
      */
     private void rearm(Player player, Pending entry) {
         UUID id = player.getUniqueId();
         if (stopping || menus.session(id).isPresent() || judging.containsKey(id)
             || pending.putIfAbsent(id, entry) != null) {
+            abandon(entry, stopping ? PromptEnd.CANCELLED : PromptEnd.REPLACED);
             return;
         }
         Duration left = Duration.ofNanos(entry.deadline() - nanos.getAsLong());
@@ -507,22 +544,39 @@ public final class Prompts {
         if (entry.mode() != PromptMode.CHAT && !surface(entry).showing(id, entry.token())) {
             menus.tasks().accept(player, () -> {
                 if (pending.get(id) == entry && !surface(entry).showing(id, entry.token())
-                    && (!ownScreen.test(player) || !show(player, entry))) {
-                    pending.remove(id, entry);
+                    && (!ownScreen.test(player) || !show(player, entry)) && pending.remove(id, entry)) {
+                    abandon(entry, PromptEnd.REPLACED);
                 }
             });
         }
     }
 
-    private void finish(Player player, Pending entry, @Nullable String key, Route next) {
+    /**
+     * Ends an ask the caller took: closes its anvil, tells the player {@code key} when one is given and opens
+     * {@code next}. When no menu may open, the ask ends as {@code cause}, or without one as what keeps the menu from
+     * opening.
+     */
+    private void finish(Player player, Pending entry, @Nullable String key, Route next, @Nullable PromptEnd cause) {
         closeSurface(player, entry);
         if (key != null) {
             player.sendMessage(menus.source().render(menus.locales().apply(player), key));
         }
         if (stopping || player.isDead() || !player.isOnline() || !ownScreen.test(player)) {
+            abandon(entry, cause != null ? cause : stopping ? PromptEnd.CANCELLED
+                : player.isDead() || !player.isOnline() ? PromptEnd.LEFT : PromptEnd.REPLACED);
             return;
         }
         menus.open(player, next);
+    }
+
+    private void abandon(Pending entry, PromptEnd end) {
+        try {
+            entry.request().abandoned().accept(end);
+        } catch (RuntimeException failure) {
+            menus.logger().log(Level.WARNING, "gui: the abandoned step of a prompt for " + entry.player().getName()
+                + " failed: " + failure, failure);
+            menus.errors().report("gui.prompt", failure);
+        }
     }
 
     private void closeSurface(Player player, Pending entry) {
@@ -544,14 +598,22 @@ public final class Prompts {
         return word.isEmpty() ? DEFAULT_CANCEL_WORD : word;
     }
 
-    private void hop(UUID player, Consumer<Player> task) {
+    /**
+     * Runs {@code task} on the player's entity thread. When the player is gone, the ask {@code taken}, which the
+     * caller took and nothing else holds, ends as {@link PromptEnd#LEFT} on the thread that found the player gone.
+     */
+    private void hop(UUID player, @Nullable Pending taken, Consumer<Player> task) {
         menus.entity().call(player, live -> {
             task.accept(live);
             return null;
         }).whenComplete((done, failure) -> {
             Throwable cause = failure instanceof CompletionException && failure.getCause() != null
                 ? failure.getCause() : failure;
-            if (cause != null && !(cause instanceof EntityUnavailableException)) {
+            if (cause instanceof EntityUnavailableException) {
+                if (taken != null) {
+                    abandon(taken, PromptEnd.LEFT);
+                }
+            } else if (cause != null) {
                 menus.logger().log(Level.WARNING, "gui: a prompt for " + player + " failed: " + cause, cause);
                 menus.errors().report("gui.prompt", cause);
             }

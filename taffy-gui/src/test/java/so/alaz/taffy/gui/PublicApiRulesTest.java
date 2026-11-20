@@ -21,9 +21,9 @@ class PublicApiRulesTest {
                 MenuSettings.class, ClickGuard.class, Debounce.class, Cue.class, Feedback.class,
                 ViewMemory.class, Menu.class, MenuSession.class, Menus.class, Menus.Parts.class, Frame.class,
                 Frame.Spec.class, Frame.Entry.class, Button.class, Click.class, ClickHandler.class, Footer.class,
-                MenuListener.class, PromptMode.class, PromptRequest.class, Answer.class, Answer.Accept.class,
-                Answer.Retry.class, Answer.Later.class, CancelLink.class, BedrockPlayers.class, Pending.class,
-                Prompts.class, PaperCancelLink.class, AnvilInput.class,
+                MenuListener.class, PromptMode.class, PromptRequest.class, PromptEnd.class, Answer.class,
+                Answer.Accept.class, Answer.Retry.class, Answer.Later.class, CancelLink.class, BedrockPlayers.class,
+                Pending.class, Prompts.class, PaperCancelLink.class, AnvilInput.class,
                 AnvilInput.Open.class, PaperPromptListener.class)
             .allSatisfy(type -> assertThat(type.getPackageName()).startsWith(getClass().getPackageName()));
     }
@@ -35,8 +35,8 @@ class PublicApiRulesTest {
             .map(Class::getSimpleName))
             .containsExactlyInAnyOrder("Answer", "BedrockPlayers", "Click", "ClickGuard", "ClickHandler",
                 "Cue", "Frame", "Icon", "ItemLayout", "Menu", "MenuKind", "MenuLayout", "MenuSession",
-                "MenuSettings", "MenuText", "Menus", "Pager", "PagerLayout", "PromptMode", "PromptRequest", "Prompts",
-                "Route", "TextSource", "ViewMemory");
+                "MenuSettings", "MenuText", "Menus", "Pager", "PagerLayout", "PromptEnd", "PromptMode",
+                "PromptRequest", "Prompts", "Route", "TextSource", "ViewMemory");
     }
 
     @Test
