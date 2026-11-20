@@ -67,6 +67,20 @@ final class EconomyResultTest {
     }
 
     @Test
+    void movedIsTrueForTheStatusesWhoseMoneyMoved() {
+        for (EconomyResult.Status status : EconomyResult.Status.values()) {
+            boolean moved = switch (status) {
+                case OK, OVERDRAWN -> true;
+                case INSUFFICIENT, UNSUPPORTED, FAILED, NOT_STARTED -> false;
+            };
+            EconomyResult result = status == EconomyResult.Status.FAILED
+                ? EconomyResult.failed("frozen account") : EconomyResult.of(status);
+
+            assertThat(result.moved()).as(status.name()).isEqualTo(moved);
+        }
+    }
+
+    @Test
     void statusesKeepTheirOrder() {
         assertThat(EconomyResult.Status.values()).containsExactly(EconomyResult.Status.OK,
             EconomyResult.Status.INSUFFICIENT, EconomyResult.Status.UNSUPPORTED, EconomyResult.Status.OVERDRAWN,

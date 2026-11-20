@@ -5,6 +5,79 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `EconomyResult.moved()` tells whether the money moved: `true` for `OK` and `OVERDRAWN`, `false` for
+  `INSUFFICIENT`, `UNSUPPORTED`, `FAILED` and `NOT_STARTED`. A plugin that refused a purchase on
+  `status() != Status.OK` kept the money of an `OVERDRAWN` withdraw and delivered nothing. An `OVERDRAWN`
+  withdraw is a completed payment: the plugin delivers what was paid for and may log it, and one that accepts no
+  overdraft gives the amount back with `deposit`.
+- `EconomyProvider.vault(VaultOptions options)` looks the Vault economy up with a `VaultOptions`, which carries
+  what the other entry points take as arguments and the options they have no argument for.
+  `VaultOptions.of(Plugin owner, ErrorReports errors, boolean folia)` gives a lookup that is switched on, uses the
+  economy's own decimal places and calls the economy on the global region thread, and `switchedOn(boolean)`,
+  `scale(Integer)` and `threadRule(VaultOptions.ThreadRule)` each give a copy with that value replaced.
+  `vault(owner, errors, switchedOn, folia, scale)` is unchanged and gives the same result as
+  `vault(VaultOptions.of(owner, errors, folia).switchedOn(switchedOn).scale(scale))`.
+- `VaultOptions.ThreadRule` names the thread the Vault economy is called on. `GLOBAL`, the default, is the rule of
+  every earlier release: `thread(player)` answers `ThreadTag.GLOBAL`. `ENTITY` is an opt-in for an economy plugin
+  that is safe to call on region threads: `thread(player)` answers `ThreadTag.entity(player)` for a player who is
+  online, so a plugin that is already on that player's region thread calls the economy inline, and
+  `ThreadTag.GLOBAL` for a player who is not online. Under `ENTITY` the calls for one player are ordered on that
+  player's thread and, on Folia, are not ordered against another plugin that moves the same account on the global
+  region thread.
+- `VaultOptions.FundsCheck` names who decides whether a balance covers an amount, set with
+  `VaultOptions.fundsCheck(VaultOptions.FundsCheck)`. `EMULATED`, the default, is the check of every earlier
+  release: `has` compares the balance the provider reads with the amount, and `withdraw` gives `INSUFFICIENT` for
+  a short balance without asking the economy. `NATIVE` is an opt-in for an economy that allows an overdraft or a
+  loan, or keeps rules of its own: `has` answers what Vault's `Economy.has` answers for the amount rounded to
+  `scale()`, and `withdraw` reads no balance, runs `start` and lets `withdrawPlayer` decide. Under `NATIVE` a
+  withdraw the economy refuses gives `FAILED` with the economy's message, for a short balance too, since a Vault
+  response has no type for insufficient funds, and a withdraw never gives `INSUFFICIENT` or `OVERDRAWN`: one that
+  leaves the balance below zero gives `OK`. The amount, the thread and the disabled economy plugin are checked as
+  under `EMULATED`.
+
+### Changed
+- `balance`, `has`, `withdraw` and `deposit` of the Vault economy throw `IllegalStateException` when the calling
+  thread is not the one `thread(player)` names, with a message that names `thread(player)` and
+  `Scheduler.dispatch`. This is a fix: the `EconomyProvider` Javadoc always stated that every call runs on that
+  thread, and nothing enforced it, so a call from a Folia region thread or an async thread ran unordered against
+  the other callers of the economy and the balance check of a withdraw could pass twice. The thread is the one
+  `Server.isGlobalTickThread()` is `true` on for `ThreadTag.GLOBAL` and the one
+  `Server.isOwnedByCurrentRegion(player)` is `true` on for an entity tag; under `VaultOptions.ThreadRule.ENTITY` a
+  call for a player who is not online is checked against the global region thread. The check comes after the
+  `null` checks and before the amount is checked or anything in the economy is called, so no money moves.
+  `scale()`, `thread`, `probe()` and the lookup are not checked. Upgrading: a call made on the main thread of a
+  Paper server, or through `Scheduler.dispatch` on the thread `thread(player)` names, is unchanged. A call made
+  anywhere else threw nothing before and throws now: an async thread on Paper, and every region thread on Folia
+  under the default rule, so the mistake shows mostly on Folia. Run each call through
+  `scheduler.dispatch(economy.thread(player), () -> economy.withdraw(player, amount))`, or, for a plugin that
+  calls the economy inline on the player's region thread with an economy plugin that is safe there, look the
+  economy up with `VaultOptions.threadRule(VaultOptions.ThreadRule.ENTITY)`.
+
+### Fixed
+- The Vault economy of `EconomyProvider.vault` no longer refuses a payment over the representation error of a
+  `double`. An economy plugin that keeps balances as `double` holds `0.09999999999999998` after a player with
+  `1.00` pays `0.90`, and `has` answered `false` and `withdraw` gave `INSUFFICIENT` for `0.10` without asking
+  the economy, although `balance` read `0.10`. A balance read from Vault is now rounded half-even to 8 decimal
+  places, four more than `EconomyProvider.MAX_SCALE`, before it is compared or rounded to `scale()`, and a
+  balance within 16 units in the last place of the `double` of an amount at `scale()` reads as that amount, so a
+  stored `1000000428.0799999`, which is `1000000456.18 - 28.10`, covers `1000000428.08`. The balance read after
+  a withdraw is measured in units of the balance read before it. A balance that is short by more than that, such
+  as `0.0999` or `0.995`, is still short, and one below zero by more than that is still `OVERDRAWN`. Where one
+  such unit nears the smallest amount at `scale()`, which is from about 1e13 at 2 decimal places and from about
+  1e11 at 4, a `double` no longer holds the amount and a comparison can be off by one unit of `scale()`.
+- A `withdraw` of the Vault economy returns `OK` when the economy confirmed it and the balance read that follows,
+  which tells `OVERDRAWN`, throws an exception or a `LinkageError`. The throwable left `withdraw`, so a withdraw
+  that had moved the money read as one with an unknown outcome. The overdraft check is skipped for that call and
+  a warning is logged to the owner's logger, at most one line a minute after the first. Any other `Error` still
+  propagates.
+- `withdraw` and `deposit` of the Vault economy return `FAILED`, with the message
+  `the economy plugin <name> is disabled`, while the plugin that registered the economy is disabled. The provider
+  kept the `Economy` object found at lookup and called it whatever its plugin's state, so during a server stop,
+  or in a plugin with no `EconomyWatcher`, a payment reached a disabled economy plugin. The refusal comes before
+  the amount is checked and calls nothing in the economy, so no money moves. `balance` and `has` read the economy
+  as before, and the status of the `Detected` still changes only through a new lookup.
+
 ## [0.3.1] - 2026-11-20
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

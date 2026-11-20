@@ -16,6 +16,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 final class EmulatedTest {
 
     private final List<BigDecimal> withdrawn = new ArrayList<>();
+    private final List<Throwable> unchecked = new ArrayList<>();
 
     @Test
     void aCoveredWithdrawRunsAndChecksTheBalanceAfterwards() {
@@ -41,7 +42,7 @@ final class EmulatedTest {
         }, ok(), new BigDecimal("6.00"), () -> {
             order.add("start");
             return false;
-        });
+        }, unchecked::add);
 
         assertThat(result).isEqualTo(EconomyResult.of(EconomyResult.Status.NOT_STARTED));
         assertThat(order).containsExactly("balance", "start");
@@ -54,7 +55,7 @@ final class EmulatedTest {
         EconomyResult result = Emulated.withdraw(balances("5.99"), ok(), new BigDecimal("6.00"), () -> {
             started.add("start");
             return true;
-        });
+        }, unchecked::add);
 
         assertThat(result.status()).isEqualTo(EconomyResult.Status.INSUFFICIENT);
         assertThat(started).isEmpty();
@@ -79,22 +80,35 @@ final class EmulatedTest {
     }
 
     @Test
-    void anUnreadableBalanceBeforeTheCallIsAFailureAndAfterItPropagates() {
+    void anUnreadableBalanceBeforeTheCallIsAFailure() {
         EconomyResult before = withdraw(() -> {
             throw new IllegalStateException("no account");
         }, ok(), BigDecimal.ONE);
+
         assertThat(before.status()).isEqualTo(EconomyResult.Status.FAILED);
         assertThat(before.message()).isEqualTo("the balance could not be read: no account");
         assertThat(withdrawn).isEmpty();
+        assertThat(unchecked).isEmpty();
+    }
 
-        Deque<BigDecimal> reads = new ArrayDeque<>(List.of(BigDecimal.TEN));
-        assertThatThrownBy(() -> withdraw(() -> {
-            if (reads.isEmpty()) {
-                throw new IllegalStateException("economy went away");
-            }
-            return reads.pop();
-        }, ok(), BigDecimal.ONE)).hasMessage("economy went away");
-        assertThat(withdrawn).containsExactly(BigDecimal.ONE);
+    @Test
+    void anUnreadableBalanceAfterAWithdrawThatWentThroughKeepsTheResultAndIsHandedOn() {
+        IllegalStateException gone = new IllegalStateException("economy went away");
+        AbstractMethodError unlinked = new AbstractMethodError("getBalance(OfflinePlayer)");
+
+        assertThat(withdraw(readsOnceThenThrows(gone), ok(), BigDecimal.ONE)).isEqualTo(EconomyResult.ok());
+        assertThat(withdraw(readsOnceThenThrows(unlinked), ok(), BigDecimal.ONE)).isEqualTo(EconomyResult.ok());
+
+        assertThat(withdrawn).containsExactly(BigDecimal.ONE, BigDecimal.ONE);
+        assertThat(unchecked).containsExactly(gone, unlinked);
+    }
+
+    @Test
+    void anErrorThatIsNoLinkageErrorAfterTheWithdrawPropagates() {
+        StackOverflowError deep = new StackOverflowError("too deep");
+
+        assertThatThrownBy(() -> withdraw(readsOnceThenThrows(deep), ok(), BigDecimal.ONE)).isSameAs(deep);
+        assertThat(unchecked).isEmpty();
     }
 
     @Test
@@ -137,7 +151,20 @@ final class EmulatedTest {
 
     private EconomyResult withdraw(Supplier<BigDecimal> balance, Function<BigDecimal, EconomyResult> call,
                                    BigDecimal amount) {
-        return Emulated.withdraw(balance, call, amount, () -> true);
+        return Emulated.withdraw(balance, call, amount, () -> true, unchecked::add);
+    }
+
+    private static Supplier<BigDecimal> readsOnceThenThrows(Throwable thrown) {
+        Deque<BigDecimal> reads = new ArrayDeque<>(List.of(BigDecimal.TEN));
+        return () -> {
+            if (!reads.isEmpty()) {
+                return reads.pop();
+            }
+            if (thrown instanceof Error error) {
+                throw error;
+            }
+            throw (RuntimeException) thrown;
+        };
     }
 
     private Supplier<BigDecimal> balances(String... values) {

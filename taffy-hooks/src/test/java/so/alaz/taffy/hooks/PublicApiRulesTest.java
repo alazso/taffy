@@ -16,8 +16,9 @@ class PublicApiRulesTest {
                 ItemsAdderProvider.class, NexoProvider.class, OraxenProvider.class, HeadDatabaseProvider.class,
                 CustomItems.class, CustomItems.Resolution.class, CustomItems.Built.class,
                 CustomItems.Built.Reason.class, EconomyResult.class, EconomyResult.Status.class,
-                EconomyProvider.class, Emulated.class, VaultEconomy.class, MissingEconomy.class, EconomyLookup.class,
-                EconomyWatcher.class, PermissionProvider.class, LuckPermsPermissions.class,
+                EconomyProvider.class, VaultOptions.class, VaultOptions.ThreadRule.class,
+                VaultOptions.FundsCheck.class, Emulated.class, VaultEconomy.class, MissingEconomy.class,
+                EconomyLookup.class, EconomyWatcher.class, PermissionProvider.class, LuckPermsPermissions.class,
                 RegionProvider.class, WorldGuardRegions.class, PlaceholderExpansionBuilder.class,
                 PlaceholderRegistration.class, PapiExpansion.class, MiniExpansion.class)
             .allSatisfy(type -> assertThat(type.getPackageName()).startsWith(getClass().getPackageName()));

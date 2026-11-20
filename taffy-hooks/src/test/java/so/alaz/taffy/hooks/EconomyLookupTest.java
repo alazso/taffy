@@ -2,7 +2,9 @@ package so.alaz.taffy.hooks;
 
 import io.papermc.paper.plugin.configuration.PluginMeta;
 import net.milkbowl.vault.economy.Economy;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.Server;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
 import org.bukkit.plugin.RegisteredServiceProvider;
@@ -11,26 +13,35 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.platform.Scheduler;
+import so.alaz.taffy.platform.ThreadTag;
 import so.alaz.taffy.test.CapturedLog;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 final class EconomyLookupTest {
 
+    private static final UUID PLAYER = UUID.fromString("069a79f4-44e9-4726-a5be-fca90e38aaf5");
+
     private final Plugin owner = mock(Plugin.class);
     private final Server server = mock(Server.class);
     private final ServicesManager services = mock(ServicesManager.class);
     private final PluginManager plugins = mock(PluginManager.class);
     private final Economy economy = mock(Economy.class);
+    private final Plugin registrant = mock(Plugin.class);
     private final CapturedLog log = new CapturedLog();
     private final ErrorReports errors = new ErrorReports();
     private final List<String> reported = new ArrayList<>();
@@ -41,7 +52,10 @@ final class EconomyLookupTest {
         when(owner.getLogger()).thenReturn(log.logger);
         when(server.getServicesManager()).thenReturn(services);
         when(server.getPluginManager()).thenReturn(plugins);
+        when(server.isGlobalTickThread()).thenReturn(true);
         errors.install((source, error) -> reported.add(source + " " + error.getMessage()));
+        when(registrant.isEnabled()).thenReturn(true);
+        when(registrant.getName()).thenReturn("Essentials");
     }
 
     private static Plugin vaultPlugin(String version) {
@@ -58,13 +72,14 @@ final class EconomyLookupTest {
     }
 
     private Detected<EconomyProvider> lookUp(boolean folia, Integer scale) {
-        return EconomyLookup.vault(owner, errors, true, folia, scale);
+        return EconomyLookup.vault(VaultOptions.of(owner, errors, folia).scale(scale));
     }
 
     @SuppressWarnings("unchecked")
     private void registered() {
         RegisteredServiceProvider<Economy> registration = mock(RegisteredServiceProvider.class);
         when(registration.getProvider()).thenReturn(economy);
+        when(registration.getPlugin()).thenReturn(registrant);
         when(services.getRegistration(Economy.class)).thenReturn(registration);
     }
 
@@ -111,6 +126,29 @@ final class EconomyLookupTest {
     }
 
     @Test
+    void theStatusDoesNotFollowTheEnabledStateOfThePluginThatRegisteredTheEconomy() {
+        registered();
+        installVault("1.7.3");
+        Detected<EconomyProvider> found = lookUp(false, null);
+        HookStatus on = new HookStatus("Vault", HookState.ON, "1.7.3", null);
+        EconomyProvider provider = found.provider();
+
+        when(registrant.isEnabled()).thenReturn(false);
+
+        assertThat(found.status()).isEqualTo(on);
+        assertThat(found.bound()).isNull();
+        assertThat(found.provider()).isSameAs(provider);
+        assertThat(provider.withdraw(PLAYER, BigDecimal.ONE))
+            .isEqualTo(EconomyResult.failed("the economy plugin Essentials is disabled"));
+        assertThat(provider.deposit(PLAYER, BigDecimal.ONE))
+            .isEqualTo(EconomyResult.failed("the economy plugin Essentials is disabled"));
+        verifyNoInteractions(economy);
+        assertThat(found.status()).isEqualTo(on);
+        assertThat(log.lines()).isEmpty();
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
     void theEntryPointOnTheProviderInterfaceLooksUpTheSameWay() {
         registered();
         installVault("1.7.3");
@@ -121,6 +159,67 @@ final class EconomyLookupTest {
         assertThat(found.provider()).isInstanceOf(VaultEconomy.class);
         assertThat(EconomyProvider.vault(owner, errors, false, false, null).status().state())
             .isEqualTo(HookState.SWITCHED_OFF);
+    }
+
+    @Test
+    void theEntryPointThatTakesOptionsLooksUpAsTheOneThatTakesEachValue() {
+        registered();
+        installVault("1.7.3");
+        when(economy.fractionalDigits()).thenReturn(2);
+        VaultOptions options = VaultOptions.of(owner, errors, false);
+
+        Detected<EconomyProvider> found = EconomyProvider.vault(options);
+
+        assertThat(found.status()).isEqualTo(EconomyProvider.vault(owner, errors, true, false, null).status());
+        assertThat(found.provider()).isInstanceOf(VaultEconomy.class);
+        assertThat(found.provider().thread(PLAYER)).isSameAs(ThreadTag.GLOBAL);
+        assertThat(EconomyProvider.vault(owner, errors, true, false, null).provider().thread(PLAYER))
+            .isSameAs(ThreadTag.GLOBAL);
+        assertThat(EconomyProvider.vault(options.scale(3)).provider().scale()).isEqualTo(3);
+        assertThat(EconomyProvider.vault(options.switchedOn(false)).status().state())
+            .isEqualTo(HookState.SWITCHED_OFF);
+        assertThat(EconomyProvider.vault(VaultOptions.of(owner, errors, true)).status())
+            .isEqualTo(EconomyProvider.vault(owner, errors, true, true, null).status());
+        assertThatThrownBy(() -> EconomyProvider.vault(null))
+            .isInstanceOf(NullPointerException.class).hasMessage("options");
+    }
+
+    @Test
+    void theEntityRuleOfTheOptionsReachesTheProvider() {
+        registered();
+        installVault("1.7.3");
+        Player online = mock(Player.class);
+        when(server.getPlayer(PLAYER)).thenReturn(online);
+
+        EconomyProvider provider = EconomyProvider.vault(
+            VaultOptions.of(owner, errors, true).threadRule(VaultOptions.ThreadRule.ENTITY)).provider();
+
+        assertThat(provider.thread(PLAYER)).isEqualTo(ThreadTag.entity(PLAYER));
+        when(server.getPlayer(PLAYER)).thenReturn(null);
+        assertThat(provider.thread(PLAYER)).isSameAs(ThreadTag.GLOBAL);
+        verifyNoInteractions(economy);
+    }
+
+    @Test
+    void theNativeFundsCheckOfTheOptionsReachesTheProvider() {
+        registered();
+        installVault("1.7.3");
+        when(economy.fractionalDigits()).thenReturn(2);
+        OfflinePlayer account = mock(OfflinePlayer.class);
+        when(server.getOfflinePlayer(PLAYER)).thenReturn(account);
+        when(economy.getBalance(account)).thenReturn(5.0);
+        when(economy.has(account, 20.0)).thenReturn(true);
+        VaultOptions options = VaultOptions.of(owner, errors, false);
+
+        EconomyProvider emulated = EconomyProvider.vault(options).provider();
+        EconomyProvider natively =
+            EconomyProvider.vault(options.fundsCheck(VaultOptions.FundsCheck.NATIVE)).provider();
+
+        assertThat(emulated.has(PLAYER, new BigDecimal("20"))).isFalse();
+        assertThat(EconomyProvider.vault(owner, errors, true, false, null).provider().has(PLAYER, new BigDecimal("20")))
+            .isFalse();
+        verify(economy, never()).has(any(OfflinePlayer.class), anyDouble());
+        assertThat(natively.has(PLAYER, new BigDecimal("20"))).isTrue();
     }
 
     @Test
@@ -200,7 +299,8 @@ final class EconomyLookupTest {
 
     @Test
     void aSwitchedOffEconomyReadsNothingFromTheServer() {
-        Detected<EconomyProvider> off = EconomyLookup.vault(owner, errors, false, false, 2);
+        Detected<EconomyProvider> off =
+            EconomyLookup.vault(VaultOptions.of(owner, errors, false).switchedOn(false).scale(2));
 
         assertThat(off.status()).isEqualTo(new HookStatus("Vault", HookState.SWITCHED_OFF, null, null));
         assertThat(off.provider()).isNull();
@@ -215,16 +315,16 @@ final class EconomyLookupTest {
             .isInstanceOf(IllegalArgumentException.class).hasMessage("a scale runs from 0 to 4, not -1");
         assertThatThrownBy(() -> lookUp(false, 5))
             .isInstanceOf(IllegalArgumentException.class).hasMessage("a scale runs from 0 to 4, not 5");
-        assertThatThrownBy(() -> EconomyLookup.vault(owner, errors, false, false, 5))
+        assertThatThrownBy(() -> EconomyProvider.vault(owner, errors, false, false, 5))
             .isInstanceOf(IllegalArgumentException.class).hasMessage("a scale runs from 0 to 4, not 5");
         verifyNoInteractions(server, services, plugins);
     }
 
     @Test
     void aMissingOwnerOrErrorSinkIsRefused() {
-        assertThatThrownBy(() -> EconomyLookup.vault(null, errors, true, false, null))
+        assertThatThrownBy(() -> EconomyProvider.vault(null, errors, true, false, null))
             .isInstanceOf(NullPointerException.class).hasMessage("owner");
-        assertThatThrownBy(() -> EconomyLookup.vault(owner, null, true, false, null))
+        assertThatThrownBy(() -> EconomyProvider.vault(owner, null, true, false, null))
             .isInstanceOf(NullPointerException.class).hasMessage("errors");
     }
 

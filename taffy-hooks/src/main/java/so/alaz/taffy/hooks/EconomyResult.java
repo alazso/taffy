@@ -9,7 +9,7 @@ import java.util.Objects;
  * unknown, and money may or may not have moved.
  *
  * @param status what happened
- * @param message the economy's reason, for {@link Status#FAILED}
+ * @param message the reason, for {@link Status#FAILED}
  */
 public record EconomyResult(Status status, @Nullable String message) {
 
@@ -25,9 +25,9 @@ public record EconomyResult(Status status, @Nullable String message) {
         UNSUPPORTED,
         /** The money moved and left the balance below zero. */
         OVERDRAWN,
-        /** The economy refused the call, and no money moved. */
+        /** The economy refused the call, or the plugin that registered it is disabled, and no money moved. */
         FAILED,
-        /** The withdraw was stopped after the balance check and before any money moved. */
+        /** {@code start} returned {@code false}, so the withdraw was stopped before any money moved. */
         NOT_STARTED
     }
 
@@ -42,6 +42,21 @@ public record EconomyResult(Status status, @Nullable String message) {
         if (status == Status.FAILED && (message == null || message.isBlank())) {
             throw new IllegalArgumentException("a FAILED result names its reason");
         }
+    }
+
+    /**
+     * Whether the money moved: {@code true} for {@link Status#OK} and {@link Status#OVERDRAWN}, {@code false} for
+     * every other status. An {@link Status#OVERDRAWN} withdraw is a completed payment, so the caller delivers what
+     * was paid for; a caller that accepts no overdraft gives the amount back with
+     * {@link EconomyProvider#deposit(java.util.UUID, java.math.BigDecimal)}.
+     *
+     * @return {@code true} if the amount left or reached the account
+     */
+    public boolean moved() {
+        return switch (status) {
+            case OK, OVERDRAWN -> true;
+            case INSUFFICIENT, UNSUPPORTED, FAILED, NOT_STARTED -> false;
+        };
     }
 
     /**
@@ -65,9 +80,9 @@ public record EconomyResult(Status status, @Nullable String message) {
     }
 
     /**
-     * The economy refused the call, and no money moved.
+     * The call was refused, and no money moved.
      *
-     * @param message the economy's reason
+     * @param message the reason
      * @return the result
      * @throws IllegalArgumentException if {@code message} is {@code null} or blank
      */

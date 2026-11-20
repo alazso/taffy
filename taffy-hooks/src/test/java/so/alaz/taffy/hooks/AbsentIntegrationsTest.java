@@ -200,7 +200,8 @@ final class AbsentIntegrationsTest {
         assertThat(exported).containsExactlyInAnyOrder(HookState.class, HookStatus.class, Detected.class,
             CustomItemPlugin.class, CustomItemRef.class, CustomItems.class, CustomItems.Resolution.class,
             CustomItems.Built.class, CustomItems.Built.Reason.class, EconomyResult.class, EconomyResult.Status.class,
-            EconomyProvider.class, EconomyWatcher.class,
+            EconomyProvider.class, VaultOptions.class, VaultOptions.ThreadRule.class,
+            VaultOptions.FundsCheck.class, EconomyWatcher.class,
             PermissionProvider.class, RegionProvider.class, PlaceholderExpansionBuilder.class,
             PlaceholderRegistration.class, HologramPlugin.class, HologramProvider.class);
         assertThat(exported).doesNotContain(EconomyLookup.class, Detection.class);

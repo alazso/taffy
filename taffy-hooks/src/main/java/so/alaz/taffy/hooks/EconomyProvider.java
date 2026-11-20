@@ -18,7 +18,8 @@ import java.util.function.BooleanSupplier;
  * before it reaches the economy, and refuses with {@link IllegalArgumentException} an amount that is negative, rounds
  * to zero, or cannot reach the economy exactly. {@link #has(UUID, BigDecimal)} accepts any amount. A withdraw or
  * deposit that throws has an unknown outcome: money may or may not have moved. A {@code null} argument throws
- * {@link NullPointerException}.
+ * {@link NullPointerException}. An implementation may refuse a call made off the thread {@link #thread(UUID)} names
+ * with {@link IllegalStateException}, before anything in the economy is called, as the Vault economy does.
  */
 public interface EconomyProvider {
 
@@ -33,6 +34,34 @@ public interface EconomyProvider {
      * no probe and no metadata call runs. The Vault classes are loaded only when the Vault API is visible to the
      * plugin. Vault carries amounts as {@code double}, so the provider refuses an amount that a {@code double} cannot
      * carry exactly.
+     *
+     * <p>A balance read from Vault is rounded half-even to 8 decimal places, four more than {@value #MAX_SCALE},
+     * before it is compared or rounded to {@link #scale()}, and a balance within 16 units in the last place of the
+     * {@code double} of an amount at {@link #scale()} reads as that amount. A stored {@code 0.09999999999999998},
+     * which is {@code 1.0 - 0.9}, covers an amount of {@code 0.10}, and a stored {@code 1000000428.0799999}, which
+     * is {@code 1000000456.18 - 28.10}, covers {@code 1000000428.08}, while a stored {@code 0.0999} does not cover
+     * {@code 0.10}. The balance read after a withdraw is measured in units of the balance read before it. Where one
+     * such unit nears the smallest amount at {@link #scale()}, which is from about 1e13 at 2 decimal places and
+     * from about 1e11 at 4, a {@code double} no longer holds the amount and a comparison can be off by one unit of
+     * {@link #scale()}. A withdraw reads the balance a second time once the
+     * economy confirmed it, to tell {@link EconomyResult.Status#OVERDRAWN}. When that read throws an exception or a
+     * {@link LinkageError}, the result is {@link EconomyResult.Status#OK}, the overdraft check is skipped and a
+     * warning is logged; any other {@link Error} propagates.
+     *
+     * <p>The provider keeps the plugin that registered the economy. While that plugin is disabled, a withdraw or
+     * deposit returns {@link EconomyResult.Status#FAILED} with a message that names the plugin, before the amount is
+     * checked and with no call into the economy, so no money moves. {@link #balance(UUID)} and
+     * {@link #has(UUID, BigDecimal)} still read the economy, and the status stays as the lookup found it.
+     *
+     * <p>{@link #balance(UUID)}, {@link #has(UUID, BigDecimal)}, a withdraw and a deposit throw
+     * {@link IllegalStateException} when the calling thread is not the one {@link #thread(UUID)} names for the
+     * player, with a message that names {@code thread(player)} and {@code Scheduler.dispatch}. For
+     * {@link ThreadTag#GLOBAL} the thread is the one {@code Server.isGlobalTickThread()} is {@code true} on, and for
+     * an entity tag the one {@code Server.isOwnedByCurrentRegion(player)} is {@code true} on. Under
+     * {@link VaultOptions.ThreadRule#ENTITY} a call for a player who is not online is checked against the global
+     * region thread, as {@link #thread(UUID)} answers for that player. The check comes after the {@code null} checks
+     * and before the amount is checked, the registering plugin's state is read or anything in the economy is called,
+     * so no money moves. {@link #scale()}, {@link #thread(UUID)}, {@link #probe()} and the lookup are not checked.
      *
      * <p>The status's plugin is always {@code Vault}, and each status but {@link HookState#SWITCHED_OFF} and
      * {@link HookState#ON} carries a reason for the owner:
@@ -73,7 +102,40 @@ public interface EconomyProvider {
      */
     static Detected<EconomyProvider> vault(Plugin owner, ErrorReports errors, boolean switchedOn, boolean folia,
                                            @Nullable Integer scale) {
-        return EconomyLookup.vault(owner, errors, switchedOn, folia, scale);
+        return vault(VaultOptions.of(owner, errors, folia).switchedOn(switchedOn).scale(scale));
+    }
+
+    /**
+     * Looks up the economy registered with Vault as {@link #vault(Plugin, ErrorReports, boolean, boolean, Integer)}
+     * does, with the owner, the error reports, the switch, the server kind and the scale read from
+     * {@code options}, and with the options that entry point has no argument for.
+     *
+     * <p>{@link VaultOptions#threadRule()} names the thread the economy is called on.
+     * {@link VaultOptions.ThreadRule#GLOBAL}, which {@link VaultOptions#of(Plugin, ErrorReports, boolean)} gives
+     * and the entry points without options use, makes {@link #thread(UUID)} answer {@link ThreadTag#GLOBAL} for every
+     * player. {@link VaultOptions.ThreadRule#ENTITY} is for an economy plugin that is safe to call on region threads:
+     * {@link #thread(UUID)} answers {@link ThreadTag#entity(UUID)} for a player who is online, so a plugin that is
+     * already on that player's region thread calls the economy inline, and {@link ThreadTag#GLOBAL} for a player who
+     * is not online. Under it the calls for one player are ordered on that player's thread and, on Folia, are not
+     * ordered against another plugin that moves the same account on the global region thread.
+     *
+     * <p>{@link VaultOptions#fundsCheck()} names who decides whether a balance covers an amount.
+     * {@link VaultOptions.FundsCheck#EMULATED}, which {@link VaultOptions#of(Plugin, ErrorReports, boolean)} gives
+     * and the entry points without options use, is the check {@link #has(UUID, BigDecimal)} and
+     * {@link #withdraw(UUID, BigDecimal, BooleanSupplier)} describe: the provider compares the balance it reads with
+     * the amount and never calls Vault's {@code Economy.has}. Under {@link VaultOptions.FundsCheck#NATIVE},
+     * {@link #has(UUID, BigDecimal)} answers what {@code Economy.has} answers, and a withdraw reads no balance and
+     * lets {@code withdrawPlayer} decide, so an overdraft or a loan the economy allows goes through. A withdraw the
+     * economy refuses then gives {@link EconomyResult.Status#FAILED} with the economy's message, for a short balance
+     * too, since a Vault response has no type for insufficient funds, and a withdraw never gives
+     * {@link EconomyResult.Status#INSUFFICIENT} or {@link EconomyResult.Status#OVERDRAWN}.
+     *
+     * @param options what the lookup reads
+     * @return the lookup result, with a provider when the state is {@link HookState#ON}
+     * @throws NullPointerException if {@code options} is {@code null}
+     */
+    static Detected<EconomyProvider> vault(VaultOptions options) {
+        return EconomyLookup.vault(options);
     }
 
     /**
@@ -97,7 +159,7 @@ public interface EconomyProvider {
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(errors, "errors");
         Objects.requireNonNull(mode, "mode");
-        return EconomyLookup.vault(owner, errors, switchedOn, mode == Scheduler.Mode.FOLIA, scale);
+        return vault(owner, errors, switchedOn, mode == Scheduler.Mode.FOLIA, scale);
     }
 
     /**
@@ -108,7 +170,9 @@ public interface EconomyProvider {
     int scale();
 
     /**
-     * The thread to call this economy on for a player.
+     * The thread to call this economy on for a player. The answer may change between calls: the Vault economy under
+     * {@link VaultOptions.ThreadRule#ENTITY} answers {@link ThreadTag#entity(UUID)} while the player is online and
+     * {@link ThreadTag#GLOBAL} while the player is not.
      *
      * @param player the player
      * @return the thread
@@ -125,9 +189,9 @@ public interface EconomyProvider {
     BigDecimal balance(UUID player);
 
     /**
-     * Whether the player's balance covers an amount, as a withdraw checks it: the balance as the economy holds it,
-     * not rounded, is compared with the amount rounded half-even to {@link #scale()}, so a balance just under the
-     * amount never covers it. Unlike a withdraw, any amount is accepted: one that is negative or rounds to zero is
+     * Whether the player's balance covers an amount, as a withdraw checks it: the balance as the provider reads it,
+     * not rounded to {@link #scale()}, is compared with the amount rounded half-even to {@link #scale()}, so a
+     * balance short of the amount by less than one unit of {@link #scale()} does not cover it. Unlike a withdraw, any amount is accepted: one that is negative or rounds to zero is
      * covered by every balance of zero or more.
      *
      * <p>This default compares {@link #balance(UUID)} with the rounded amount. An implementation whose economy keeps
@@ -155,8 +219,9 @@ public interface EconomyProvider {
     }
 
     /**
-     * Takes money from a player when the balance covers it. {@code start} runs after the balance check and before
-     * the money moves, on the same thread; when it returns {@code false} no money moves.
+     * Takes money from a player when the balance covers it. {@code start} runs after the balance check, when the
+     * provider makes one, and before the money moves, on the same thread; when it returns {@code false} no money
+     * moves.
      *
      * @param player the player
      * @param amount a positive amount

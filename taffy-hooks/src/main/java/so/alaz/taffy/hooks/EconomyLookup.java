@@ -18,17 +18,14 @@ final class EconomyLookup {
     private EconomyLookup() {
     }
 
-    static Detected<EconomyProvider> vault(Plugin owner, ErrorReports errors, boolean switchedOn, boolean folia,
-                                           @Nullable Integer scale) {
-        Objects.requireNonNull(owner, "owner");
-        Objects.requireNonNull(errors, "errors");
-        if (scale != null && (scale < 0 || scale > EconomyProvider.MAX_SCALE)) {
-            throw new IllegalArgumentException(
-                "a scale runs from 0 to " + EconomyProvider.MAX_SCALE + ", not " + scale);
-        }
-        if (!switchedOn) {
+    static Detected<EconomyProvider> vault(VaultOptions options) {
+        Objects.requireNonNull(options, "options");
+        if (!options.switchedOn()) {
             return off(HookState.SWITCHED_OFF, null, null);
         }
+        Plugin owner = options.owner();
+        ErrorReports errors = options.errors();
+        boolean folia = options.folia();
         Server server = owner.getServer();
         Logger logger = owner.getLogger();
         Plugin vault = server.getPluginManager().getPlugin(VAULT);
@@ -46,7 +43,8 @@ final class EconomyLookup {
         String shown = version == null ? "unknown" : version;
         EconomyProvider provider;
         try {
-            provider = VaultEconomy.lookup(server, scale, logger);
+            provider = VaultEconomy.lookup(server, options.scale(), logger, options.threadRule(),
+                options.fundsCheck());
         } catch (RuntimeException | LinkageError failure) {
             Detection.failed(VAULT, shown, failure, logger, errors);
             return off(HookState.FAILED, shown, "The economy could not be read (" + failure + ").");
