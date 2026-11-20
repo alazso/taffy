@@ -53,6 +53,20 @@ All notable changes to Taffy are documented here. This project follows
   `scheduler.dispatch(economy.thread(player), () -> economy.withdraw(player, amount))`, or, for a plugin that
   calls the economy inline on the player's region thread with an economy plugin that is safe there, look the
   economy up with `VaultOptions.threadRule(VaultOptions.ThreadRule.ENTITY)`.
+- `addGroup`, `addTempGroup`, `removeGroup`, `setPermission` and `unsetPermission` of
+  `PermissionProvider.luckPerms` throw `IllegalStateException` when called on a server thread, with a message that
+  names the calling thread and `Scheduler.async`. This is a fix: the `PermissionProvider` Javadoc always stated
+  that writes run off the server thread, since a write loads the player's data when it is not cached and blocks
+  until the change is saved, and nothing enforced it, so a write from an event handler held the tick for a
+  storage round trip. A server thread is one `Server.isPrimaryThread()` is `true` on: the main thread on Paper,
+  and every region thread and the global region thread on Folia. The check comes after the arguments are checked
+  and before LuckPerms is asked, so nothing is loaded or changed, and it is made whether or not LuckPerms is
+  available. `available`, `primaryGroup` and `groups` are not checked. Upgrading: a write made on an async thread
+  is unchanged. A write made on a server thread returned its result before and throws now: move it off the
+  thread with `scheduler.async(() -> permissions.addGroup(player, group))` and take the result there. A write
+  made in `onDisable`, directly or through `Scheduler.asyncOrRun`, blocked and saved before and throws now, since
+  `asyncOrRun` runs the task on the calling server thread once the plugin is disabling, and `Scheduler.async`
+  returns `false` there and never runs it: make that write before the plugin disables.
 
 ### Fixed
 - The Vault economy of `EconomyProvider.vault` no longer refuses a payment over the representation error of a
@@ -77,6 +91,26 @@ All notable changes to Taffy are documented here. This project follows
   or in a plugin with no `EconomyWatcher`, a payment reached a disabled economy plugin. The refusal comes before
   the amount is checked and calls nothing in the economy, so no money moves. `balance` and `has` read the economy
   as before, and the status of the `Detected` still changes only through a new lookup.
+- `PermissionProvider.removeGroup` removes a membership that `addTempGroup` added. It built a permanent group
+  node and asked LuckPerms to remove that node, which matches no node with an expiry or a context, so a rank
+  granted for 30 days and revoked early stayed and the call returned `false`. It now clears every membership of
+  the group set directly on the player, permanent or temporary, in every context, and returns `false` with
+  nothing saved when the player holds none. The group name is matched without regard to case, and only saved data
+  is changed, as with `unsetPermission`.
+- `PermissionProvider.setPermission` changes a node the player already holds. LuckPerms refuses to add a node
+  whose name and context are already held, whatever its value or expiry, so `setPermission(player, "fly.use",
+  false)` on a player who held `fly.use` granted returned `false`, saved nothing and left the permission granted,
+  which a caller could not tell from a node that was already denied. It now replaces every node of that name set
+  directly on the player without context: a granted node becomes denied, a denied one granted, and a temporary
+  one permanent, with one save. It returns `false` with nothing saved only when the player already holds the
+  node without context and without an expiry at that value. A node of the same name set in a context is left as
+  it is. When LuckPerms refuses the new node once the held ones are cleared, that is logged as a warning and
+  reported under `hook.luckperms`, and the call still saves and returns `true`, since the held nodes are gone.
+- A write of `PermissionProvider.luckPerms` reaches the other servers of a network at once. The provider saved
+  the change and told nobody, so a server that had the player's data loaded kept the old groups and permissions
+  until its next sync. After a successful save the provider now calls `pushUserUpdate` on LuckPerms'
+  `MessagingService` when one is set up, and pushes nothing when there is none. A push that throws is logged as a
+  warning and reported under `hook.luckperms`, and the write still returns `true`, since the change is saved.
 
 ## [0.3.1] - 2026-11-20
 

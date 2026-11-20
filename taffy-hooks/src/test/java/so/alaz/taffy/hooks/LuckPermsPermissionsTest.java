@@ -3,6 +3,8 @@ package so.alaz.taffy.hooks;
 import io.papermc.paper.plugin.configuration.PluginMeta;
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
+import net.luckperms.api.context.ImmutableContextSet;
+import net.luckperms.api.messaging.MessagingService;
 import net.luckperms.api.model.data.DataMutateResult;
 import net.luckperms.api.model.data.NodeMap;
 import net.luckperms.api.model.data.TemporaryNodeMergeStrategy;
@@ -22,12 +24,14 @@ import org.bukkit.plugin.PluginManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.test.CapturedLog;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -38,6 +42,8 @@ import java.util.function.Supplier;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -49,6 +55,7 @@ final class LuckPermsPermissionsTest {
     private static final UUID PLAYER = UUID.fromString("069a79f4-44e9-4726-a5be-fca90e38aaf5");
 
     private final Plugin plugin = mock(Plugin.class);
+    private final Server server = mock(Server.class);
     private final LuckPerms luckPerms = mock(LuckPerms.class);
     private final UserManager users = mock(UserManager.class);
     private final User user = mock(User.class);
@@ -57,7 +64,6 @@ final class LuckPermsPermissionsTest {
     private final InheritanceNode.Builder inheritance = mock(InheritanceNode.Builder.class);
     private final InheritanceNode vip = mock(InheritanceNode.class);
     private final PermissionNode.Builder permission = mock(PermissionNode.Builder.class);
-    private final PermissionNode fly = mock(PermissionNode.class);
     private final QueryOptionsRegistry queries = mock(QueryOptionsRegistry.class);
     private final QueryOptions nonContextual = mock(QueryOptions.class);
     private final List<String> reported = new ArrayList<>();
@@ -68,6 +74,7 @@ final class LuckPermsPermissionsTest {
     @BeforeEach
     void luckPerms() {
         when(plugin.isEnabled()).thenReturn(true);
+        when(plugin.getServer()).thenReturn(server);
         when(luckPerms.getUserManager()).thenReturn(users);
         when(luckPerms.getNodeBuilderRegistry()).thenReturn(builders);
         when(luckPerms.getQueryOptionsRegistry()).thenReturn(queries);
@@ -312,40 +319,268 @@ final class LuckPermsPermissionsTest {
         verifyNoInteractions(luckPerms);
     }
 
+    private static InheritanceNode membership(String group) {
+        InheritanceNode node = mock(InheritanceNode.class);
+        when(node.getGroupName()).thenReturn(group);
+        return node;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Predicate<? super Node> cleared() {
+        ArgumentCaptor<Predicate<? super Node>> cleared = ArgumentCaptor.forClass(Predicate.class);
+        verify(data).clear(cleared.capture());
+        return cleared.getValue();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Predicate<? super Node> clearedIn(InOrder order) {
+        ArgumentCaptor<Predicate<? super Node>> cleared = ArgumentCaptor.forClass(Predicate.class);
+        order.verify(data).clear(cleared.capture());
+        return cleared.getValue();
+    }
+
     @Test
-    void removingAGroupSavesWhenTheUserLostIt() {
-        when(data.remove(vip)).thenReturn(DataMutateResult.SUCCESS);
+    void removingAGroupClearsAPermanentMembershipAndSaves() {
+        InheritanceNode permanent = membership("vip");
+        InheritanceNode other = membership("staff");
+        InheritanceNode longer = membership("vip2");
+        InheritanceNode prefixed = membership("svip");
+        PermissionNode named = node("vip");
+        when(data.toCollection()).thenReturn(List.of(other, longer, prefixed, named, permanent));
 
         assertThat(permissions().removeGroup(PLAYER, "vip")).isTrue();
-        verify(data).remove(vip);
+        verify(users).saveUser(user);
+        verify(data, never()).remove(any());
+
+        Predicate<? super Node> test = cleared();
+        assertThat(test.test(permanent)).isTrue();
+        assertThat(test.test(other)).isFalse();
+        assertThat(test.test(longer)).isFalse();
+        assertThat(test.test(prefixed)).isFalse();
+        assertThat(test.test(named)).isFalse();
+    }
+
+    @Test
+    void removingAGroupClearsATemporaryMembership() {
+        InheritanceNode temporary = membership("vip");
+        when(temporary.hasExpiry()).thenReturn(true);
+        when(data.toCollection()).thenReturn(List.of(temporary));
+
+        assertThat(permissions().removeGroup(PLAYER, "vip")).isTrue();
+        verify(users).saveUser(user);
+        assertThat(cleared().test(temporary)).isTrue();
+    }
+
+    @Test
+    void removingAGroupClearsAMembershipHeldInAContext() {
+        InheritanceNode contextual = membership("vip");
+        ImmutableContextSet survival = mock(ImmutableContextSet.class);
+        when(contextual.getContexts()).thenReturn(survival);
+        when(data.toCollection()).thenReturn(List.of(contextual));
+
+        assertThat(permissions().removeGroup(PLAYER, "vip")).isTrue();
+        verify(users).saveUser(user);
+        assertThat(cleared().test(contextual)).isTrue();
+    }
+
+    @Test
+    void removingAGroupMatchesItsNameWithoutRegardToCase() {
+        InheritanceNode stored = membership("vip");
+        when(data.toCollection()).thenReturn(List.of(stored));
+
+        assertThat(permissions().removeGroup(PLAYER, "VIP")).isTrue();
+        assertThat(cleared().test(stored)).isTrue();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void removingAGroupTheUserLacksChangesNothing() {
+        InheritanceNode other = membership("staff");
+        PermissionNode named = node("vip");
+        when(data.toCollection()).thenReturn(List.of(other, named));
+
+        assertThat(permissions().removeGroup(PLAYER, "vip")).isFalse();
+        verify(data, never()).clear(any(Predicate.class));
+        verify(users, never()).saveUser(any());
+        assertThat(reported).isEmpty();
+    }
+
+    private static ImmutableContextSet contexts(boolean empty) {
+        ImmutableContextSet contexts = mock(ImmutableContextSet.class);
+        when(contexts.isEmpty()).thenReturn(empty);
+        return contexts;
+    }
+
+    private static PermissionNode held(String name, boolean value) {
+        PermissionNode node = node(name);
+        ImmutableContextSet none = contexts(true);
+        when(node.getValue()).thenReturn(value);
+        when(node.getContexts()).thenReturn(none);
+        return node;
+    }
+
+    private static PermissionNode heldInAContext(String name, boolean value) {
+        PermissionNode node = node(name);
+        ImmutableContextSet survival = contexts(false);
+        when(node.getValue()).thenReturn(value);
+        when(node.getContexts()).thenReturn(survival);
+        return node;
+    }
+
+    // The node setPermission builds for fly.use at the value.
+    private PermissionNode setting(boolean value) {
+        PermissionNode built = node("fly.use");
+        PermissionNode.Builder valued = mock(PermissionNode.Builder.class);
+        when(permission.value(value)).thenReturn(valued);
+        when(valued.build()).thenReturn(built);
+        when(data.add(built)).thenReturn(DataMutateResult.SUCCESS);
+        return built;
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aPermissionTheUserLacksIsAddedAndSaved() {
+        PermissionNode granted = setting(true);
+        PermissionNode other = held("chat.color", false);
+        when(data.toCollection()).thenReturn(List.of(vip, other));
+
+        assertThat(permissions().setPermission(PLAYER, "fly.use", true)).isTrue();
+        verify(data).add(granted);
+        verify(data, never()).clear(any(Predicate.class));
         verify(users).saveUser(user);
     }
 
     @Test
-    void removingAGroupTheUserLacksDoesNotSave() {
-        when(data.remove(vip)).thenReturn(DataMutateResult.FAIL_LACKS);
+    void aGrantedPermissionIsSetDenied() {
+        PermissionNode denied = setting(false);
+        PermissionNode granted = held("fly.use", true);
+        PermissionNode other = held("chat.color", true);
+        when(data.toCollection()).thenReturn(List.of(vip, other, granted));
 
-        assertThat(permissions().removeGroup(PLAYER, "vip")).isFalse();
-        verify(users, never()).saveUser(any());
+        assertThat(permissions().setPermission(PLAYER, "fly.use", false)).isTrue();
+
+        InOrder order = inOrder(data, users);
+        Predicate<? super Node> test = clearedIn(order);
+        order.verify(data).add(denied);
+        order.verify(users).saveUser(user);
+        assertThat(test.test(granted)).isTrue();
+        assertThat(test.test(other)).isFalse();
+        assertThat(test.test(vip)).isFalse();
     }
 
     @Test
-    void aPermissionIsSetGrantedOrDenied() {
-        PermissionNode denied = mock(PermissionNode.class);
-        PermissionNode.Builder granting = mock(PermissionNode.Builder.class);
-        PermissionNode.Builder denying = mock(PermissionNode.Builder.class);
-        when(permission.value(true)).thenReturn(granting);
-        when(permission.value(false)).thenReturn(denying);
-        when(granting.build()).thenReturn(fly);
-        when(denying.build()).thenReturn(denied);
-        when(data.add(fly)).thenReturn(DataMutateResult.SUCCESS);
+    void aDeniedPermissionIsSetGranted() {
+        PermissionNode granted = setting(true);
+        PermissionNode denied = held("fly.use", false);
+        when(data.toCollection()).thenReturn(List.of(denied));
+
+        assertThat(permissions().setPermission(PLAYER, "fly.use", true)).isTrue();
+
+        InOrder order = inOrder(data, users);
+        Predicate<? super Node> test = clearedIn(order);
+        order.verify(data).add(granted);
+        order.verify(users).saveUser(user);
+        assertThat(test.test(denied)).isTrue();
+    }
+
+    @Test
+    void aNewNodeRefusedOnceTheHeldOnesAreClearedIsReportedAndTheClearedDataIsSaved() {
+        PermissionNode denied = setting(false);
+        PermissionNode granted = held("fly.use", true);
+        when(data.toCollection()).thenReturn(List.of(granted));
         when(data.add(denied)).thenReturn(DataMutateResult.FAIL_ALREADY_HAS);
+
+        assertThat(permissions().setPermission(PLAYER, "fly.use", false)).isTrue();
+
+        InOrder order = inOrder(data, users);
+        clearedIn(order);
+        order.verify(data).add(denied);
+        order.verify(users).saveUser(user);
+        assertThat(reported).containsExactly("hook.luckperms");
+        assertThat(logged.lines()).anyMatch(line -> line.contains("LuckPerms could not set a permission")
+            && line.contains("refused the new one"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aPermissionAlreadyHeldAtTheValueChangesNothingAndIsNotSaved() {
+        setting(true);
+        setting(false);
+        PermissionNode granted = held("fly.use", true);
+        when(data.toCollection()).thenReturn(List.of(granted));
         LuckPermsPermissions permissions = permissions();
 
-        assertThat(permissions.setPermission(PLAYER, "fly.use", true)).isTrue();
+        assertThat(permissions.setPermission(PLAYER, "fly.use", true)).isFalse();
+
+        PermissionNode denied = held("fly.use", false);
+        when(data.toCollection()).thenReturn(List.of(denied));
+
         assertThat(permissions.setPermission(PLAYER, "fly.use", false)).isFalse();
-        verify(data).add(fly);
+        verify(data, never()).clear(any(Predicate.class));
+        verify(data, never()).add(any());
+        verify(users, never()).saveUser(any());
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aTemporaryPermissionOfTheSameNameIsReplacedByThePermanentOne() {
+        PermissionNode granted = setting(true);
+        PermissionNode temporary = held("fly.use", true);
+        when(temporary.hasExpiry()).thenReturn(true);
+        when(data.toCollection()).thenReturn(List.of(temporary));
+
+        assertThat(permissions().setPermission(PLAYER, "fly.use", true)).isTrue();
+
+        InOrder order = inOrder(data, users);
+        Predicate<? super Node> test = clearedIn(order);
+        order.verify(data).add(granted);
+        order.verify(users).saveUser(user);
+        assertThat(test.test(temporary)).isTrue();
+    }
+
+    @Test
+    void aTemporaryPermissionBesideThePermanentOneIsClearedWithIt() {
+        PermissionNode granted = setting(true);
+        PermissionNode permanent = held("fly.use", true);
+        PermissionNode temporary = held("fly.use", false);
+        when(temporary.hasExpiry()).thenReturn(true);
+        when(data.toCollection()).thenReturn(List.of(permanent, temporary));
+
+        assertThat(permissions().setPermission(PLAYER, "fly.use", true)).isTrue();
+
+        InOrder order = inOrder(data, users);
+        Predicate<? super Node> test = clearedIn(order);
+        order.verify(data).add(granted);
+        order.verify(users).saveUser(user);
+        assertThat(test.test(permanent)).isTrue();
+        assertThat(test.test(temporary)).isTrue();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aPermissionHeldOnlyInAContextIsLeftAloneAndTheNodeIsAddedBesideIt() {
+        PermissionNode denied = setting(false);
+        PermissionNode contextual = heldInAContext("fly.use", true);
+        when(data.toCollection()).thenReturn(List.of(contextual));
+
+        assertThat(permissions().setPermission(PLAYER, "fly.use", false)).isTrue();
         verify(data).add(denied);
+        verify(data, never()).clear(any(Predicate.class));
+        verify(users).saveUser(user);
+    }
+
+    @Test
+    void aPermissionHeldInAContextIsNotClearedWhenTheOneWithoutContextIsFlipped() {
+        setting(false);
+        PermissionNode granted = held("fly.use", true);
+        PermissionNode contextual = heldInAContext("fly.use", true);
+        when(data.toCollection()).thenReturn(List.of(contextual, granted));
+
+        assertThat(permissions().setPermission(PLAYER, "fly.use", false)).isTrue();
+
+        Predicate<? super Node> test = cleared();
+        assertThat(test.test(granted)).isTrue();
+        assertThat(test.test(contextual)).isFalse();
         verify(users).saveUser(user);
     }
 
@@ -411,6 +646,72 @@ final class LuckPermsPermissionsTest {
     }
 
     @Test
+    void aWriteOnAServerThreadThrowsBeforeLuckPermsIsAsked() {
+        when(server.isPrimaryThread()).thenReturn(true);
+        LuckPermsPermissions permissions = permissions();
+        String message = "a LuckPerms write blocks until the data is saved and runs off the server thread, not on "
+            + Thread.currentThread().getName() + "; run it through Scheduler.async(...)";
+
+        assertThatThrownBy(() -> permissions.addGroup(PLAYER, "vip"))
+            .isInstanceOf(IllegalStateException.class).hasMessage(message);
+        assertThatThrownBy(() -> permissions.addTempGroup(PLAYER, "vip", Duration.ofMinutes(1)))
+            .isInstanceOf(IllegalStateException.class).hasMessage(message);
+        assertThatThrownBy(() -> permissions.removeGroup(PLAYER, "vip"))
+            .isInstanceOf(IllegalStateException.class).hasMessage(message);
+        assertThatThrownBy(() -> permissions.setPermission(PLAYER, "fly.use", true))
+            .isInstanceOf(IllegalStateException.class).hasMessage(message);
+        assertThatThrownBy(() -> permissions.unsetPermission(PLAYER, "fly.use"))
+            .isInstanceOf(IllegalStateException.class).hasMessage(message);
+        verifyNoInteractions(luckPerms);
+        assertThat(reported).isEmpty();
+        assertThat(logged.lines()).isEmpty();
+    }
+
+    @Test
+    void aWriteRunInlineOnAServerThreadAsWhileTheOwnerDisablesThrowsAndLoadsAndSavesNothing() {
+        when(server.isPrimaryThread()).thenReturn(true);
+        LuckPermsPermissions permissions = permissions();
+        Runnable revoke = () -> permissions.removeGroup(PLAYER, "vip");
+
+        assertThatThrownBy(revoke::run).isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("Scheduler.async");
+        verifyNoInteractions(users);
+        verifyNoInteractions(luckPerms);
+    }
+
+    @Test
+    void aWriteOnAServerThreadThrowsWhileLuckPermsIsDisabled() {
+        when(server.isPrimaryThread()).thenReturn(true);
+        when(plugin.isEnabled()).thenReturn(false);
+
+        assertThatThrownBy(() -> permissions().addGroup(PLAYER, "vip")).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void anArgumentIsCheckedBeforeTheThread() {
+        when(server.isPrimaryThread()).thenReturn(true);
+        LuckPermsPermissions permissions = permissions();
+
+        assertThatThrownBy(() -> permissions.addGroup(PLAYER, null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> permissions.addGroup(null, "vip")).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> permissions.addTempGroup(PLAYER, "vip", Duration.ofMillis(999)))
+            .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void aReadOnAServerThreadIsAnswered() {
+        when(server.isPrimaryThread()).thenReturn(true);
+        when(user.getPrimaryGroup()).thenReturn("default");
+        List<Group> inherited = List.of(group("default"));
+        when(user.getInheritedGroups(nonContextual)).thenReturn(inherited);
+        LuckPermsPermissions permissions = permissions();
+
+        assertThat(permissions.available()).isTrue();
+        assertThat(permissions.primaryGroup(PLAYER)).isEqualTo("default");
+        assertThat(permissions.groups(PLAYER)).containsExactly("default");
+    }
+
+    @Test
     void aWriteLoadsAUserWhoseDataIsNotCached() {
         User loaded = mock(User.class);
         NodeMap loadedData = mock(NodeMap.class);
@@ -446,6 +747,73 @@ final class LuckPermsPermissionsTest {
 
         assertThat(permissions().addGroup(PLAYER, "vip")).isFalse();
         assertThat(reported).containsExactly("hook.luckperms");
+    }
+
+    @Test
+    void aSavedWriteIsPushedThroughTheMessagingServiceAfterTheSave() {
+        MessagingService messaging = mock(MessagingService.class);
+        when(luckPerms.getMessagingService()).thenReturn(Optional.of(messaging));
+        when(data.add(vip)).thenReturn(DataMutateResult.SUCCESS);
+
+        assertThat(permissions().addGroup(PLAYER, "vip")).isTrue();
+
+        InOrder order = inOrder(users, messaging);
+        order.verify(users).saveUser(user);
+        order.verify(messaging).pushUserUpdate(user);
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aWriteIsSavedAndPushesNothingWithoutAMessagingService() {
+        when(luckPerms.getMessagingService()).thenReturn(Optional.empty());
+        when(data.add(vip)).thenReturn(DataMutateResult.SUCCESS);
+
+        assertThat(permissions().addGroup(PLAYER, "vip")).isTrue();
+        verify(users).saveUser(user);
+        assertThat(reported).isEmpty();
+        assertThat(logged.lines()).isEmpty();
+    }
+
+    @Test
+    void aFailingPushLeavesTheSavedWriteTrueAndIsReported() {
+        MessagingService messaging = mock(MessagingService.class);
+        IllegalStateException broken = new IllegalStateException("redis gone");
+        doThrow(broken).when(messaging).pushUserUpdate(user);
+        when(luckPerms.getMessagingService()).thenReturn(Optional.of(messaging));
+        when(data.add(vip)).thenReturn(DataMutateResult.SUCCESS);
+
+        assertThat(permissions().addGroup(PLAYER, "vip")).isTrue();
+        verify(users).saveUser(user);
+        assertThat(reported).containsExactly("hook.luckperms");
+        assertThat(failures).containsExactly(broken);
+        assertThat(logged.lines()).containsExactly("WARNING LuckPerms could not push a saved change to the other"
+            + " servers (java.lang.IllegalStateException: redis gone).");
+    }
+
+    @Test
+    void aMessagingServiceThatCannotBeReadLeavesTheSavedWriteTrueAndIsReported() {
+        when(luckPerms.getMessagingService()).thenThrow(new NoSuchMethodError("getMessagingService"));
+        when(data.add(vip)).thenReturn(DataMutateResult.SUCCESS);
+
+        assertThat(permissions().addGroup(PLAYER, "vip")).isTrue();
+        verify(users).saveUser(user);
+        assertThat(reported).containsExactly("hook.luckperms");
+    }
+
+    @Test
+    void aWriteThatChangedNothingOrWasNotSavedIsNotPushed() {
+        MessagingService messaging = mock(MessagingService.class);
+        when(luckPerms.getMessagingService()).thenReturn(Optional.of(messaging));
+        when(data.add(vip)).thenReturn(DataMutateResult.FAIL_ALREADY_HAS);
+        LuckPermsPermissions permissions = permissions();
+
+        assertThat(permissions.addGroup(PLAYER, "vip")).isFalse();
+
+        when(data.add(vip)).thenReturn(DataMutateResult.SUCCESS);
+        when(users.saveUser(user)).thenReturn(CompletableFuture.failedFuture(new IllegalStateException("db down")));
+
+        assertThat(permissions.addGroup(PLAYER, "vip")).isFalse();
+        verifyNoInteractions(messaging);
     }
 
     private static PluginManager pluginManager(boolean installed) {

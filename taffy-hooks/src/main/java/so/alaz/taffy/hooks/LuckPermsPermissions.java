@@ -2,6 +2,8 @@ package so.alaz.taffy.hooks;
 
 import net.luckperms.api.LuckPerms;
 import net.luckperms.api.LuckPermsProvider;
+import net.luckperms.api.context.ImmutableContextSet;
+import net.luckperms.api.messaging.MessagingService;
 import net.luckperms.api.model.data.DataMutateResult;
 import net.luckperms.api.model.data.NodeMap;
 import net.luckperms.api.model.data.TemporaryNodeMergeStrategy;
@@ -27,6 +29,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -58,6 +61,8 @@ final class LuckPermsPermissions implements PermissionProvider {
         ApiLink.instanceMethod(LuckPerms.class, "getUserManager", UserManager.class);
         ApiLink.instanceMethod(LuckPerms.class, "getQueryOptionsRegistry", QueryOptionsRegistry.class);
         ApiLink.instanceMethod(LuckPerms.class, "getNodeBuilderRegistry", NodeBuilderRegistry.class);
+        ApiLink.instanceMethod(LuckPerms.class, "getMessagingService", Optional.class);
+        ApiLink.instanceMethod(MessagingService.class, "pushUserUpdate", void.class, User.class);
         ApiLink.instanceMethod(UserManager.class, "getUser", User.class, UUID.class);
         ApiLink.instanceMethod(UserManager.class, "loadUser", CompletableFuture.class, UUID.class);
         ApiLink.instanceMethod(UserManager.class, "saveUser", CompletableFuture.class, User.class);
@@ -69,7 +74,6 @@ final class LuckPermsPermissions implements PermissionProvider {
         ApiLink.instanceMethod(NodeMap.class, "add", DataMutateResult.class, Node.class);
         ApiLink.instanceMethod(NodeMap.class, "add", DataMutateResult.WithMergedNode.class, Node.class,
             TemporaryNodeMergeStrategy.class);
-        ApiLink.instanceMethod(NodeMap.class, "remove", DataMutateResult.class, Node.class);
         ApiLink.instanceMethod(NodeMap.class, "clear", void.class, Predicate.class);
         ApiLink.instanceMethod(NodeMap.class, "toCollection", Collection.class);
         ApiLink.instanceMethod(DataMutateResult.class, "wasSuccessful", boolean.class);
@@ -80,11 +84,16 @@ final class LuckPermsPermissions implements PermissionProvider {
         ApiLink.instanceMethod(InheritanceNode.Builder.class, "expiry", NodeBuilder.class, long.class,
             TimeUnit.class);
         ApiLink.instanceMethod(InheritanceNode.Builder.class, "build", ScopedNode.class);
+        ApiLink.instanceMethod(InheritanceNode.class, "getGroupName", String.class);
         ApiLink.instanceMethod(PermissionNode.Builder.class, "permission", PermissionNode.Builder.class,
             String.class);
         ApiLink.instanceMethod(PermissionNode.Builder.class, "value", NodeBuilder.class, boolean.class);
         ApiLink.instanceMethod(PermissionNode.Builder.class, "build", ScopedNode.class);
         ApiLink.instanceMethod(PermissionNode.class, "getPermission", String.class);
+        ApiLink.instanceMethod(PermissionNode.class, "getContexts", ImmutableContextSet.class);
+        ApiLink.instanceMethod(ImmutableContextSet.class, "isEmpty", boolean.class);
+        ApiLink.instanceMethod(Node.class, "getValue", boolean.class);
+        ApiLink.instanceMethod(Node.class, "hasExpiry", boolean.class);
         return new LuckPermsPermissions(plugin, LuckPermsProvider::get, logger, errors);
     }
 
@@ -161,17 +170,44 @@ final class LuckPermsPermissions implements PermissionProvider {
     @Override
     public boolean removeGroup(UUID player, String group) {
         Objects.requireNonNull(group, "group");
-        return mutate(player, "remove a player from a group", (luckPerms, user) -> user.data()
-            .remove(luckPerms.getNodeBuilderRegistry().forInheritance().group(group).build())
-            .wasSuccessful());
+        // LuckPerms keeps group names in lower case. Only the saved data is looked at and cleared.
+        return mutate(player, "remove a player from a group", (luckPerms, user) -> {
+            Predicate<Node> matches = candidate ->
+                candidate instanceof InheritanceNode membership && membership.getGroupName().equalsIgnoreCase(group);
+            boolean exists = user.data().toCollection().stream().anyMatch(matches);
+            if (!exists) {
+                return false;
+            }
+            user.data().clear(matches);
+            return true;
+        });
     }
 
     @Override
     public boolean setPermission(UUID player, String node, boolean value) {
         Objects.requireNonNull(node, "node");
-        return mutate(player, "set a permission", (luckPerms, user) -> user.data()
-            .add(luckPerms.getNodeBuilderRegistry().forPermission().permission(node).value(value).build())
-            .wasSuccessful());
+        // NodeMap.add refuses a node whose key and contexts are already held, whatever its value or expiry, so the
+        // held nodes are cleared first. The key is read from the built node, which carries it as LuckPerms stores it.
+        return mutate(player, "set a permission", (luckPerms, user) -> {
+            PermissionNode set = luckPerms.getNodeBuilderRegistry().forPermission().permission(node).value(value)
+                .build();
+            String key = set.getPermission();
+            Predicate<Node> matches = candidate -> candidate instanceof PermissionNode permission
+                && permission.getPermission().equals(key) && permission.getContexts().isEmpty();
+            List<Node> held = user.data().toCollection().stream().filter(matches).toList();
+            if (held.isEmpty()) {
+                return user.data().add(set).wasSuccessful();
+            }
+            if (held.stream().allMatch(holding -> holding.getValue() == value && !holding.hasExpiry())) {
+                return false;
+            }
+            user.data().clear(matches);
+            if (!user.data().add(set).wasSuccessful()) {
+                fail("set a permission", new IllegalStateException("LuckPerms cleared the held nodes of " + key
+                    + " and refused the new one"));
+            }
+            return true;
+        });
     }
 
     @Override
@@ -205,6 +241,11 @@ final class LuckPermsPermissions implements PermissionProvider {
 
     private boolean mutate(UUID player, String what, BiFunction<LuckPerms, User, Boolean> action) {
         Objects.requireNonNull(player, "player");
+        // True on the main thread of Paper and on every region thread and the global region thread of Folia.
+        if (luckPerms.getServer().isPrimaryThread()) {
+            throw new IllegalStateException("a LuckPerms write blocks until the data is saved and runs off the server"
+                + " thread, not on " + Thread.currentThread().getName() + "; run it through Scheduler.async(...)");
+        }
         try {
             LuckPerms luckPerms = api();
             if (luckPerms == null) {
@@ -218,11 +259,21 @@ final class LuckPermsPermissions implements PermissionProvider {
             boolean changed = action.apply(luckPerms, user);
             if (changed) {
                 manager.saveUser(user).join();
+                push(luckPerms, user);
             }
             return changed;
         } catch (Exception | LinkageError ex) {
             fail(what, ex);
             return false;
+        }
+    }
+
+    // Runs after the save. A failure leaves the change saved, and the other servers read it at their next sync.
+    private void push(LuckPerms luckPerms, User user) {
+        try {
+            luckPerms.getMessagingService().ifPresent(service -> service.pushUserUpdate(user));
+        } catch (Exception | LinkageError ex) {
+            fail("push a saved change to the other servers", ex);
         }
     }
 
