@@ -5,6 +5,13 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `so.alaz.taffy.paper-plugin`: the `compileAgainstPaperFloor` task compiles a plugin's main Java sources against
+  paper-api 26.2.build.135-stable, the oldest Paper build Taffy supports, so a call that build lacks fails the
+  task. Every other dependency resolves as on `compileClasspath`. No task depends on it: run it by name, or add
+  `tasks.check { dependsOn("compileAgainstPaperFloor") }` to make it part of `check`. It compiles only, so a
+  method that exists on that build with other behaviour is not caught.
+
 ### Changed
 - Breaking: Taffy compiles against paper-api 26.3 and supports Paper 26.2 build 135 or newer and Folia 26.3 build 8
   or newer; Paper 26.1.2 is no longer supported. The `paper` version of the `alaz` catalog moves from

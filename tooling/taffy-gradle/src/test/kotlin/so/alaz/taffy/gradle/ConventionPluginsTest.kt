@@ -442,6 +442,98 @@ class ConventionPluginsTest {
     }
 
     @Test
+    fun compileAgainstPaperFloorFailsOnACallTheFloorBuildLacksAndRunsOnlyWhenAsked() {
+        project()
+        write(
+            "settings.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.settings")
+            }
+            rootProject.name = "demo"
+            dependencyResolutionManagement {
+                repositories {
+                    exclusiveContent {
+                        forRepository {
+                            maven("$testRepository") { name = "test" }
+                        }
+                        filter {
+                            includeGroup("so.alaz.taffy")
+                        }
+                    }
+                }
+            }
+            """,
+        )
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            dependencies {
+                compileOnly(alaz.paper.api)
+            }
+            tasks.register("showPaperFloorClasspath") {
+                val jars = configurations.named("paperFloorCompileClasspath").map { it.files.map(File::getName) }
+                doLast {
+                    jars.get().filter { it.startsWith("paper-api-") }.forEach { println("floor=" + it) }
+                }
+            }
+            """,
+        )
+        // PersistentDataContainerView.getPrimitiveStorageType is in paper-api 26.3 and not in 26.2.
+        write(
+            "src/main/java/so/alaz/demo/Stored.java",
+            """
+            package so.alaz.demo;
+
+            import io.papermc.paper.persistence.PersistentDataContainerView;
+            import net.kyori.adventure.key.Key;
+
+            final class Stored {
+                static boolean has(PersistentDataContainerView data, Key key) {
+                    return data.getPrimitiveStorageType(key) != null;
+                }
+            }
+            """,
+        )
+
+        val assembled = run("assemble", "showPaperFloorClasspath")
+
+        assertThat(assembled.task(":compileJava")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(assembled.task(":compileAgainstPaperFloor")).isNull()
+        assertThat(assembled.output).contains("floor=paper-api-" + paperFloor() + ".jar")
+        assertThat(assembled.output.lines().filter { it.startsWith("floor=") }).hasSize(1)
+
+        val missing = runner("compileAgainstPaperFloor").buildAndFail()
+
+        assertThat(missing.task(":compileAgainstPaperFloor")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(missing.output).contains("cannot find symbol", "getPrimitiveStorageType")
+
+        write(
+            "src/main/java/so/alaz/demo/Stored.java",
+            """
+            package so.alaz.demo;
+
+            import io.papermc.paper.persistence.PersistentDataContainerView;
+            import org.bukkit.NamespacedKey;
+
+            final class Stored {
+                static boolean has(PersistentDataContainerView data, NamespacedKey key) {
+                    return data.has(key);
+                }
+            }
+            """,
+        )
+
+        val present = run("compileAgainstPaperFloor", "--configuration-cache")
+
+        assertThat(present.task(":compileAgainstPaperFloor")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(projectDirectory.resolve("build/classes/java/paperFloor/so/alaz/demo/Stored.class")).exists()
+    }
+
+    @Test
     fun coverageGateFailsBelowTheMinimum() {
         project()
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
@@ -1231,6 +1323,10 @@ class ConventionPluginsTest {
             }
         }
     """
+
+    private fun paperFloor(): String =
+        File(System.getProperty("taffy.sourceRoot"), "gradle.properties").readLines()
+            .first { it.startsWith("taffy.paperFloor=") }.substringAfter('=').trim()
 
     private fun project() {
         write("LICENSE", "MIT License\n")

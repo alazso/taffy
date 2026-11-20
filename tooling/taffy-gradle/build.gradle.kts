@@ -33,10 +33,15 @@ dependencies {
 val generatedSourcesDirectory: Provider<Directory> =
     layout.buildDirectory.dir("generated/sources/taffyBuild/kotlin/main")
 
+val paperFloor: String = providers.fileContents(rootProject.layout.projectDirectory.file("../gradle.properties"))
+    .asText.get().lineSequence().first { it.startsWith("taffy.paperFloor=") }.substringAfter('=').trim()
+
 val generateTaffyBuild = tasks.register("generateTaffyBuild") {
     val taffyVersion = project.version.toString()
+    val paperFloorVersion = paperFloor
     val outputDirectory = generatedSourcesDirectory
     inputs.property("version", taffyVersion)
+    inputs.property("paperFloor", paperFloorVersion)
     outputs.dir(outputDirectory)
     doLast {
         val source = listOf(
@@ -45,6 +50,7 @@ val generateTaffyBuild = tasks.register("generateTaffyBuild") {
             "/** Generated from gradle.properties at build time. Do not edit. */",
             "internal object TaffyBuild {",
             "    const val VERSION: String = \"$taffyVersion\"",
+            "    const val PAPER_FLOOR: String = \"$paperFloorVersion\"",
             "}",
             ""
         ).joinToString("\n")

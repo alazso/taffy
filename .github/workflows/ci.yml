@@ -46,9 +46,40 @@ jobs:
             **/build/reports/jacoco/**
           if-no-files-found: ignore
 
+  # The main sources of every module compile against the paper-api build of the oldest supported Paper server,
+  # so a call that build lacks fails here. Tests compile and run in the build job, against the catalog's version.
+  paper-floor:
+    name: Compile against the oldest supported paper-api
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Compile main sources against taffy.paperFloor
+        run: |
+          set -euo pipefail
+          FLOOR="$(sed -n 's/^taffy.paperFloor=//p' gradle.properties | tr -d '[:space:]')"
+          if [ -z "$FLOOR" ]; then
+            echo "::error::gradle.properties sets no taffy.paperFloor."
+            exit 1
+          fi
+          ./gradlew compileJava "-Ptaffy.paperApi=$FLOOR" --no-configuration-cache --stacktrace
+
   snapshot:
     name: Publish snapshot
-    needs: build
+    needs: [build, paper-floor]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 60

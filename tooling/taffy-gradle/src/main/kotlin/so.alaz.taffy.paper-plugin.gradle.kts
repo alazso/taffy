@@ -2,6 +2,7 @@ import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import so.alaz.taffy.gradle.CoverageExtension
 import so.alaz.taffy.gradle.GenerateRuntimeLibraries
 import so.alaz.taffy.gradle.PaperPluginExtension
+import so.alaz.taffy.gradle.TaffyBuild
 
 plugins {
     id("so.alaz.taffy.coverage")
@@ -27,6 +28,40 @@ val generateRuntimeLibraries = tasks.register<GenerateRuntimeLibraries>("generat
 
 sourceSets.named("main") {
     java.srcDir(generateRuntimeLibraries)
+}
+
+// Resolves what compileClasspath resolves, with every paper-api request answered by the floor build.
+val paperFloorCompileClasspath = configurations.create("paperFloorCompileClasspath") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    extendsFrom(configurations.getByName("compileOnly"), configurations.getByName("implementation"))
+    attributes {
+        attribute(Usage.USAGE_ATTRIBUTE, objects.named(Usage.JAVA_API))
+        attribute(Category.CATEGORY_ATTRIBUTE, objects.named(Category.LIBRARY))
+        attribute(Bundling.BUNDLING_ATTRIBUTE, objects.named(Bundling.EXTERNAL))
+        attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, objects.named(LibraryElements.JAR))
+        attribute(
+            TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE,
+            objects.named(TargetJvmEnvironment.STANDARD_JVM),
+        )
+        attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 25)
+    }
+    resolutionStrategy.eachDependency {
+        if (requested.group == "io.papermc.paper" && requested.name == "paper-api") {
+            useVersion(TaffyBuild.PAPER_FLOOR)
+            because("the oldest Paper build Taffy supports")
+        }
+    }
+}
+
+tasks.register<JavaCompile>("compileAgainstPaperFloor") {
+    group = "verification"
+    description = "Compiles the main Java sources against paper-api " + TaffyBuild.PAPER_FLOOR +
+        ", the oldest Paper build Taffy supports."
+    source = sourceSets.named("main").get().java
+    classpath = paperFloorCompileClasspath
+    options.annotationProcessorPath = configurations.getByName("annotationProcessor")
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/paperFloor"))
 }
 
 tasks.named<ProcessResources>("processResources") {

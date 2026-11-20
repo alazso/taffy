@@ -126,7 +126,10 @@ and runs javadoc with `-Xdoclint:all,-missing` and `--no-fonts`, so a broken com
 - `${version}` expansion in `paper-plugin.yml`,
 - one shadow jar with no classifier and the plain `jar` disabled,
 - relocation of `org.bstats`, `dev.faststats` and `so.alaz.taffy` to `<group>.libs.*`,
-- `RuntimeLibraries.COORDINATES` in the `<group>` package when `paperPlugin.runtimeLibraries` is not empty.
+- `RuntimeLibraries.COORDINATES` in the `<group>` package when `paperPlugin.runtimeLibraries` is not empty,
+- `compileAgainstPaperFloor`, which compiles the main Java sources against paper-api 26.2.build.135-stable, the
+  oldest Paper build Taffy supports. No other task depends on it;
+  `tasks.check { dependsOn("compileAgainstPaperFloor") }` makes it part of `check`.
 
 **`so.alaz.taffy.paper-api`** creates the `library` publication as `<group>:<module name>` with the `alazso` repository
 (`ALAZSO_REPO_USER`, `ALAZSO_REPO_TOKEN`). The POM url is `https://github.com/alazso/<root project name>`
