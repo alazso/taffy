@@ -384,6 +384,31 @@ class ComfiConfConnectionTest {
     }
 
     @Test
+    void aLinkWhoseResourceIdThrowsFailsWithAReportAndNeverEscapes() {
+        IllegalStateException failure = new IllegalStateException("no id");
+        link.idFailure = failure;
+
+        ComfiConfConnection connection = connect(() -> link);
+
+        assertThat(connection.status())
+            .isEqualTo(new ComfiConfStatus(ComfiConfState.FAILED, "0.1.0", FAILED_REASON));
+        assertThat(connection.resourceId()).isNull();
+        assertThat(log.lines()).containsExactly("WARNING ComfiConf 0.1.0 could not register this plugin's settings ("
+            + failure + "), so they are edited in their files only.");
+        assertThat(log.records.getFirst().getThrown()).isSameAs(failure);
+        assertThat(reports).containsExactly(Map.entry("hook.comficonf", failure));
+    }
+
+    @Test
+    void theResourceIdIsReadFromTheLinkOnce() {
+        ComfiConfConnection connection = connect(() -> link);
+        link.idFailure = new IllegalStateException("no id");
+
+        assertThat(connection.resourceId()).isEqualTo("taffy:test");
+        assertThat(link.idReads).hasValue(1);
+    }
+
+    @Test
     void aRegistrationThatReturnsNullFailsWithAReport() {
         ComfiConfConnection connection = connect(() -> null);
 
@@ -623,6 +648,8 @@ class ComfiConfConnectionTest {
 
         volatile boolean registered = true;
         volatile Throwable failure;
+        volatile RuntimeException idFailure;
+        final AtomicInteger idReads = new AtomicInteger();
         final AtomicInteger notified = new AtomicInteger();
         final AtomicInteger closed = new AtomicInteger();
         final ReentrantLock lock = new ReentrantLock();
@@ -640,6 +667,11 @@ class ComfiConfConnectionTest {
 
         @Override
         public String resourceId() {
+            idReads.incrementAndGet();
+            RuntimeException thrown = idFailure;
+            if (thrown != null) {
+                throw thrown;
+            }
             return "taffy:test";
         }
 

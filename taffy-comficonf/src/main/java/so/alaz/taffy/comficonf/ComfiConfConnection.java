@@ -28,8 +28,8 @@ import java.util.logging.Logger;
  * logger of the plugin given to {@link #connect}, and later failures of the same method are not logged.
  *
  * <p>Thread-safe: {@link #status()}, {@link #resourceId()}, {@link #notifyChanged()}, {@link #close()} and
- * {@link #lockFor(Path)} may be called from any thread, and forward only to the {@link ComfiConfLink}, whose
- * implementations are thread-safe.
+ * {@link #lockFor(Path)} may be called from any thread. {@link #resourceId()} returns the id {@link #connect} read
+ * from the link, and the others forward only to the {@link ComfiConfLink}, whose implementations are thread-safe.
  */
 public final class ComfiConfConnection {
 
@@ -47,6 +47,7 @@ public final class ComfiConfConnection {
 
     private final @Nullable Plugin bridge;
     private final @Nullable ComfiConfLink link;
+    private final @Nullable String resourceId;
     private final ComfiConfStatus found;
     private final Logger logger;
     private final ReentrantLock ownLock = new ReentrantLock();
@@ -55,10 +56,11 @@ public final class ComfiConfConnection {
     private final AtomicBoolean closeFailed = new AtomicBoolean();
     private final AtomicBoolean lockFailed = new AtomicBoolean();
 
-    private ComfiConfConnection(@Nullable Plugin bridge, @Nullable ComfiConfLink link, ComfiConfStatus found,
-                                Logger logger) {
+    private ComfiConfConnection(@Nullable Plugin bridge, @Nullable ComfiConfLink link, @Nullable String resourceId,
+                                ComfiConfStatus found, Logger logger) {
         this.bridge = bridge;
         this.link = link;
+        this.resourceId = resourceId;
         this.found = found;
         this.logger = logger;
     }
@@ -78,8 +80,9 @@ public final class ComfiConfConnection {
      * {@code com.comficonf} class or it has no message; any other, such as a class of the plugin that failed to
      * initialize, counts as a failed registration. A bridge whose API version is lower than the one
      * {@link ComfiConfRegistration#register} was compiled against lacks the API too: it logs the same warning, naming
-     * both versions, registers nothing and reports nothing. A registration that succeeds logs one line naming the
-     * resource id.
+     * both versions, registers nothing and reports nothing. The link's {@link ComfiConfLink#resourceId()} is read
+     * once, here, and a link that throws from it counts as a registration that throws. A registration that succeeds
+     * logs one line naming the resource id.
      * A {@link RuntimeException} or {@link LinkageError} from {@code registration} never leaves this method.
      *
      * @param owner the plugin whose settings are registered; its logger receives the lines
@@ -124,7 +127,7 @@ public final class ComfiConfConnection {
                 logger.warning(PLUGIN_NAME + " " + version + " is not visible to this plugin, so this plugin's"
                     + " settings are edited in their files only: this plugin's paper-plugin.yml does not list "
                     + PLUGIN_NAME + " under dependencies.server with join-classpath: true.");
-                return new ComfiConfConnection(bridge, null, new ComfiConfStatus(ComfiConfState.NOT_VISIBLE,
+                return new ComfiConfConnection(bridge, null, null, new ComfiConfStatus(ComfiConfState.NOT_VISIBLE,
                     version, "This plugin's paper-plugin.yml does not list " + PLUGIN_NAME + " under"
                     + " dependencies.server with join-classpath: true, so this plugin's settings are edited in their"
                     + " files only."), logger);
@@ -133,12 +136,14 @@ public final class ComfiConfConnection {
         }
         if (!sameApi(ComfiConfConnection.class.getClassLoader(), loaderOf.apply(bridge))) {
             logger.warning(BUNDLED_REASON);
-            return new ComfiConfConnection(bridge, null, new ComfiConfStatus(ComfiConfState.NOT_VISIBLE, version,
+            return new ComfiConfConnection(bridge, null, null, new ComfiConfStatus(ComfiConfState.NOT_VISIBLE, version,
                 BUNDLED_REASON), logger);
         }
         ComfiConfLink link;
+        String resourceId;
         try {
             link = Objects.requireNonNull(registration.get(), "the registration returned null");
+            resourceId = link.resourceId();
         } catch (ExceptionInInitializerError e) {
             return failed(bridge, version, e, logger, errors);
         } catch (LinkageError e) {
@@ -151,8 +156,9 @@ public final class ComfiConfConnection {
         } catch (RuntimeException e) {
             return failed(bridge, version, e, logger, errors);
         }
-        logger.info("Registered " + link.resourceId() + " with " + PLUGIN_NAME);
-        return new ComfiConfConnection(bridge, link, new ComfiConfStatus(ComfiConfState.ON, version, null), logger);
+        logger.info("Registered " + resourceId + " with " + PLUGIN_NAME);
+        return new ComfiConfConnection(bridge, link, resourceId, new ComfiConfStatus(ComfiConfState.ON, version, null),
+            logger);
     }
 
     /**
@@ -186,12 +192,13 @@ public final class ComfiConfConnection {
     }
 
     /**
-     * The id of the registered resource, for a diagnostics line.
+     * The id of the registered resource, for a diagnostics line. It is the id the link gave when {@link #connect}
+     * registered it; the link is not asked again.
      *
      * @return the resource id of the link {@link #connect} registered, or {@code null} when it registered none
      */
     public @Nullable String resourceId() {
-        return link == null ? null : link.resourceId();
+        return resourceId;
     }
 
     /**
@@ -304,13 +311,13 @@ public final class ComfiConfConnection {
     }
 
     private static ComfiConfConnection off(ComfiConfState state, Logger logger) {
-        return new ComfiConfConnection(null, null, new ComfiConfStatus(state, null, null), logger);
+        return new ComfiConfConnection(null, null, null, new ComfiConfStatus(state, null, null), logger);
     }
 
     private static ComfiConfConnection apiMissing(Plugin bridge, String version, String missing, Logger logger) {
         String message = incompatibleBridgeMessage(version, missing);
         logger.warning(message);
-        return new ComfiConfConnection(bridge, null, new ComfiConfStatus(ComfiConfState.API_MISSING, version,
+        return new ComfiConfConnection(bridge, null, null, new ComfiConfStatus(ComfiConfState.API_MISSING, version,
             message), logger);
     }
 
@@ -319,7 +326,7 @@ public final class ComfiConfConnection {
         logger.log(Level.WARNING, PLUGIN_NAME + " " + version + " could not register this plugin's settings ("
             + failure + "), so they are edited in their files only.", failure);
         errors.report(SOURCE, failure);
-        return new ComfiConfConnection(bridge, null, new ComfiConfStatus(ComfiConfState.FAILED, version,
+        return new ComfiConfConnection(bridge, null, null, new ComfiConfStatus(ComfiConfState.FAILED, version,
             "Registering with ComfiConf failed, so these settings are edited in their files only. The server log"
             + " holds the error."), logger);
     }
