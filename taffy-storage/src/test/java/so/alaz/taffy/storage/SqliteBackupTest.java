@@ -142,6 +142,21 @@ final class SqliteBackupTest {
         assertThat(log.lines()).isEmpty();
     }
 
+    @Test
+    void aVersionWithOtherCharactersIsWrittenWithUnderscoresAndStaysInTheFolder() throws Exception {
+        Path backups = folder.resolve("backups");
+        Path old = Files.writeString(Files.createDirectories(backups).resolve("data-0.0.1-20260101-000000.db"), "old");
+        Files.setLastModifiedTime(old, FileTime.from(Instant.parse("2026-01-01T00:00:00Z")));
+
+        new SqliteBackup(backups, "1.0/../../up: b\u00e9ta+7", 1, CLOCK, log.logger).run(connection);
+
+        assertThat(names(backups)).containsExactly("data-1.0_.._.._up__b_ta_7-20261102-101530.db");
+        assertThat(names(folder)).containsExactlyInAnyOrder("backups", "data.db");
+        assertThat(ownerRows(backups.resolve("data-1.0_.._.._up__b_ta_7-20261102-101530.db"))).isEqualTo(42);
+        assertThat(log.lines()).containsExactly("INFO Copied the database to backups/"
+            + "data-1.0_.._.._up__b_ta_7-20261102-101530.db before upgrading its layout.");
+    }
+
     private SqliteBackup backup(Path backups, int keep) {
         return new SqliteBackup(backups, "9.9.9", keep, CLOCK, log.logger);
     }

@@ -323,6 +323,52 @@ abstract class StorageContract {
     }
 
     @Test
+    void aMigrationThatOnlySelectsAndOneShapedForTheDialectAreAppliedAndRecorded() throws Exception {
+        String prefix = dialect() == Dialect.SQLITE ? "" : "shape_";
+        Migration noop = new Migration(1, "noop");
+        Migration shaped = new Migration(2, "shaped");
+        String shape = switch (dialect()) {
+            case SQLITE -> """
+                CREATE TABLE ${prefix}shaped_new (id INTEGER PRIMARY KEY, note TEXT);
+                ALTER TABLE ${prefix}shaped_new RENAME TO ${prefix}shaped;
+                """;
+            case MYSQL, MARIADB -> """
+                CREATE TABLE IF NOT EXISTS ${prefix}shaped (id INT NOT NULL PRIMARY KEY, note TEXT) ENGINE = InnoDB;
+                """;
+            case POSTGRES -> """
+                CREATE TABLE ${prefix}shaped (id INTEGER NOT NULL PRIMARY KEY);
+                ALTER TABLE ${prefix}shaped ADD COLUMN note TEXT;
+                SELECT 1;
+                """;
+        };
+        int statements = switch (dialect()) {
+            case SQLITE -> 2;
+            case MYSQL, MARIADB -> 1;
+            case POSTGRES -> 3;
+        };
+        Map<String, String> scripts = Map.of(noop.resource(dialect()), "SELECT 1;\n",
+            shaped.resource(dialect()), shape);
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            try {
+                starting(prefix, List.of(noop, shaped), scripts).join().close(Duration.ofSeconds(5));
+                starting(prefix, List.of(noop, shaped), scripts).join().close(Duration.ofSeconds(5));
+
+                assertThat(ProbeSchema.versions(connection, prefix)).containsExactly(1, 2);
+                assertThat(checksum(connection, prefix, 1)).isEqualTo(Migrator.checksum("SELECT 1;\n"));
+                assertThat(ProbeSchema.statementsDone(connection, prefix, 1)).isEqualTo(1);
+                assertThat(ProbeSchema.appliedAt(connection, prefix, 1)).isEqualTo(NOW.toEpochMilli());
+                assertThat(checksum(connection, prefix, 2)).isEqualTo(Migrator.checksum(shape));
+                assertThat(ProbeSchema.statementsDone(connection, prefix, 2)).isEqualTo(statements);
+                assertThat(columns(connection, prefix + "shaped")).containsExactly("id", "note");
+            } finally {
+                for (String table : List.of(prefix + "shaped", prefix + "shaped_new", prefix + "schema_version")) {
+                    statement.execute("DROP TABLE IF EXISTS " + table);
+                }
+            }
+        }
+    }
+
+    @Test
     void aBaselineTakesOverAMultiRowVersionTableOnce() throws Exception {
         String prefix = dialect() == Dialect.SQLITE ? "" : "taken_";
         String legacy = "legacy_schema_version";

@@ -5,6 +5,101 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `StorageSettings.versionTable(String)` names the table that records the applied migrations, on every dialect and
+  with no table prefix added, so a plugin whose tables carry a fixed name keeps its version table beside them. The
+  name is 1 to 54 lowercase letters, digits and underscores, starting with a letter or underscore.
+  `StorageSettings.versionTable()` gives the name that was set, or `null` for the default.
+- `StorageSettings.sqlite(String sqliteFile)` and `StorageSettings.server(Dialect dialect, Server server)` give
+  settings with a pool of `Pool.of(4)`, 2 database threads and 5 SQLite backups, and `pool(Pool)`,
+  `asyncThreads(int)`, `backupKeep(int)` and `versionTable(String)` each give a copy with that value replaced.
+  `StorageSettings.Server.of(host, port, database, user, password, sslMode)` gives a server with no table prefix
+  and `tablePrefix(String)` a copy with one. `StorageSettings.Pool.of(int maxSize)` gives a pool that keeps 1 idle
+  connection and lets a caller wait 10 seconds, and `maxSize(int)`, `minIdle(int)` and
+  `connectionTimeout(Duration)` each give a copy.
+
+### Changed
+- Breaking: `StorageSettings`, `StorageSettings.Server` and `StorageSettings.Pool` are final classes with no public
+  constructor and are no longer records, so a value a later release adds breaks no plugin. The methods that read a
+  value keep their names, the three still compare by value, and `Server.toString()` still hides the password.
+  `StorageSettings.sqliteFile()` is empty for a server, and `StorageSettings.server(Dialect.SQLITE, server)` throws
+  `IllegalArgumentException`. A record pattern over one of the three no longer compiles. Replace
+  `new StorageSettings(Dialect.SQLITE, file, null, pool, threads, keep)` with
+  `StorageSettings.sqlite(file).pool(pool).asyncThreads(threads).backupKeep(keep)`,
+  `new StorageSettings(dialect, file, server, pool, threads, keep)` with
+  `StorageSettings.server(dialect, server).pool(pool).asyncThreads(threads)`,
+  `new StorageSettings.Server(host, port, database, user, password, sslMode, prefix)` with
+  `StorageSettings.Server.of(host, port, database, user, password, sslMode).tablePrefix(prefix)` and
+  `new StorageSettings.Pool(maxSize, minIdle, timeout)` with
+  `StorageSettings.Pool.of(maxSize).minIdle(minIdle).connectionTimeout(timeout)`.
+- Breaking: on MySQL, MariaDB and PostgreSQL the applied migrations are recorded in
+  `<prefix><plugin>_schema_version`, where `<plugin>` is the plugin's name in lowercase with every character other
+  than a lowercase letter, a digit or an underscore replaced by an underscore, and no longer in
+  `<prefix>schema_version`. Two plugins that share a database and a table prefix therefore keep a migration history
+  and a migration lock each, where the second to start stopped with `set up by a newer version of the plugin` or
+  `changed after it ran on this database`. On the first start under `0.4.0`, a `<prefix>schema_version` in storage's
+  layout that records at least one migration with the checksum of one of this plugin's scripts is this plugin's
+  earlier version table: its rows are copied into the new table, one line names both tables, and the earlier table
+  stays as it was and is not read again, so a server that still runs a build on `0.3.2` against the same database
+  keeps starting. The start holds the migration lock of the earlier table too while it copies. A migration applied
+  under `0.4.0` is recorded only in the new table, so a build on `0.3.2` or earlier that holds that migration runs
+  it again: update every server that shares the database before the plugin ships a new migration. SQLite keeps
+  `schema_version`. The warning about tables under another prefix names only a version table that holds this
+  plugin's checksums. A plugin, test or query that reads `<prefix>schema_version` reads the new name, or the plugin
+  keeps the earlier name with `settings.versionTable(settings.tablePrefix() + "schema_version")`.
+- Breaking: `Storage.start` throws `IllegalArgumentException` when `StorageSettings.asyncThreads()` is above
+  `StorageSettings.Pool.maxSize()`, where it started and the threads beyond the pool's size failed with a
+  connection timeout under load. Each database thread uses one connection at a time, so connections above
+  `asyncThreads` are never used. Set `maxSize` to `asyncThreads` or more.
+- Breaking: a migration script that is still to run stops the start, before the backup and before any migration,
+  when it holds what the statement splitter cannot read: a single-quoted string that does not end on the line it
+  starts, the start of a block comment (`/*`) or dollar quoting (`$$`) outside a quoted string, or a quote directly
+  after a backslash. The `StorageException` names the file and the line. Such a script was split wrongly or ran by
+  accident. A script that already ran is only compared by its checksum and never stops a start for this. Write
+  comments as `--`, keep each quoted string on one line, write a quote inside a string as two quotes, and create a
+  function or trigger outside the migration scripts.
+- Breaking: a commit the database refuses because it rolled the transaction back (an
+  `SQLTransactionRollbackException`, or an `SQLException` whose SQLState or that of a cause starts with `40`, such
+  as the `40001` a PostgreSQL `SERIALIZABLE` transaction gets at its commit) completes the future of `async` and
+  `read` with that exception and is run again by `asyncRetrying` and `readRetrying`, where it completed the future
+  with a `CommitUnknownException` that was never retried. Nothing was written by such a commit. Any other failed
+  commit is a `CommitUnknownException` as before. Code that caught `CommitUnknownException` to retry a
+  serialization failure itself calls `asyncRetrying` and drops that branch.
+- Breaking: on SQLite storage from `Storage.start`, a write transaction (`async`, `asyncRetrying`) begins with
+  `BEGIN IMMEDIATE`: the writer connection is opened with `transaction_mode=IMMEDIATE`. While another process holds
+  the file's write lock, the work waits for it up to the busy timeout of 5 seconds and then reads what that process
+  wrote, where work that read and then wrote failed at once with `SQLITE_BUSY`. Work passed to `async` that only
+  reads now holds the write lock for as long as it runs, so pass work that only reads to `read`. A test that opens
+  `Storage.over` on SQLite and should behave as `start` adds `transaction_mode=IMMEDIATE` to its properties.
+- Breaking: the file name of a SQLite backup holds the plugin version with every character other than an ASCII
+  letter, a digit, a dot, an underscore or a hyphen written as an underscore, so a version such as `1.4.0+build.7`
+  gives `data-1.4.0_build.7-<time>.db` and a version with a path separator cannot leave the `backups` folder.
+  Backups an earlier release wrote are still counted and pruned. A tool that looks a backup up by the version
+  replaces those characters the same way.
+
+### Fixed
+- The checksum of a migration script ignores line endings and a leading byte order mark: it is taken over the text
+  with every line ending as a line feed and without the mark. A build whose scripts were checked out with CRLF (git
+  `autocrlf` without a `.gitattributes` entry) starts on a database that ran the LF scripts, where every start
+  stopped with `migration V1__... changed after it ran on this database`. A row written by `0.1.0` to `0.3.2` holds
+  the checksum of the script's exact bytes and is accepted while the script still has those bytes, and new rows
+  hold the new checksum. A script with a byte order mark runs: the mark is no longer sent to the database with the
+  first statement.
+- On MySQL and MariaDB each statement of a migration and its progress record commit in one transaction, so a start
+  interrupted between the two no longer runs a statement that changes rows, such as
+  `UPDATE accounts SET balance = balance * 10000`, a second time. A DDL statement still commits on its own before
+  its record and must stay rerunnable.
+- On PostgreSQL a start waits at most a day for the migration lock, as on MySQL and MariaDB, and then fails with
+  `another start has held the migration lock of <version table> in database <schema> for a day; restart once the
+  other server has started`, where it waited with no limit for a holder that stayed connected.
+- On SQLite a migration is no longer rolled back for rows that broke a foreign key before it ran.
+  `PRAGMA foreign_key_check` runs before the migration and again before it commits, the migration fails only for a
+  row the second check finds and the first did not, and one warning per start names the tables of the rows that
+  were already broken.
+- The Javadoc of `Params.time` states its range: an instant whose milliseconds since the epoch fit a `long`. It
+  throws `ArithmeticException` for `Instant.MAX`, `Instant.MIN` and any other instant outside that range, as
+  before, so a plugin stores "never" as `null`.
+
 ## [0.3.2] - 2026-11-20
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

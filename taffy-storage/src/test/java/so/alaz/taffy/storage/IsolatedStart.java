@@ -32,8 +32,9 @@ final class IsolatedStart {
      * @return what the future of the start failed with, or {@code null} when it started
      */
     static @Nullable Throwable failure(Path folder, String name) throws Exception {
-        StorageSettings settings = new StorageSettings(Dialect.SQLITE, "data.db", null,
-            new StorageSettings.Pool(1, 0, Duration.ofSeconds(5)), 1, 0);
+        StorageSettings settings = StorageSettings.sqlite("data.db")
+            .pool(StorageSettings.Pool.of(1).minIdle(0).connectionTimeout(Duration.ofSeconds(5))).asyncThreads(1)
+            .backupKeep(0);
         Logger logger = Logger.getAnonymousLogger();
         logger.setUseParentHandlers(false);
         PluginMeta meta = proxy(PluginMeta.class, Map.of("getVersion", "9.9.9"));

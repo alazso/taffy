@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -29,15 +30,18 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.IntStream;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
+import javax.sql.DataSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -186,8 +190,55 @@ final class SqliteStartTest {
     }
 
     @Test
+    void aWriteThatReadsFirstWaitsForAnotherProcessThatHoldsTheWriteLock() throws Exception {
+        storage = start(settings(0));
+        try (Connection outside = DriverManager.getConnection("jdbc:sqlite:" + folder.resolve("data.db"));
+             Statement statement = outside.createStatement()) {
+            statement.execute("BEGIN IMMEDIATE");
+            statement.execute("INSERT INTO probe_a (id) VALUES (1)");
+            CompletableFuture<Long> seen = storage.async(tx -> {
+                long rows = tx.queryOne("SELECT COUNT(*) AS n FROM probe_a", Tx.Binder.NONE,
+                    row -> row.integer("n")).orElseThrow();
+                tx.update("INSERT INTO probe_a (id) VALUES (2)", Tx.Binder.NONE);
+                return rows;
+            });
+            assertThatThrownBy(() -> seen.get(300, TimeUnit.MILLISECONDS)).isInstanceOf(TimeoutException.class);
+            statement.execute("COMMIT");
+
+            assertThat(seen.get(10, TimeUnit.SECONDS)).isEqualTo(1);
+        }
+        assertThat(storage.read(tx -> tx.queryOne("SELECT COUNT(*) AS n FROM probe_a", Tx.Binder.NONE,
+            row -> row.integer("n")).orElseThrow()).join()).isEqualTo(2);
+    }
+
+    @Test
+    void aSqliteDatabaseRecordsItsMigrationsInTheTableTheSettingsName() {
+        storage = start(settings(0).versionTable("probe_versions"));
+
+        assertThat(tableNames()).containsExactly("probe_a", "probe_b", "probe_c", "probe_versions");
+        assertThat(versions("probe_versions")).containsExactly(1L, 2L, 3L);
+    }
+
+    @Test
+    void aNamedVersionTableTakesTheRowsOfTheSchemaVersionTableAnEarlierStartWrote() {
+        start(settings(0)).close(Duration.ofSeconds(5));
+        log.records.clear();
+
+        storage = start(settings(0).versionTable("probe_versions"));
+
+        assertThat(tableNames()).containsExactly("probe_a", "probe_b", "probe_c", "probe_versions",
+            "schema_version");
+        assertThat(versions("probe_versions")).containsExactly(1L, 2L, 3L);
+        assertThat(versions("schema_version")).containsExactly(1L, 2L, 3L);
+        assertThat(log.lines()).containsExactly("INFO Copied the migrations schema_version records into"
+            + " probe_versions, which records them from now on. schema_version stays as it was and is no longer"
+            + " read.");
+        assertThat(folder.resolve("backups")).doesNotExist();
+    }
+
+    @Test
     void aFileInASubfolderGetsItsFolder() {
-        StorageSettings nested = new StorageSettings(Dialect.SQLITE, "data/store.db", null, settings(5).pool(), 1, 5);
+        StorageSettings nested = StorageSettings.sqlite("data/store.db").pool(settings(5).pool()).asyncThreads(1);
 
         storage = start(nested);
 
@@ -225,7 +276,7 @@ final class SqliteStartTest {
 
     @Test
     void workQueuedWhenTheDrainRunsOutFailsInsteadOfHanging() throws Exception {
-        StorageSettings single = new StorageSettings(Dialect.SQLITE, "data.db", null, settings(5).pool(), 1, 5);
+        StorageSettings single = settings(5).asyncThreads(1);
         Storage closing = start(single);
         CountDownLatch inside = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
@@ -251,7 +302,7 @@ final class SqliteStartTest {
 
     @Test
     void aHandOffQueuedWhenTheDrainRunsOutStillRuns() throws Exception {
-        StorageSettings single = new StorageSettings(Dialect.SQLITE, "data.db", null, settings(5).pool(), 1, 5);
+        StorageSettings single = settings(5).asyncThreads(1);
         Storage closing = start(single);
         CountDownLatch inside = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
@@ -273,36 +324,41 @@ final class SqliteStartTest {
     }
 
     @Test
-    void aReadStillWaitingForAConnectionWhenTheDrainRunsOutFailsAsRefused() throws Exception {
-        Storage closing = start(new StorageSettings(Dialect.SQLITE, "data.db", null,
-            new StorageSettings.Pool(1, 0, Duration.ofSeconds(5)), 2, 0));
-        CountDownLatch inside = new CountDownLatch(1);
-        CountDownLatch release = new CountDownLatch(1);
-        AtomicReference<String> holder = new AtomicReference<>();
-        CompletableFuture<Integer> holding = closing.read(tx -> {
-            holder.set(Thread.currentThread().getName());
-            inside.countDown();
-            awaitThroughInterrupts(release);
-            return 1;
+    void workStillWaitingForAConnectionWhenTheDrainRunsOutFailsAsRefused() throws Exception {
+        CountDownLatch waiting = new CountDownLatch(1);
+        DataSource source = mock(DataSource.class);
+        when(source.getConnection()).thenAnswer(call -> {
+            waiting.countDown();
+            try {
+                new CountDownLatch(1).await();
+            } catch (InterruptedException interrupted) {
+                throw new SQLException("interrupted while waiting for a connection", interrupted);
+            }
+            throw new AssertionError("the wait ends only with an interrupt");
         });
-        assertThat(inside.await(10, TimeUnit.SECONDS)).isTrue();
-        CompletableFuture<Integer> waiting = closing.read(tx -> 2);
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-        while (Thread.getAllStackTraces().keySet().stream().noneMatch(thread -> thread.getName().startsWith(NAME + "-db-")
-            && !thread.getName().equals(holder.get()) && !thread.getName().equals(NAME + "-db-writer")
-            && thread.getState() == Thread.State.TIMED_WAITING)) {
-            assertThat(System.nanoTime()).isLessThan(deadline);
-            Thread.sleep(10);
-        }
+        Storage closing = Storage.over(plugin("waiting-probe"), new ErrorReports(), Dialect.SQLITE, source, "",
+            StorageContract.CLOCK);
+        CompletableFuture<Integer> work = closing.read(tx -> 2);
+        assertThat(waiting.await(10, TimeUnit.SECONDS)).isTrue();
 
         assertThat(closing.close(Duration.ofMillis(200))).isFalse();
-        release.countDown();
 
-        assertThatThrownBy(() -> waiting.get(5, TimeUnit.SECONDS))
+        assertThatThrownBy(() -> work.get(5, TimeUnit.SECONDS))
             .hasCauseInstanceOf(RejectedExecutionException.class)
             .cause().hasMessage("storage closed before this work ran");
-        assertThat(holding.get(5, TimeUnit.SECONDS)).isEqualTo(1);
-        awaitReleased(folder.resolve("data.db"));
+    }
+
+    @Test
+    void asyncThreadsAboveThePoolSizeAreRefusedBeforeAnyThreadStarts() throws Exception {
+        StorageSettings settings = StorageSettings.sqlite("data.db").pool(StorageSettings.Pool.of(2)).asyncThreads(3);
+
+        assertThatThrownBy(() -> Storage.start(plugin("oversized"), new ErrorReports(), settings, MIGRATIONS,
+            StorageContract.CLOCK))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("asyncThreads is 3, above the pool's maxSize of 2; each database thread needs a connection,"
+                + " so raise maxSize or lower asyncThreads");
+        awaitNoThreadNamed("oversized-db-");
+        assertThat(folder.resolve("data.db")).doesNotExist();
     }
 
     @Test
@@ -571,8 +627,8 @@ final class SqliteStartTest {
     }
 
     static StorageSettings settings(int keep) {
-        return new StorageSettings(Dialect.SQLITE, "data.db", null,
-            new StorageSettings.Pool(4, 1, Duration.ofSeconds(5)), 2, keep);
+        return StorageSettings.sqlite("data.db")
+            .pool(StorageSettings.Pool.of(4).connectionTimeout(Duration.ofSeconds(5))).backupKeep(keep);
     }
 
     private static InputStream script(String path) {
@@ -588,9 +644,20 @@ final class SqliteStartTest {
         return TestPlugins.plugin(name, folder, log.logger, SqliteStartTest::script);
     }
 
+    private List<String> tableNames() {
+        return storage.read(tx -> tx.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+            Tx.Binder.NONE, row -> row.text("name"))).join();
+    }
+
+    private List<Long> versions(String table) {
+        return storage.read(tx -> tx.query("SELECT version FROM " + table + " ORDER BY version", Tx.Binder.NONE,
+            row -> row.integer("version"))).join();
+    }
+
     private static StorageSettings threads(int asyncThreads) {
-        return new StorageSettings(Dialect.SQLITE, "data.db", null,
-            new StorageSettings.Pool(4, 1, Duration.ofMillis(250)), asyncThreads, 0);
+        return StorageSettings.sqlite("data.db")
+            .pool(StorageSettings.Pool.of(4).connectionTimeout(Duration.ofMillis(250))).asyncThreads(asyncThreads)
+            .backupKeep(0);
     }
 
     private static void createOrdered(Storage storage) {

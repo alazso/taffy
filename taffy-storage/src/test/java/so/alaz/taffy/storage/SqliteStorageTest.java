@@ -115,8 +115,8 @@ final class SqliteStorageTest extends StorageContract {
     }
 
     private static StorageSettings settings() {
-        return new StorageSettings(Dialect.SQLITE, "data.db", null,
-            new StorageSettings.Pool(4, 1, Duration.ofSeconds(5)), 2, 5);
+        return StorageSettings.sqlite("data.db")
+            .pool(StorageSettings.Pool.of(4).connectionTimeout(Duration.ofSeconds(5)));
     }
 
     private static List<Object> pragmas(Tx tx) throws SQLException {

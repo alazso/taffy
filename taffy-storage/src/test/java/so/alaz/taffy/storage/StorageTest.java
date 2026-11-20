@@ -46,7 +46,8 @@ import static org.mockito.Mockito.when;
 
 final class StorageTest {
 
-    private static final StorageSettings.Pool POOL = new StorageSettings.Pool(2, 0, Duration.ofMillis(500));
+    private static final StorageSettings.Pool POOL =
+        StorageSettings.Pool.of(2).minIdle(0).connectionTimeout(Duration.ofMillis(500));
 
     @TempDir
     private Path folder;
@@ -515,9 +516,9 @@ final class StorageTest {
     @ParameterizedTest
     @EnumSource(value = Dialect.class, names = {"MYSQL", "MARIADB", "POSTGRES"})
     void aServerThatRefusesTheConnectionFailsTheStartAndStopsItsThreads(Dialect dialect) throws Exception {
-        StorageSettings.Server closed = new StorageSettings.Server("127.0.0.1", 1, "app", "shop", "secret",
-            StorageSettings.SslMode.DISABLE, "p_");
-        StorageSettings settings = new StorageSettings(dialect, "data.db", closed, POOL, 2, 0);
+        StorageSettings.Server closed = StorageSettings.Server.of("127.0.0.1", 1, "app", "shop", "secret",
+            StorageSettings.SslMode.DISABLE).tablePrefix("p_");
+        StorageSettings settings = StorageSettings.server(dialect, closed).pool(POOL);
         String name = "refused-" + dialect.id();
 
         CompletableFuture<Storage> started = Storage.start(TestPlugins.plugin(name, folder, log.logger), errors,
@@ -535,10 +536,10 @@ final class StorageTest {
     }
 
     private static StorageSettings sqlite() {
-        return new StorageSettings(Dialect.SQLITE, "data.db", null, POOL, 1, 0);
+        return StorageSettings.sqlite("data.db").pool(POOL).asyncThreads(1).backupKeep(0);
     }
 
     private static StorageSettings.Server server(String host, StorageSettings.SslMode ssl) {
-        return new StorageSettings.Server(host, 3307, "app", "shop", "secret", ssl, "p_");
+        return StorageSettings.Server.of(host, 3307, "app", "shop", "secret", ssl).tablePrefix("p_");
     }
 }

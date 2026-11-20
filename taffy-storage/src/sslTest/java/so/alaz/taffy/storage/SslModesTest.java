@@ -138,8 +138,8 @@ final class SslModesTest {
     private static Connection connect(Dialect dialect, String host, StorageSettings.SslMode mode)
         throws SQLException {
         JdbcDatabaseContainer<?> server = SERVERS.get(dialect);
-        StorageSettings.Server settings = new StorageSettings.Server(host, server.getFirstMappedPort(),
-            server.getDatabaseName(), server.getUsername(), server.getPassword(), mode, "");
+        StorageSettings.Server settings = StorageSettings.Server.of(host, server.getFirstMappedPort(),
+            server.getDatabaseName(), server.getUsername(), server.getPassword(), mode);
         return DriverManager.getConnection(Storage.serverUrl(dialect, settings), server.getUsername(),
             server.getPassword());
     }

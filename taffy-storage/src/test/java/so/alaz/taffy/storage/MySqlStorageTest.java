@@ -22,8 +22,8 @@ final class MySqlStorageTest extends CheckpointedStorageContract {
 
     @Override
     StorageSettings.Server server(String prefix) {
-        return new StorageSettings.Server(DATABASE.getHost(), DATABASE.getFirstMappedPort(),
+        return StorageSettings.Server.of(DATABASE.getHost(), DATABASE.getFirstMappedPort(),
             DATABASE.getDatabaseName(), DATABASE.getUsername(), DATABASE.getPassword(),
-            StorageSettings.SslMode.DISABLE, prefix);
+            StorageSettings.SslMode.DISABLE).tablePrefix(prefix);
     }
 }

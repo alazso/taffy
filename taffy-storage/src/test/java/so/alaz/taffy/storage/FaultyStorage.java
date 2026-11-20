@@ -42,8 +42,8 @@ final class FaultyStorage implements AutoCloseable {
     /** Migrates a new database in {@code folder} and opens it. */
     static FaultyStorage open(Path folder, Clock clock, List<Migration> migrations,
                               Function<String, @Nullable InputStream> scripts) {
-        StorageSettings settings = new StorageSettings(Dialect.SQLITE, "data.db", null,
-            new StorageSettings.Pool(4, 1, Duration.ofSeconds(5)), 1, 0);
+        StorageSettings settings = StorageSettings.sqlite("data.db")
+            .pool(StorageSettings.Pool.of(4).connectionTimeout(Duration.ofSeconds(5))).asyncThreads(1).backupKeep(0);
         Storage migrated = Storage.start(TestPlugins.plugin(NAME, folder, Logger.getAnonymousLogger(), scripts),
             new ErrorReports(), settings, migrations, clock).join();
         migrated.close(Duration.ofSeconds(5));

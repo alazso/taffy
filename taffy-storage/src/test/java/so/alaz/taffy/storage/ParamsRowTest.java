@@ -83,6 +83,25 @@ final class ParamsRowTest {
     }
 
     @Test
+    void anInstantWhoseMillisecondsDoNotFitALongIsRefused() throws SQLException {
+        Instant last = Instant.ofEpochMilli(Long.MAX_VALUE);
+        Instant first = Instant.ofEpochMilli(Long.MIN_VALUE);
+        insert(UUID.randomUUID(), "last", null, last, null, null);
+        insert(UUID.randomUUID(), "first", null, first, null, null);
+
+        assertThat(query("SELECT at FROM probe WHERE state = 'last'", params -> { }, found -> found.time("at")))
+            .containsExactly(last);
+        assertThat(query("SELECT at FROM probe WHERE state = 'first'", params -> { }, found -> found.time("at")))
+            .containsExactly(first);
+        for (Instant sentinel : List.of(Instant.MAX, Instant.MIN, last.plusMillis(1), first.minusMillis(1))) {
+            assertThatThrownBy(() -> insert(UUID.randomUUID(), "never", null, sentinel, null, null))
+                .isInstanceOf(ArithmeticException.class);
+        }
+        assertThat(query("SELECT state FROM probe WHERE state = 'never'", params -> { },
+            found -> found.text("state"))).isEmpty();
+    }
+
+    @Test
     void aNullBalanceBindsNull() throws SQLException {
         UUID id = UUID.randomUUID();
 

@@ -21,9 +21,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -191,8 +194,8 @@ final class PostgresStorageTest extends StorageContract {
             try {
                 assertThat(advisory(holder, "pg_try_advisory_lock", publicKey)).isTrue();
                 StorageSettings.Server base = server(prefix);
-                StorageSettings.Server other = new StorageSettings.Server(base.host(), base.port(), base.database(),
-                    role, password, base.sslMode(), prefix);
+                StorageSettings.Server other = StorageSettings.Server.of(base.host(), base.port(), base.database(),
+                    role, password, base.sslMode()).tablePrefix(prefix);
 
                 start(other, List.of(first), scripts).orTimeout(30, TimeUnit.SECONDS).join()
                     .close(Duration.ofSeconds(5));
@@ -284,6 +287,175 @@ final class PostgresStorageTest extends StorageContract {
         }
     }
 
+    @Test
+    void aSerializableCommitThatFailsWith40001IsRetriedAndBothTransactionsCommitOnce() throws Exception {
+        String table = "skew_duty";
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE " + table
+                + " (doctor VARCHAR(16) NOT NULL PRIMARY KEY, on_call BOOLEAN NOT NULL)");
+            try {
+                statement.execute("INSERT INTO " + table + " VALUES ('alice', TRUE), ('bob', TRUE)");
+                CyclicBarrier bothWrote = new CyclicBarrier(2);
+                AtomicInteger attempts = new AtomicInteger();
+                AtomicInteger committed = new AtomicInteger();
+
+                CompletableFuture<Long> alice = leaving(table, "alice", bothWrote, attempts, committed);
+                CompletableFuture<Long> bob = leaving(table, "bob", bothWrote, attempts, committed);
+
+                assertThat(List.of(alice.get(30, TimeUnit.SECONDS), bob.get(30, TimeUnit.SECONDS)))
+                    .containsExactlyInAnyOrder(2L, 1L);
+                assertThat(attempts).hasValue(3);
+                assertThat(committed).hasValue(2);
+                try (ResultSet onCall = statement.executeQuery(
+                    "SELECT COUNT(*) FROM " + table + " WHERE on_call")) {
+                    assertThat(onCall.next()).isTrue();
+                    assertThat(onCall.getInt(1)).isEqualTo(1);
+                }
+            } finally {
+                statement.execute("DROP TABLE IF EXISTS " + table);
+            }
+        }
+    }
+
+    // A doctor goes off call when two are on call. The first attempt waits, after its write, until the other
+    // transaction has written too, so both read two doctors on call and the commit of the second fails with 40001.
+    private CompletableFuture<Long> leaving(String table, String doctor, CyclicBarrier bothWrote,
+                                            AtomicInteger attempts, AtomicInteger committed) {
+        AtomicInteger own = new AtomicInteger();
+        return storage().asyncRetrying(tx -> {
+            attempts.incrementAndGet();
+            tx.afterCommit(committed::incrementAndGet);
+            tx.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE");
+            long onCall = tx.queryOne("SELECT COUNT(*) AS n FROM " + table + " WHERE on_call", Tx.Binder.NONE,
+                row -> row.integer("n")).orElseThrow();
+            if (onCall >= 2) {
+                tx.update("UPDATE " + table + " SET on_call = FALSE WHERE doctor = ?",
+                    params -> params.text(doctor));
+            }
+            if (own.incrementAndGet() == 1) {
+                try {
+                    bothWrote.await(20, TimeUnit.SECONDS);
+                } catch (InterruptedException | BrokenBarrierException | TimeoutException unmet) {
+                    throw new IllegalStateException("the other transaction did not write", unmet);
+                }
+            }
+            return onCall;
+        });
+    }
+
+    @Test
+    void aMigrationLockHeldByAnotherConnectionStopsTheStartOnceTheWaitHasPassed() throws Exception {
+        String prefix = "held_";
+        String versionTable = prefix + "schema_version";
+        long key = Migrator.lockKey("public", versionTable);
+        Migrator migrator = new Migrator(Dialect.POSTGRES, prefix, versionTable, CLOCK, Logger.getAnonymousLogger(),
+            ProbeSchema.MIGRATIONS, ProbeSchema.source(ProbeSchema.scripts(Dialect.POSTGRES)), null,
+            Duration.ofSeconds(2));
+        try (Connection holder = connect(); Connection connection = connect();
+             Statement holding = holder.createStatement()) {
+            try {
+                assertThat(advisory(holder, "pg_try_advisory_lock", key)).isTrue();
+                long begun = System.nanoTime();
+
+                assertThatThrownBy(() -> migrator.migrate(connection, null))
+                    .isInstanceOf(StorageException.class)
+                    .hasMessage("another start has held the migration lock of " + versionTable
+                        + " in database public for 2s; restart once the other server has started");
+
+                assertThat(Duration.ofNanos(System.nanoTime() - begun))
+                    .isBetween(Duration.ofSeconds(2), Duration.ofSeconds(20));
+                assertThat(connection.getAutoCommit()).isTrue();
+                assertThat(ProbeSchema.tables(connection, Dialect.POSTGRES, prefix)).isEmpty();
+                assertThat(advisory(holder, "pg_advisory_unlock", key)).isTrue();
+
+                migrator.migrate(connection, null);
+
+                assertThat(ProbeSchema.versions(connection, prefix)).containsExactly(1, 2, 3);
+                assertThat(advisory(holder, "pg_try_advisory_lock", key)).isTrue();
+            } finally {
+                holding.execute("SELECT pg_advisory_unlock_all()");
+                ProbeSchema.drop(connection, Dialect.POSTGRES, prefix);
+            }
+        }
+    }
+
+    @Test
+    void twoPluginsUnderOnePrefixKeepAHistoryAndAMigrationLockEach() throws Exception {
+        String prefix = "duo_";
+        String shopTable = prefix + "shop_plugin_schema_version";
+        String bankTable = prefix + "bank_plugin_schema_version";
+        Migration shop = new Migration(1, "shop");
+        Migration bank = new Migration(1, "bank");
+        Migration more = new Migration(2, "more");
+        Map<String, String> shopScripts = Map.of(
+            shop.resource(Dialect.POSTGRES), "CREATE TABLE ${prefix}shop (id INTEGER);\n");
+        Map<String, String> bankScripts = Map.of(
+            bank.resource(Dialect.POSTGRES), "CREATE TABLE ${prefix}bank (id INTEGER);\n",
+            more.resource(Dialect.POSTGRES), "CREATE TABLE ${prefix}more (id INTEGER);\n");
+        long shopKey = Migrator.lockKey("public", shopTable);
+        try (Connection connection = connect(); Connection holder = connect();
+             Statement holding = holder.createStatement()) {
+            try {
+                startAs("Shop-Plugin", prefix, List.of(shop), shopScripts).join().close(Duration.ofSeconds(5));
+                startAs("Bank-Plugin", prefix, List.of(bank), bankScripts).join().close(Duration.ofSeconds(5));
+
+                assertThat(ProbeSchema.tables(connection, Dialect.POSTGRES, prefix))
+                    .containsExactly(prefix + "bank", bankTable, prefix + "shop", shopTable);
+                assertThat(ProbeSchema.ids(connection, shopTable, "version")).containsExactly(1);
+                assertThat(ProbeSchema.ids(connection, bankTable, "version")).containsExactly(1);
+
+                assertThat(advisory(holder, "pg_try_advisory_lock", shopKey)).isTrue();
+                startAs("Bank-Plugin", prefix, List.of(bank, more), bankScripts).orTimeout(30, TimeUnit.SECONDS)
+                    .join().close(Duration.ofSeconds(5));
+                assertThat(ProbeSchema.ids(connection, bankTable, "version")).containsExactly(1, 2);
+                CompletableFuture<Storage> waiting = startAs("Shop-Plugin", prefix, List.of(shop), shopScripts);
+                assertThatThrownBy(() -> waiting.get(2, TimeUnit.SECONDS)).isInstanceOf(TimeoutException.class);
+                assertThat(advisory(holder, "pg_advisory_unlock", shopKey)).isTrue();
+                waiting.orTimeout(30, TimeUnit.SECONDS).join().close(Duration.ofSeconds(5));
+
+                assertThat(ProbeSchema.ids(connection, shopTable, "version")).containsExactly(1);
+                assertThat(ProbeSchema.tables(connection, Dialect.POSTGRES, prefix)).containsExactly(prefix + "bank",
+                    bankTable, prefix + "more", prefix + "shop", shopTable);
+            } finally {
+                holding.execute("SELECT pg_advisory_unlock_all()");
+                ProbeSchema.drop(connection, Dialect.POSTGRES, prefix);
+            }
+        }
+    }
+
+    @Test
+    void aVersionTableOfAnEarlierReleaseIsCopiedIntoThePluginsOwnVersionTable() throws Exception {
+        String prefix = "earlier_";
+        String earlier = prefix + "schema_version";
+        String own = prefix + "postgres_probe_schema_version";
+        Map<String, String> scripts = ProbeSchema.scripts(Dialect.POSTGRES);
+        try (Connection connection = connect()) {
+            try {
+                new Migrator(Dialect.POSTGRES, prefix, CLOCK, Logger.getAnonymousLogger(),
+                    ProbeSchema.MIGRATIONS.subList(0, 2), ProbeSchema.source(scripts)).migrate(connection, null);
+
+                startAs(NAME, prefix, ProbeSchema.MIGRATIONS, scripts).join().close(Duration.ofSeconds(5));
+                startAs(NAME, prefix, ProbeSchema.MIGRATIONS, scripts).join().close(Duration.ofSeconds(5));
+
+                assertThat(ProbeSchema.tables(connection, Dialect.POSTGRES, prefix)).containsExactlyInAnyOrder(
+                    prefix + "alpha", prefix + "beta", prefix + "gamma", earlier, own);
+                assertThat(ProbeSchema.ids(connection, own, "version")).containsExactly(1, 2, 3);
+                assertThat(ProbeSchema.ids(connection, earlier, "version")).containsExactly(1, 2);
+                assertThat(ProbeSchema.ids(connection, prefix + "alpha", "id")).containsExactly(1);
+            } finally {
+                ProbeSchema.drop(connection, Dialect.POSTGRES, prefix);
+            }
+        }
+    }
+
+    /** Starts storage for the plugin named {@code plugin}, which records its migrations in the default table. */
+    private static CompletableFuture<Storage> startAs(String plugin, String prefix, List<Migration> migrations,
+                                                      Map<String, String> scripts) {
+        return TestPlugins.start(TestPlugins.plugin(plugin, Path.of("unused"), Logger.getAnonymousLogger(),
+            ProbeSchema.source(scripts)), StorageSettings.server(Dialect.POSTGRES, server(prefix)), migrations, null,
+            CLOCK);
+    }
+
     private static CompletableFuture<Storage> start(String prefix, List<Migration> migrations,
                                                     Map<String, String> scripts) {
         return start(server(prefix), migrations, scripts);
@@ -296,16 +468,16 @@ final class PostgresStorageTest extends StorageContract {
 
     private static CompletableFuture<Storage> start(StorageSettings.Server server, List<Migration> migrations,
                                                     Map<String, String> scripts, @Nullable Baseline baseline) {
-        StorageSettings settings = new StorageSettings(Dialect.POSTGRES, "data.db", server,
-            new StorageSettings.Pool(4, 1, Duration.ofSeconds(10)), 2, 5);
+        StorageSettings settings = StorageSettings.server(Dialect.POSTGRES, server)
+            .versionTable(server.tablePrefix() + "schema_version");
         return TestPlugins.start(TestPlugins.plugin(NAME, Path.of("unused"), Logger.getAnonymousLogger(),
             ProbeSchema.source(scripts)), settings, migrations, baseline, CLOCK);
     }
 
     private static StorageSettings.Server server(String prefix) {
-        return new StorageSettings.Server(DATABASE.getHost(), DATABASE.getFirstMappedPort(),
+        return StorageSettings.Server.of(DATABASE.getHost(), DATABASE.getFirstMappedPort(),
             DATABASE.getDatabaseName(), DATABASE.getUsername(), DATABASE.getPassword(),
-            StorageSettings.SslMode.DISABLE, prefix);
+            StorageSettings.SslMode.DISABLE).tablePrefix(prefix);
     }
 
     @Override

@@ -13,8 +13,9 @@ import java.util.regex.Pattern;
  * whole number from 0 to 2147483647 in ASCII digits, or {@code NULL}, which is skipped. Its other columns are not
  * read. The highest version in it, N, is the version the database is at; a table with no version in it is at 0.
  *
- * <p>When storage's version table {@code <prefix>schema_version} does not exist, the start takes the database over
- * before any migration runs, on MySQL, MariaDB and PostgreSQL while it holds the migration lock:
+ * <p>When storage's version table, which {@link StorageSettings#versionTable(String)} names, does not exist, and
+ * neither does a version table 0.1.0 to 0.3.2 wrote for this plugin, the start takes the database over before any
+ * migration runs, on MySQL, MariaDB and PostgreSQL while it holds the migration lock:
  * <ol>
  *   <li>It reads N from the old table. When the old table does not exist the database is treated as a new one and
  *       every migration runs; a table named {@code <table>_baseline} is not read. On SQLite, which compares table
@@ -33,7 +34,7 @@ import java.util.regex.Pattern;
  *
  * <p>Creating the version table, recording the versions and renaming the old table take effect together: on SQLite
  * and PostgreSQL in one transaction, and on MySQL and MariaDB by emptying and filling
- * {@code <prefix>schema_version_takeover} and renaming it and the old table in one statement. A start interrupted
+ * {@code <version table>_takeover} and renaming it and the old table in one statement. A start interrupted
  * at any point leaves either no version table of storage's, and the next start takes the database over again, or a
  * complete one.
  *

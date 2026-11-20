@@ -16,9 +16,10 @@ import java.util.stream.Stream;
 
 /**
  * Copies a SQLite database into the given folder before a migration changes it, as
- * {@code data-<version>-<UTC yyyyMMdd-HHmmss>.db}, and keeps the newest {@code keep} copies of that pattern by
- * modification time, the new copy among them. Files of another name in the folder are left alone. With
- * {@code keep} 0 it takes no copy.
+ * {@code data-<version>-<UTC yyyyMMdd-HHmmss>.db}, where every character of the version other than an ASCII letter,
+ * a digit, a dot, an underscore or a hyphen is written as an underscore, and keeps the newest {@code keep} copies
+ * of that pattern by modification time, the new copy among them. Files of another name in the folder are left
+ * alone. With {@code keep} 0 it takes no copy.
  */
 final class SqliteBackup implements Migrator.Backup {
 
@@ -44,7 +45,8 @@ final class SqliteBackup implements Migrator.Backup {
         if (keep == 0) {
             return;
         }
-        Path target = folder.resolve("data-" + version + "-" + BACKUP_STAMP.format(clock.instant()) + ".db");
+        Path target = folder.resolve("data-" + version.replaceAll("[^A-Za-z0-9._-]", "_") + "-"
+            + BACKUP_STAMP.format(clock.instant()) + ".db");
         try {
             Files.createDirectories(folder);
             Files.deleteIfExists(target);

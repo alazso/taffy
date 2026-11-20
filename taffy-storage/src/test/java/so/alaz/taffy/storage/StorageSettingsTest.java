@@ -13,29 +13,71 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 final class StorageSettingsTest {
 
-    private static final StorageSettings.Pool POOL = new StorageSettings.Pool(8, 2, Duration.ofSeconds(10));
+    private static final StorageSettings.Pool POOL = StorageSettings.Pool.of(8).minIdle(2);
 
     private static StorageSettings.Server server(String host, int port, String database, String password,
                                                  String prefix) {
-        return new StorageSettings.Server(host, port, database, "shop", password,
-            StorageSettings.SslMode.VERIFY_FULL, prefix);
+        return StorageSettings.Server.of(host, port, database, "shop", password,
+            StorageSettings.SslMode.VERIFY_FULL).tablePrefix(prefix);
     }
 
     private static StorageSettings.Server server(String prefix) {
         return server("db.example", 3307, "app", "0451", prefix);
     }
 
+    private static StorageSettings mariaDb(String prefix) {
+        return StorageSettings.server(Dialect.MARIADB, server(prefix)).pool(POOL);
+    }
+
     @Test
     void settingsWithTheSameValuesAreEqual() {
-        StorageSettings first = new StorageSettings(Dialect.MARIADB, "data.db", server("p_"), POOL, 2, 5);
-        StorageSettings second = new StorageSettings(Dialect.MARIADB, "data.db", server("p_"), POOL, 2, 5);
+        StorageSettings first = mariaDb("p_");
+        StorageSettings second = mariaDb("p_");
 
         assertThat(first).isEqualTo(second).hasSameHashCodeAs(second);
-        assertThat(first).isNotEqualTo(new StorageSettings(Dialect.MARIADB, "data.db", server("q_"), POOL, 2, 5));
+        assertThat(first).isNotEqualTo(mariaDb("q_"))
+            .isNotEqualTo(first.asyncThreads(3))
+            .isNotEqualTo(first.backupKeep(1))
+            .isNotEqualTo(first.pool(POOL.maxSize(9)))
+            .isNotEqualTo(first.versionTable("shop_versions"));
+        assertThat(first.versionTable("shop_versions")).isEqualTo(second.versionTable("shop_versions"));
         assertThat(first.server()).isEqualTo(server("p_"));
-        assertThat(first.pool()).isEqualTo(new StorageSettings.Pool(8, 2, Duration.ofSeconds(10)));
-        assertThat(first.asyncThreads()).isEqualTo(2);
-        assertThat(first.backupKeep()).isEqualTo(5);
+        assertThat(first.pool()).isEqualTo(StorageSettings.Pool.of(8).minIdle(2));
+    }
+
+    @Test
+    void aFactoryGivesAPoolOfFourTwoThreadsFiveBackupsAndNoVersionTableName() {
+        StorageSettings sqlite = StorageSettings.sqlite("data.db");
+        StorageSettings mariaDb = StorageSettings.server(Dialect.MARIADB, server("p_"));
+
+        for (StorageSettings settings : new StorageSettings[] {sqlite, mariaDb}) {
+            assertThat(settings.pool()).isEqualTo(StorageSettings.Pool.of(4));
+            assertThat(settings.asyncThreads()).isEqualTo(2);
+            assertThat(settings.backupKeep()).isEqualTo(5);
+            assertThat(settings.versionTable()).isNull();
+        }
+        assertThat(StorageSettings.Pool.of(4).minIdle()).isEqualTo(1);
+        assertThat(StorageSettings.Pool.of(4).connectionTimeout()).isEqualTo(Duration.ofSeconds(10));
+        assertThat(mariaDb.dialect()).isEqualTo(Dialect.MARIADB);
+        assertThat(mariaDb.sqliteFile()).isEmpty();
+    }
+
+    @Test
+    void eachMethodThatTakesAValueGivesACopyAndLeavesTheOriginal() {
+        StorageSettings settings = StorageSettings.sqlite("data.db");
+
+        StorageSettings changed = settings.pool(POOL).asyncThreads(6).backupKeep(0).versionTable("shop_versions");
+
+        assertThat(changed.pool()).isEqualTo(POOL);
+        assertThat(changed.asyncThreads()).isEqualTo(6);
+        assertThat(changed.backupKeep()).isZero();
+        assertThat(changed.versionTable()).isEqualTo("shop_versions");
+        assertThat(changed.sqliteFile()).isEqualTo("data.db");
+        assertThat(settings).isEqualTo(StorageSettings.sqlite("data.db"));
+        assertThat(POOL.maxSize(3).minIdle(3).connectionTimeout(Duration.ofSeconds(1)))
+            .isEqualTo(StorageSettings.Pool.of(3).minIdle(3).connectionTimeout(Duration.ofSeconds(1)));
+        assertThat(POOL).isEqualTo(StorageSettings.Pool.of(8).minIdle(2));
+        assertThat(server("p_").tablePrefix("q_")).isEqualTo(server("q_")).isNotEqualTo(server("p_"));
     }
 
     @Test
@@ -44,56 +86,78 @@ final class StorageSettingsTest {
             + " password=(set), sslMode=VERIFY_FULL, tablePrefix=p_]");
         assertThat(server("db.example", 3307, "app", "", "p_")).hasToString("Server[host=db.example,"
             + " port=3307, database=app, user=shop, password=, sslMode=VERIFY_FULL, tablePrefix=p_]");
-        assertThat(new StorageSettings(Dialect.MYSQL, "data.db", server("p_"), POOL, 2, 5).toString())
+        assertThat(StorageSettings.server(Dialect.MYSQL, server("p_")).toString())
             .doesNotContain("0451").contains("password=(set)");
+        assertThat(StorageSettings.sqlite("data.db")).hasToString("StorageSettings[dialect=SQLITE,"
+            + " sqliteFile=data.db, server=null, pool=Pool[maxSize=4, minIdle=1, connectionTimeout=PT10S],"
+            + " asyncThreads=2, backupKeep=5, versionTable=null]");
     }
 
     @Test
     void sqliteNeedsNoServerAndHasNoTablePrefix() {
-        StorageSettings sqlite = new StorageSettings(Dialect.SQLITE, "data.db", null, POOL, 1, 0);
+        StorageSettings sqlite = StorageSettings.sqlite("data.db");
 
+        assertThat(sqlite.dialect()).isEqualTo(Dialect.SQLITE);
         assertThat(sqlite.server()).isNull();
         assertThat(sqlite.sqliteFile()).isEqualTo("data.db");
         assertThat(sqlite.tablePrefix()).isEmpty();
-        assertThat(new StorageSettings(Dialect.SQLITE, "data.db", server("p_"), POOL, 1, 0).tablePrefix())
-            .isEmpty();
     }
 
     @ParameterizedTest
     @EnumSource(value = Dialect.class, names = "SQLITE", mode = EnumSource.Mode.EXCLUDE)
-    void aServerDialectUsesTheServerPrefixAndNeedsAServer(Dialect dialect) {
-        assertThat(new StorageSettings(dialect, "", server("p_"), POOL, 2, 5).tablePrefix()).isEqualTo("p_");
-        assertThat(new StorageSettings(dialect, "", server(""), POOL, 2, 5).tablePrefix()).isEmpty();
-        assertThatThrownBy(() -> new StorageSettings(dialect, "data.db", null, POOL, 2, 5))
+    void aServerDialectUsesTheServerPrefix(Dialect dialect) {
+        assertThat(StorageSettings.server(dialect, server("p_")).tablePrefix()).isEqualTo("p_");
+        assertThat(StorageSettings.server(dialect, server("")).tablePrefix()).isEmpty();
+        assertThat(StorageSettings.server(dialect, StorageSettings.Server.of("db.example", 3306, "app", "shop", "",
+            StorageSettings.SslMode.DISABLE)).tablePrefix()).isEmpty();
+    }
+
+    @Test
+    void theServerFactoryRefusesSqlite() {
+        assertThatThrownBy(() -> StorageSettings.server(Dialect.SQLITE, server("p_")))
             .isInstanceOf(IllegalArgumentException.class)
-            .hasMessage("server is missing; " + dialect.id() + " needs a server");
+            .hasMessage("sqlite has no server; build its settings with StorageSettings.sqlite");
     }
 
     @Test
     void sqliteRefusesABlankFile() {
-        assertThatThrownBy(() -> new StorageSettings(Dialect.SQLITE, " ", null, POOL, 2, 5))
+        assertThatThrownBy(() -> StorageSettings.sqlite(" "))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("sqliteFile is blank; name the SQLite database file");
     }
 
     @Test
     void threadAndBackupCountsOutOfRangeAreRefused() {
-        assertThatThrownBy(() -> new StorageSettings(Dialect.SQLITE, "data.db", null, POOL, 0, 5))
+        StorageSettings settings = StorageSettings.sqlite("data.db");
+
+        assertThatThrownBy(() -> settings.asyncThreads(0))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("asyncThreads is 0; expected 1 or more");
-        assertThatThrownBy(() -> new StorageSettings(Dialect.SQLITE, "data.db", null, POOL, 2, -1))
+        assertThatThrownBy(() -> settings.backupKeep(-1))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("backupKeep is -1; expected 0 or more");
     }
 
     @Test
+    void moreThreadsThanThePoolHoldsAreAcceptedUntilStorageStarts() {
+        StorageSettings settings = StorageSettings.sqlite("data.db");
+
+        assertThat(settings.asyncThreads(9).pool(StorageSettings.Pool.of(9)).asyncThreads()).isEqualTo(9);
+        assertThat(settings.pool(StorageSettings.Pool.of(1)).asyncThreads(1).pool().maxSize()).isEqualTo(1);
+    }
+
+    @Test
     void nullReferencesAreRefusedByName() {
-        assertThatThrownBy(() -> new StorageSettings(null, "data.db", null, POOL, 2, 5))
+        assertThatThrownBy(() -> StorageSettings.server(null, server("p_")))
             .isInstanceOf(NullPointerException.class).hasMessage("dialect");
-        assertThatThrownBy(() -> new StorageSettings(Dialect.SQLITE, null, null, POOL, 2, 5))
+        assertThatThrownBy(() -> StorageSettings.server(Dialect.MYSQL, null))
+            .isInstanceOf(NullPointerException.class).hasMessage("server");
+        assertThatThrownBy(() -> StorageSettings.sqlite(null))
             .isInstanceOf(NullPointerException.class).hasMessage("sqliteFile");
-        assertThatThrownBy(() -> new StorageSettings(Dialect.SQLITE, "data.db", null, null, 2, 5))
+        assertThatThrownBy(() -> StorageSettings.sqlite("data.db").pool(null))
             .isInstanceOf(NullPointerException.class).hasMessage("pool");
+        assertThatThrownBy(() -> StorageSettings.sqlite("data.db").versionTable(null))
+            .isInstanceOf(NullPointerException.class).hasMessage("versionTable");
         assertThatThrownBy(() -> server(null, 3306, "app", "", ""))
             .isInstanceOf(NullPointerException.class).hasMessage("host");
         assertThatThrownBy(() -> server("db.example", 3306, null, "", ""))
@@ -102,11 +166,11 @@ final class StorageSettingsTest {
             .isInstanceOf(NullPointerException.class).hasMessage("password");
         assertThatThrownBy(() -> server("db.example", 3306, "app", "", null))
             .isInstanceOf(NullPointerException.class).hasMessage("tablePrefix");
-        assertThatThrownBy(() -> new StorageSettings.Server("db.example", 3306, "app", null, "",
-            StorageSettings.SslMode.DISABLE, "")).isInstanceOf(NullPointerException.class).hasMessage("user");
-        assertThatThrownBy(() -> new StorageSettings.Server("db.example", 3306, "app", "shop", "", null, ""))
+        assertThatThrownBy(() -> StorageSettings.Server.of("db.example", 3306, "app", null, "",
+            StorageSettings.SslMode.DISABLE)).isInstanceOf(NullPointerException.class).hasMessage("user");
+        assertThatThrownBy(() -> StorageSettings.Server.of("db.example", 3306, "app", "shop", "", null))
             .isInstanceOf(NullPointerException.class).hasMessage("sslMode");
-        assertThatThrownBy(() -> new StorageSettings.Pool(8, 2, null))
+        assertThatThrownBy(() -> POOL.connectionTimeout(null))
             .isInstanceOf(NullPointerException.class).hasMessage("connectionTimeout");
     }
 
@@ -126,6 +190,46 @@ final class StorageSettingsTest {
             .isInstanceOf(IllegalArgumentException.class).hasMessage(message);
         assertThatThrownBy(() -> StorageSettings.requirePrefix(prefix))
             .isInstanceOf(IllegalArgumentException.class).hasMessage(message);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"schema_version", "_v", "shop_schema_version", "v2",
+        "abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopq"})
+    void aVersionTableOfUpTo54LowercaseLettersDigitsAndUnderscoresIsAccepted(String table) {
+        assertThat(StorageSettings.sqlite("data.db").versionTable(table).versionTable()).isEqualTo(table);
+        assertThat(StorageSettings.sqlite("data.db").versionTable(table).versionTableFor("Shop")).isEqualTo(table);
+        assertThat(mariaDb("p_").versionTable(table).versionTableFor("Shop")).isEqualTo(table);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "1v", "Versions", "shop-versions", "shop versions", "shop;", "shop.versions",
+        "abcdefghijklmnopqrstuvwxyz0123456789_abcdefghijklmnopqr"})
+    void aVersionTableOutsideThePatternIsRefused(String table) {
+        assertThatThrownBy(() -> StorageSettings.sqlite("data.db").versionTable(table))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("versionTable is \"" + table + "\"; use 1 to 54 lowercase letters, digits and underscores,"
+                + " starting with a letter or underscore");
+    }
+
+    @Test
+    void theDefaultVersionTableIsNamedAfterThePluginOnAServerAndIsSchemaVersionOnSqlite() {
+        assertThat(StorageSettings.sqlite("data.db").versionTableFor("ShopPlugin")).isEqualTo("schema_version");
+        assertThat(mariaDb("").versionTableFor("ShopPlugin")).isEqualTo("shopplugin_schema_version");
+        assertThat(mariaDb("p_").versionTableFor("ShopPlugin")).isEqualTo("p_shopplugin_schema_version");
+        assertThat(mariaDb("p_").versionTableFor("Shop-Plugin 2.x")).isEqualTo("p_shop_plugin_2_x_schema_version");
+        assertThat(mariaDb("").versionTableFor("2Shop")).isEqualTo("_2shop_schema_version");
+        assertThat(mariaDb("p_").versionTableFor("2Shop")).isEqualTo("p_2shop_schema_version");
+        assertThat(mariaDb("p_").versionTableFor("Äpfel")).isEqualTo("p__pfel_schema_version");
+    }
+
+    @Test
+    void aLongPluginNameIsCutSoTheDefaultVersionTableFitsItsLimit() {
+        String longest = "abcdefghijklmnopqrstuvwxyz012345";
+
+        assertThat(mariaDb(longest).versionTableFor("ShopPlugin")).isEqualTo(longest + "shopplu_schema_version")
+            .hasSize(54);
+        assertThat(mariaDb("").versionTableFor("a".repeat(60))).isEqualTo("a".repeat(39) + "_schema_version")
+            .hasSize(54);
     }
 
     @ParameterizedTest
@@ -155,7 +259,7 @@ final class StorageSettingsTest {
     @ParameterizedTest
     @ValueSource(strings = {"", " ", "db.example/other", "db.example?user=root", "a&b", "db example", "db\t",
         "db\nexample", "db.example#", "u@db.example", "a,b", "a;b", "db.example:9999", "::1", "[::1", "[db]",
-        "db\u00a0example", "d\u00e9.example"})
+        "db example", "dé.example"})
     void aBlankHostOrOneThatCouldChangeTheUrlIsRefused(String host) {
         assertThatThrownBy(() -> server(host, 3306, "app", "", ""))
             .isInstanceOf(IllegalArgumentException.class)
@@ -175,24 +279,32 @@ final class StorageSettingsTest {
 
     @Test
     void outOfRangePoolValuesAreRefused() {
-        assertThatCode(() -> new StorageSettings.Pool(1, 0, Duration.ofMillis(250))).doesNotThrowAnyException();
-        assertThatCode(() -> new StorageSettings.Pool(4, 4, Duration.ofSeconds(1))).doesNotThrowAnyException();
-        assertThatThrownBy(() -> new StorageSettings.Pool(0, 0, Duration.ofSeconds(10)))
+        StorageSettings.Pool pool = StorageSettings.Pool.of(8);
+
+        assertThatCode(() -> StorageSettings.Pool.of(1).minIdle(0).connectionTimeout(Duration.ofMillis(250)))
+            .doesNotThrowAnyException();
+        assertThatCode(() -> StorageSettings.Pool.of(4).minIdle(4).connectionTimeout(Duration.ofSeconds(1)))
+            .doesNotThrowAnyException();
+        assertThatThrownBy(() -> StorageSettings.Pool.of(0))
             .isInstanceOf(IllegalArgumentException.class).hasMessage("maxSize is 0; expected 1 or more");
-        assertThatThrownBy(() -> new StorageSettings.Pool(8, 50, Duration.ofSeconds(10)))
+        assertThatThrownBy(() -> pool.maxSize(0))
+            .isInstanceOf(IllegalArgumentException.class).hasMessage("maxSize is 0; expected 1 or more");
+        assertThatThrownBy(() -> pool.minIdle(50))
             .isInstanceOf(IllegalArgumentException.class).hasMessage("minIdle is 50; expected 0 to 8");
-        assertThatThrownBy(() -> new StorageSettings.Pool(8, -1, Duration.ofSeconds(10)))
+        assertThatThrownBy(() -> pool.minIdle(-1))
             .isInstanceOf(IllegalArgumentException.class).hasMessage("minIdle is -1; expected 0 to 8");
-        assertThatThrownBy(() -> new StorageSettings.Pool(8, 2, Duration.ZERO))
+        assertThatThrownBy(() -> pool.minIdle(4).maxSize(3))
+            .isInstanceOf(IllegalArgumentException.class).hasMessage("minIdle is 4; expected 0 to 3");
+        assertThatThrownBy(() -> pool.connectionTimeout(Duration.ZERO))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("connectionTimeout is PT0S; expected 250ms or more");
-        assertThatThrownBy(() -> new StorageSettings.Pool(8, 2, Duration.ofMillis(-1)))
+        assertThatThrownBy(() -> pool.connectionTimeout(Duration.ofMillis(-1)))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("connectionTimeout is PT-0.001S; expected 250ms or more");
-        assertThatThrownBy(() -> new StorageSettings.Pool(8, 2, Duration.ofNanos(500)))
+        assertThatThrownBy(() -> pool.connectionTimeout(Duration.ofNanos(500)))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("connectionTimeout is PT0.0000005S; expected 250ms or more");
-        assertThatThrownBy(() -> new StorageSettings.Pool(8, 2, Duration.ofMillis(249)))
+        assertThatThrownBy(() -> pool.connectionTimeout(Duration.ofMillis(249)))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("connectionTimeout is PT0.249S; expected 250ms or more");
     }

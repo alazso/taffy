@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import so.alaz.taffy.test.CapturedLog;
@@ -26,6 +27,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -41,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -346,6 +349,7 @@ final class MigratorTest {
         when(server.createStatement()).thenReturn(statement);
         when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
         when(statement.executeQuery(Dialect.POSTGRES.listTables())).thenReturn(mock(ResultSet.class));
+        grantLock(server);
         nameDatabase(server, "public");
         SQLException timedOut = new SQLException("Read timed out", "08006");
         SQLException closed = new SQLException("This connection has been closed.", "08003");
@@ -429,12 +433,11 @@ final class MigratorTest {
         when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
         when(statement.executeQuery(dialect.listTables())).thenReturn(mock(ResultSet.class));
         boolean postgres = dialect == Dialect.POSTGRES;
+        grantLock(server, lock);
         if (postgres) {
             nameDatabase(server, "public");
-            when(server.prepareStatement("SELECT pg_advisory_lock(?)")).thenReturn(lock);
             when(server.prepareStatement("SELECT pg_advisory_unlock(?)")).thenReturn(unlock);
         } else {
-            grantLock(server, lock);
             when(server.prepareStatement("SELECT RELEASE_LOCK(?)")).thenReturn(unlock);
         }
 
@@ -444,11 +447,11 @@ final class MigratorTest {
         order.verify(server).setNetworkTimeout(any(), eq(0));
         if (postgres) {
             order.verify(lock).setLong(1, Migrator.lockKey("public", "p_schema_version"));
-            order.verify(lock).execute();
         } else {
             order.verify(lock).setString(1, Migrator.lockName("shop", "p_schema_version"));
-            order.verify(lock).executeQuery();
+            order.verify(lock).setLong(2, 86_400L);
         }
+        order.verify(lock).executeQuery();
         order.verify(statement).executeQuery(dialect.listTables());
         order.verify(statement).execute("CREATE TABLE p_a (id INT)");
         if (postgres) {
@@ -540,7 +543,7 @@ final class MigratorTest {
             .isInstanceOf(StorageException.class)
             .hasMessage("the connection has no current schema, so the migration lock for p_schema_version cannot be"
                 + " named; set a search_path");
-        verify(server, never()).prepareStatement("SELECT pg_advisory_lock(?)");
+        verify(server, never()).prepareStatement("SELECT pg_try_advisory_lock(?)");
         verify(server, never()).prepareStatement("SELECT pg_advisory_unlock(?)");
         verify(server, never()).createStatement();
         verify(server).setNetworkTimeout(any(), eq(30_000));
@@ -800,16 +803,22 @@ final class MigratorTest {
 
         migrator(Dialect.MARIADB, "p_", List.of(probe)).migrate(server, this::backup);
 
-        InOrder order = inOrder(statement, record);
+        InOrder order = inOrder(server, statement, record);
         order.verify(statement).execute(MARIADB_VERSION_TABLE);
+        order.verify(server).setAutoCommit(false);
         order.verify(statement).execute("CREATE TABLE IF NOT EXISTS p_b (id INT)");
         order.verify(record).setLong(4, 2L);
         order.verify(record).setNull(5, Types.BIGINT);
         order.verify(record).executeUpdate();
+        order.verify(server).commit();
+        order.verify(server).setAutoCommit(true);
+        order.verify(server).setAutoCommit(false);
         order.verify(statement).execute("CREATE TABLE IF NOT EXISTS p_c (id INT)");
         order.verify(record).setLong(4, 3L);
         order.verify(record).setNull(5, Types.BIGINT);
         order.verify(record).executeUpdate();
+        order.verify(server).commit();
+        order.verify(server).setAutoCommit(true);
         order.verify(record).setLong(4, 3L);
         order.verify(record).setLong(5, NOW.toEpochMilli());
         order.verify(record).executeUpdate();
@@ -817,9 +826,9 @@ final class MigratorTest {
         verify(server, times(3)).prepareStatement(Dialect.MARIADB.upsert("p_schema_version",
             List.of("version", "name", "checksum", "statements_done", "applied_at"), List.of("version"),
             List.of("name", "checksum", "statements_done", "applied_at")));
-        verify(server).setAutoCommit(true);
-        verify(server, never()).setAutoCommit(false);
-        verify(server, never()).commit();
+        verify(server, times(2)).setAutoCommit(false);
+        verify(server, times(2)).commit();
+        verify(server, never()).rollback();
         assertThat(backups).hasValue(1);
         assertThat(log.lines()).containsExactly("INFO Applied database migration V1__probe.");
     }
@@ -853,9 +862,515 @@ final class MigratorTest {
         ArgumentCaptor<String> executed = ArgumentCaptor.forClass(String.class);
         verify(statement, times(2)).execute(executed.capture());
         assertThat(executed.getAllValues().get(1)).isEqualTo("CREATE TABLE p_probe (id INT)");
-        verify(server, dialect.transactionalDdl() ? times(1) : never()).setAutoCommit(false);
-        verify(server, dialect.transactionalDdl() ? times(1) : never()).commit();
+        verify(server, times(1)).setAutoCommit(false);
+        verify(server, times(1)).commit();
         return executed.getAllValues().getFirst();
+    }
+
+    @Test
+    void aPendingScriptWithABlockCommentStopsTheStartBeforeTheBackupAndNamesTheFileAndLine() throws Exception {
+        migrator("", List.of(V1)).migrate(connection, this::backup);
+        scripts.put(V2.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}fine (id INTEGER);\n/* a; b */\n");
+
+        assertThatThrownBy(() -> migrator("", List.of(V1, V2)).migrate(connection, this::backup))
+            .isInstanceOf(StorageException.class)
+            .hasMessage("db/migration/sqlite/V2__probe.sql cannot be split into statements: line 2 holds a block"
+                + " comment, which a migration script cannot hold: /* a; b */")
+            .hasCauseInstanceOf(IllegalArgumentException.class);
+        assertThat(tables()).doesNotContain("fine");
+        assertThat(backups).hasValue(0);
+    }
+
+    @Test
+    void anAppliedScriptThatHoldsARefusedConstructDoesNotStopTheStart() throws Exception {
+        String applied = "/* written for 0.3 */\nCREATE TABLE ${prefix}old (id INTEGER);\n";
+        scripts.put(V1.resource(Dialect.SQLITE), applied);
+        scripts.put(V2.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}probe (id INTEGER);\n");
+        execute(SQLITE_VERSION_TABLE.replace("p_schema_version", "schema_version"));
+        execute("INSERT INTO schema_version VALUES (1, 'schema_version', '" + Migrator.rawChecksum(applied)
+            + "', 1, 5)");
+
+        migrator("", List.of(V1, V2)).migrate(connection, this::backup);
+
+        assertThat(tables()).containsExactly("probe", "schema_version");
+        assertThat(log.lines()).containsExactly("INFO Applied database migration V2__probe.");
+    }
+
+    @Test
+    void theChecksumIgnoresLineEndingsAndALeadingByteOrderMark() {
+        String script = "CREATE TABLE a (id INTEGER);\n-- note\nCREATE TABLE b (id INTEGER);\n";
+
+        assertThat(Migrator.checksum(script.replace("\n", "\r\n"))).isEqualTo(Migrator.checksum(script));
+        assertThat(Migrator.checksum(script.replace("\n", "\r"))).isEqualTo(Migrator.checksum(script));
+        assertThat(Migrator.checksum("﻿" + script)).isEqualTo(Migrator.checksum(script));
+        assertThat(Migrator.checksum("﻿" + script.replace("\n", "\r\n"))).isEqualTo(Migrator.checksum(script));
+        assertThat(Migrator.checksum(script)).isEqualTo(Migrator.rawChecksum(script));
+        assertThat(Migrator.rawChecksum(script.replace("\n", "\r\n"))).isNotEqualTo(Migrator.rawChecksum(script));
+        assertThat(Migrator.rawChecksum("﻿" + script)).isNotEqualTo(Migrator.rawChecksum(script));
+        assertThat(Migrator.checksum(script.replace("a (", "a  ("))).isNotEqualTo(Migrator.checksum(script));
+        assertThat(Migrator.checksum(script + "﻿")).isNotEqualTo(Migrator.checksum(script));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"\r\n", "\r"})
+    void aBuildWithOtherLineEndingsOrAByteOrderMarkStartsOnADatabaseThatRanTheLfScript(String ending)
+        throws Exception {
+        migrator("", List.of(V1)).migrate(connection, this::backup);
+        List<Object> recorded = row(1);
+        log.records.clear();
+
+        scripts.put(V1.resource(Dialect.SQLITE), V1_SCRIPT.replace("\n", ending));
+        migrator("", List.of(V1)).migrate(connection, this::backup);
+        scripts.put(V1.resource(Dialect.SQLITE), "﻿" + V1_SCRIPT.replace("\n", ending));
+        migrator("", List.of(V1)).migrate(connection, this::backup);
+
+        assertThat(log.lines()).isEmpty();
+        assertThat(row(1)).isEqualTo(recorded);
+        assertThat(backups).hasValue(0);
+    }
+
+    @Test
+    void aRowThatHoldsTheChecksumOfTheExactBytesIsAcceptedAndKept() throws Exception {
+        Migration probe = new Migration(1, "probe");
+        String crlf = "CREATE TABLE ${prefix}probe (id INTEGER);\r\n";
+        scripts.put(probe.resource(Dialect.SQLITE), crlf);
+        scripts.put(V2.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}later (id INTEGER);\r\n");
+        execute("CREATE TABLE probe (id INTEGER)");
+        execute(SQLITE_VERSION_TABLE.replace("p_schema_version", "schema_version"));
+        execute("INSERT INTO schema_version VALUES (1, 'probe', '" + Migrator.rawChecksum(crlf) + "', 1, 5)");
+
+        migrator("", List.of(probe, V2)).migrate(connection, this::backup);
+
+        assertThat(Migrator.rawChecksum(crlf)).isNotEqualTo(Migrator.checksum(crlf));
+        assertThat(row(1)).containsExactly("probe", Migrator.rawChecksum(crlf), 1L, 5L);
+        assertThat(row(2)).containsExactly("probe", Migrator.checksum("CREATE TABLE ${prefix}later (id INTEGER);\n"),
+            1L, NOW.toEpochMilli());
+        assertThat(log.lines()).containsExactly("INFO Applied database migration V2__probe.");
+    }
+
+    @Test
+    void aRowWithTheChecksumOfOtherBytesThanTheScriptsStillStopsTheStart() throws Exception {
+        Migration probe = new Migration(1, "probe");
+        String lf = "CREATE TABLE ${prefix}probe (id INTEGER);\n";
+        String crlf = lf.replace("\n", "\r\n");
+        scripts.put(probe.resource(Dialect.SQLITE), lf.replace("probe (", "probe  ("));
+        execute(SQLITE_VERSION_TABLE.replace("p_schema_version", "schema_version"));
+        execute("INSERT INTO schema_version VALUES (1, 'probe', '" + Migrator.rawChecksum(crlf) + "', 1, 5)");
+
+        assertThatThrownBy(() -> migrator("", List.of(probe)).migrate(connection, this::backup))
+            .isInstanceOf(StorageException.class)
+            .hasMessageStartingWith("migration V1__probe changed after it ran on this database (stored checksum "
+                + Migrator.rawChecksum(crlf) + ", now " + Migrator.checksum(lf.replace("probe (", "probe  (")) + ")");
+    }
+
+    @Test
+    void aScriptWithCrlfAndAByteOrderMarkRunsAndIsRecordedWithTheNormalizedChecksum() throws Exception {
+        Migration probe = new Migration(1, "probe");
+        String lf = "CREATE TABLE ${prefix}probe (\n    id INTEGER\n);\nINSERT INTO ${prefix}probe VALUES (7);\n";
+        String shipped = "﻿" + lf.replace("\n", "\r\n");
+        scripts.put(probe.resource(Dialect.SQLITE), shipped);
+
+        migrator("", List.of(probe)).migrate(connection, this::backup);
+
+        assertThat(row(1)).containsExactly("probe", Migrator.checksum(lf), 2L, NOW.toEpochMilli());
+        assertThat(Migrator.checksum(lf)).isNotEqualTo(Migrator.rawChecksum(shipped));
+        assertThat(count(connection, "probe")).isEqualTo(1);
+    }
+
+    @Test
+    void aScriptThatOnlySelectsIsAppliedAndRecorded() throws Exception {
+        Migration noop = new Migration(2, "noop");
+        scripts.put(noop.resource(Dialect.SQLITE), "SELECT 1;\n");
+
+        migrator("", List.of(V1, noop)).migrate(connection, this::backup);
+        migrator("", List.of(V1, noop)).migrate(connection, this::backup);
+
+        assertThat(tables()).containsExactly("schema_version");
+        assertThat(row(2)).containsExactly("noop", Migrator.checksum("SELECT 1;\n"), 1L, NOW.toEpochMilli());
+        assertThat(log.lines()).containsExactly("INFO Applied database migration V1__schema_version.",
+            "INFO Applied database migration V2__noop.");
+    }
+
+    @Test
+    void aMigrationMayHaveAnotherShapeOnEachDialect() throws Exception {
+        Migration shaped = new Migration(1, "shaped");
+        String sqlite = """
+            CREATE TABLE ${prefix}shaped_new (id INTEGER PRIMARY KEY, note TEXT);
+            CREATE TABLE ${prefix}shaped (id INTEGER PRIMARY KEY);
+            DROP TABLE ${prefix}shaped_new;
+            """;
+        scripts.put(shaped.resource(Dialect.SQLITE), sqlite);
+        scripts.put(shaped.resource(Dialect.MARIADB), "SELECT 1;\n");
+        Connection server = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        PreparedStatement record = mock(PreparedStatement.class);
+        when(server.createStatement()).thenReturn(statement);
+        when(server.prepareStatement(anyString())).thenReturn(record);
+        grantLock(server);
+        when(statement.executeQuery(Dialect.MARIADB.listTables())).thenReturn(mock(ResultSet.class));
+
+        migrator("", List.of(shaped)).migrate(connection, this::backup);
+        migrator(Dialect.MARIADB, "p_", List.of(shaped)).migrate(server, null);
+
+        assertThat(tables()).containsExactly("schema_version", "shaped");
+        assertThat(row(1)).containsExactly("shaped", Migrator.checksum(sqlite), 3L, NOW.toEpochMilli());
+        verify(statement).execute("SELECT 1");
+        verify(record, atLeastOnce()).setString(3, Migrator.checksum("SELECT 1;\n"));
+        verify(record, times(2)).setLong(4, 1L);
+        verify(record, never()).setLong(4, 3L);
+    }
+
+    @Test
+    void aSqliteMigrationRunsOverRowsThatBrokeAForeignKeyBeforeItAndIsBlamedOnlyForNewOnes() throws Exception {
+        try (Connection enforcing = foreignKeyConnection(); Statement statement = enforcing.createStatement()) {
+            Migration note = new Migration(2, "note");
+            Migration orphan = new Migration(3, "orphan");
+            scripts.put(V1.resource(Dialect.SQLITE), """
+                CREATE TABLE parent (id INTEGER PRIMARY KEY);
+                CREATE TABLE child (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES parent (id));
+                INSERT INTO parent VALUES (1);
+                INSERT INTO child VALUES (10, 1);
+                """);
+            scripts.put(note.resource(Dialect.SQLITE), "ALTER TABLE parent ADD COLUMN note TEXT;\n");
+            scripts.put(orphan.resource(Dialect.SQLITE), "DELETE FROM parent;\n");
+            migrator("", List.of(V1)).migrate(enforcing, this::backup);
+            statement.execute("PRAGMA foreign_keys = OFF");
+            statement.execute("INSERT INTO child VALUES (11, 99)");
+            statement.execute("PRAGMA foreign_keys = ON");
+            log.records.clear();
+
+            migrator("", List.of(V1, note)).migrate(enforcing, this::backup);
+
+            assertThat(log.lines()).containsExactly("WARNING Before migration V2__note ran, the database already held"
+                + " rows whose foreign key refers to a missing row, in child. The migration runs and those rows stay"
+                + " as they are.", "INFO Applied database migration V2__note.");
+            assertThat(count(enforcing, "child")).isEqualTo(2);
+            assertThat(foreignKeys(enforcing)).isEqualTo(1);
+
+            assertThatThrownBy(() -> migrator("", List.of(V1, note, orphan)).migrate(enforcing, this::backup))
+                .isInstanceOf(StorageException.class)
+                .hasMessage("migration V3__orphan leaves a row of child whose foreign key refers to a missing row of"
+                    + " parent; it was rolled back");
+            assertThat(count(enforcing, "parent")).isEqualTo(1);
+            assertThat(foreignKeys(enforcing)).isEqualTo(1);
+        }
+    }
+
+    @Test
+    void oneWarningPerStartNamesTheRowsThatBrokeAForeignKeyBeforeTheFirstPendingMigration() throws Exception {
+        try (Connection enforcing = foreignKeyConnection(); Statement statement = enforcing.createStatement()) {
+            Migration second = new Migration(2, "second");
+            Migration third = new Migration(3, "third");
+            scripts.put(V1.resource(Dialect.SQLITE), """
+                CREATE TABLE parent (id INTEGER PRIMARY KEY);
+                CREATE TABLE child (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES parent (id));
+                """);
+            scripts.put(second.resource(Dialect.SQLITE), "CREATE TABLE second (id INTEGER);\n");
+            scripts.put(third.resource(Dialect.SQLITE), "CREATE TABLE third (id INTEGER);\n");
+            migrator("", List.of(V1)).migrate(enforcing, this::backup);
+            statement.execute("PRAGMA foreign_keys = OFF");
+            statement.execute("INSERT INTO child VALUES (11, 99)");
+            statement.execute("PRAGMA foreign_keys = ON");
+            log.records.clear();
+
+            migrator("", List.of(V1, second, third)).migrate(enforcing, this::backup);
+
+            assertThat(log.lines()).hasSize(3).filteredOn(line -> line.startsWith("WARNING")).hasSize(1);
+        }
+    }
+
+    @Test
+    void aMariaDbStatementAndItsProgressRecordRollBackTogether() throws Exception {
+        Migration probe = new Migration(1, "probe");
+        scripts.put(probe.resource(Dialect.MARIADB), "CREATE TABLE IF NOT EXISTS ${prefix}a (id INT);\n"
+            + "UPDATE ${prefix}a SET id = id * 10;\n");
+        Connection server = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        PreparedStatement record = mock(PreparedStatement.class);
+        when(server.createStatement()).thenReturn(statement);
+        when(server.prepareStatement(anyString())).thenReturn(record);
+        grantLock(server);
+        when(statement.executeQuery(Dialect.MARIADB.listTables())).thenReturn(mock(ResultSet.class));
+        SQLException lost = new SQLException("Connection reset", "08S01");
+        when(record.executeUpdate()).thenReturn(1).thenThrow(lost);
+
+        assertThatThrownBy(() -> migrator(Dialect.MARIADB, "p_", List.of(probe)).migrate(server, null))
+            .isSameAs(lost);
+
+        InOrder order = inOrder(server, statement, record);
+        order.verify(statement).execute(MARIADB_VERSION_TABLE);
+        order.verify(server).setAutoCommit(false);
+        order.verify(statement).execute("CREATE TABLE IF NOT EXISTS p_a (id INT)");
+        order.verify(record).executeUpdate();
+        order.verify(server).commit();
+        order.verify(server).setAutoCommit(true);
+        order.verify(server).setAutoCommit(false);
+        order.verify(statement).execute("UPDATE p_a SET id = id * 10");
+        order.verify(record).executeUpdate();
+        order.verify(server).rollback();
+        order.verify(server).setAutoCommit(true);
+        verify(server, times(1)).commit();
+        verify(record, times(2)).executeUpdate();
+    }
+
+    @Test
+    void aPostgresLockHeldElsewhereStopsTheStartOnceTheWaitHasPassedWithoutReleasingIt() throws Exception {
+        Connection server = mock(Connection.class);
+        PreparedStatement lock = mock(PreparedStatement.class);
+        ResultSet refused = mock(ResultSet.class);
+        when(server.getNetworkTimeout()).thenReturn(30_000);
+        when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
+        nameDatabase(server, "public");
+        when(server.prepareStatement("SELECT pg_try_advisory_lock(?)")).thenReturn(lock);
+        when(lock.executeQuery()).thenReturn(refused);
+        when(refused.next()).thenReturn(true);
+        when(refused.getBoolean(1)).thenReturn(false);
+        Migrator waiting = migrator(Dialect.POSTGRES, "p_", "p_schema_version", List.of(V1), Duration.ofMillis(600));
+
+        assertThatThrownBy(() -> waiting.migrate(server, null))
+            .isInstanceOf(StorageException.class)
+            .hasMessage("another start has held the migration lock of p_schema_version in database public for"
+                + " 600ms; restart once the other server has started");
+        verify(lock).setLong(1, Migrator.lockKey("public", "p_schema_version"));
+        verify(lock, atLeast(2)).executeQuery();
+        verify(server, never()).prepareStatement("SELECT pg_advisory_lock(?)");
+        verify(server, never()).prepareStatement("SELECT pg_advisory_unlock(?)");
+        verify(server, never()).createStatement();
+        verify(server).setNetworkTimeout(any(), eq(30_000));
+    }
+
+    @Test
+    void aPostgresLockFreedWhileTheStartWaitsIsTakenAndReleased() throws Exception {
+        Connection server = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        PreparedStatement lock = mock(PreparedStatement.class);
+        PreparedStatement unlock = mock(PreparedStatement.class);
+        ResultSet answer = mock(ResultSet.class);
+        when(server.createStatement()).thenReturn(statement);
+        when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
+        nameDatabase(server, "public");
+        when(server.prepareStatement("SELECT pg_try_advisory_lock(?)")).thenReturn(lock);
+        when(server.prepareStatement("SELECT pg_advisory_unlock(?)")).thenReturn(unlock);
+        when(lock.executeQuery()).thenReturn(answer);
+        when(answer.next()).thenReturn(true);
+        when(answer.getBoolean(1)).thenReturn(false, false, true);
+        when(statement.executeQuery(Dialect.POSTGRES.listTables())).thenReturn(mock(ResultSet.class));
+
+        migrator(Dialect.POSTGRES, "p_", List.of()).migrate(server, null);
+
+        verify(lock, times(3)).executeQuery();
+        verify(unlock).setLong(1, Migrator.lockKey("public", "p_schema_version"));
+        verify(unlock).execute();
+    }
+
+    @Test
+    void aMySqlLockIsAskedForWithTheWaitInSecondsAndTheMessageNamesAShorterWait() throws Exception {
+        Connection server = mock(Connection.class);
+        PreparedStatement lock = mock(PreparedStatement.class);
+        ResultSet refused = mock(ResultSet.class);
+        when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
+        nameDatabase(server, "shop");
+        when(server.prepareStatement("SELECT GET_LOCK(?, ?)")).thenReturn(lock);
+        when(lock.executeQuery()).thenReturn(refused);
+        when(refused.next()).thenReturn(true);
+        when(refused.getInt(1)).thenReturn(0);
+        Migrator waiting = migrator(Dialect.MYSQL, "p_", "p_schema_version", List.of(V1), Duration.ofSeconds(2));
+
+        assertThatThrownBy(() -> waiting.migrate(server, null))
+            .isInstanceOf(StorageException.class)
+            .hasMessage("another start has held the migration lock of p_schema_version in database shop for 2s;"
+                + " restart once the other server has started");
+        verify(lock).setLong(2, 2L);
+    }
+
+    @Test
+    void theVersionTableCarriesTheNameItIsGiven() throws Exception {
+        Migration probe = new Migration(1, "probe");
+        String script = "CREATE TABLE ${prefix}probe (id INTEGER);\n";
+        scripts.put(probe.resource(Dialect.SQLITE), script);
+
+        named("p_", "shop_versions", List.of(probe)).migrate(connection, this::backup);
+        named("p_", "shop_versions", List.of(probe)).migrate(connection, this::backup);
+
+        assertThat(tables()).containsExactly("p_probe", "shop_versions");
+        assertThat(row("shop_versions", 1)).containsExactly("probe", Migrator.checksum(script), 1L,
+            NOW.toEpochMilli());
+        assertThat(log.lines()).containsExactly("INFO Applied database migration V1__probe.");
+    }
+
+    @Test
+    void anEarlierVersionTableWithThisPluginsRowsIsCopiedOnceAndStaysAsItWas() throws Exception {
+        Migration one = new Migration(1, "one");
+        Migration two = new Migration(2, "two");
+        scripts.put(one.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}one (id INTEGER);\n");
+        scripts.put(two.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}two (id INTEGER);\n");
+        migrator("p_", List.of(one)).migrate(connection, this::backup);
+        List<Object> earlier = row("p_schema_version", 1);
+        log.records.clear();
+
+        named("p_", "p_shop_schema_version", List.of(one, two)).migrate(connection, this::backup);
+        named("p_", "p_shop_schema_version", List.of(one, two)).migrate(connection, this::backup);
+
+        assertThat(tables()).containsExactly("p_one", "p_schema_version", "p_shop_schema_version", "p_two");
+        assertThat(row("p_shop_schema_version", 1)).isEqualTo(earlier).hasSize(4);
+        assertThat(row("p_shop_schema_version", 2)).hasSize(4);
+        assertThat(row("p_schema_version", 1)).isEqualTo(earlier);
+        assertThat(row("p_schema_version", 2)).isEmpty();
+        assertThat(log.lines()).containsExactly("INFO Copied the migrations p_schema_version records into"
+            + " p_shop_schema_version, which records them from now on. p_schema_version stays as it was and is no"
+            + " longer read.", "INFO Applied database migration V2__two.");
+        assertThat(backups).hasValue(1);
+    }
+
+    @Test
+    void anEarlierVersionTableIsCopiedWithoutABackupWhenNoMigrationIsPending() throws Exception {
+        Migration one = new Migration(1, "one");
+        scripts.put(one.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}one (id INTEGER);\n");
+        migrator("p_", List.of(one)).migrate(connection, this::backup);
+        log.records.clear();
+
+        named("p_", "p_shop_schema_version", List.of(one)).migrate(connection, this::backup);
+
+        assertThat(row("p_shop_schema_version", 1)).isEqualTo(row("p_schema_version", 1)).hasSize(4);
+        assertThat(log.lines()).hasSize(1).first().asString().startsWith("INFO Copied the migrations");
+        assertThat(backups).hasValue(0);
+    }
+
+    @Test
+    void twoPluginsUnderOnePrefixKeepAHistoryEachAndLeaveAnotherPluginsEarlierTableAlone() throws Exception {
+        Migration shop = new Migration(1, "shop");
+        Migration bank = new Migration(1, "bank");
+        Migration bankTwo = new Migration(2, "more");
+        scripts.put(shop.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}shop (id INTEGER);\n");
+        scripts.put(bank.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}bank (id INTEGER);\n");
+        scripts.put(bankTwo.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}more (id INTEGER);\n");
+        migrator("p_", List.of(bank)).migrate(connection, this::backup);
+        log.records.clear();
+
+        named("p_", "p_shop_schema_version", List.of(shop)).migrate(connection, this::backup);
+        named("p_", "p_bank_schema_version", List.of(bank, bankTwo)).migrate(connection, this::backup);
+        named("p_", "p_shop_schema_version", List.of(shop)).migrate(connection, this::backup);
+
+        assertThat(tables()).containsExactly("p_bank", "p_bank_schema_version", "p_more", "p_schema_version",
+            "p_shop", "p_shop_schema_version");
+        assertThat(row("p_shop_schema_version", 1)).first().isEqualTo("shop");
+        assertThat(row("p_shop_schema_version", 2)).isEmpty();
+        assertThat(row("p_bank_schema_version", 1)).first().isEqualTo("bank");
+        assertThat(row("p_bank_schema_version", 2)).first().isEqualTo("more");
+        assertThat(row("p_schema_version", 1)).first().isEqualTo("bank");
+        assertThat(log.lines()).containsExactly("INFO Applied database migration V1__shop.",
+            "INFO Copied the migrations p_schema_version records into p_bank_schema_version, which records them from"
+                + " now on. p_schema_version stays as it was and is no longer read.",
+            "INFO Applied database migration V2__more.");
+    }
+
+    @Test
+    void anEarlierVersionTableWhoseScriptChangedStopsTheStartBeforeItIsCopied() throws Exception {
+        Migration one = new Migration(1, "one");
+        Migration two = new Migration(2, "two");
+        scripts.put(one.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}one (id INTEGER);\n");
+        scripts.put(two.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}two (id INTEGER);\n");
+        migrator("p_", List.of(one, two)).migrate(connection, this::backup);
+        scripts.put(two.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}two (id INTEGER, note TEXT);\n");
+
+        assertThatThrownBy(() -> named("p_", "p_shop_schema_version", List.of(one, two))
+            .migrate(connection, this::backup))
+            .isInstanceOf(StorageException.class)
+            .hasMessageStartingWith("migration V2__two changed after it ran on this database (stored checksum ");
+        assertThat(tables()).doesNotContain("p_shop_schema_version");
+        assertThat(backups).hasValue(0);
+    }
+
+    @Test
+    void anEarlierVersionTableAheadOfThisVersionStopsTheStartBeforeItIsCopied() throws Exception {
+        Migration one = new Migration(1, "one");
+        Migration two = new Migration(2, "two");
+        scripts.put(one.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}one (id INTEGER);\n");
+        scripts.put(two.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}two (id INTEGER);\n");
+        migrator("p_", List.of(one, two)).migrate(connection, this::backup);
+
+        assertThatThrownBy(() -> named("p_", "p_shop_schema_version", List.of(one))
+            .migrate(connection, this::backup))
+            .isInstanceOf(StorageException.class)
+            .hasMessageStartingWith("the database is at schema version 2, set up by a newer version of the plugin");
+        assertThat(tables()).doesNotContain("p_shop_schema_version");
+    }
+
+    @Test
+    void theOtherPrefixWarningNamesOnlyAVersionTableThatHoldsThisPluginsChecksums() throws Exception {
+        Migration shop = new Migration(1, "shop");
+        Migration bank = new Migration(1, "bank");
+        scripts.put(shop.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}shop (id INTEGER);\n");
+        scripts.put(bank.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}bank (id INTEGER);\n");
+        migrator("a_", List.of(bank)).migrate(connection, this::backup);
+        named("a_", "a_bank_schema_version", List.of(bank)).migrate(connection, this::backup);
+        log.records.clear();
+
+        named("b_", "b_shop_schema_version", List.of(shop)).migrate(connection, this::backup);
+        named("c_", "c_shop_schema_version", List.of(shop)).migrate(connection, this::backup);
+
+        assertThat(log.lines()).containsExactly("INFO Applied database migration V1__shop.",
+            "WARNING The database holds tables under the prefix \"b_\", but storage uses \"c_\", so the plugin"
+                + " starts with empty tables. Set the table prefix to \"b_\" and restart to use that data.",
+            "INFO Applied database migration V1__shop.");
+    }
+
+    @Test
+    void aVersionTableOfThisPluginAndItsEarlierOneUnderAnotherPrefixRaiseOneWarning() throws Exception {
+        Migration shop = new Migration(1, "shop");
+        scripts.put(shop.resource(Dialect.SQLITE), "CREATE TABLE ${prefix}shop (id INTEGER);\n");
+        migrator("a_", List.of(shop)).migrate(connection, this::backup);
+        named("a_", "a_shop_schema_version", List.of(shop)).migrate(connection, this::backup);
+        log.records.clear();
+
+        named("b_", "b_shop_schema_version", List.of(shop)).migrate(connection, this::backup);
+
+        assertThat(log.lines()).containsExactly(
+            "WARNING The database holds tables under the prefix \"a_\", but storage uses \"b_\", so the plugin"
+                + " starts with empty tables. Set the table prefix to \"a_\" and restart to use that data.",
+            "INFO Applied database migration V1__shop.");
+    }
+
+    @Test
+    void aServerStartHoldsTheLockOfTheEarlierVersionTableTooWhileItReadsIt() throws Exception {
+        Migration probe = new Migration(1, "probe");
+        scripts.put(probe.resource(Dialect.MYSQL), "CREATE TABLE IF NOT EXISTS ${prefix}a (id INT);\n");
+        Connection server = mock(Connection.class);
+        Statement statement = mock(Statement.class);
+        PreparedStatement lock = mock(PreparedStatement.class);
+        PreparedStatement unlock = mock(PreparedStatement.class);
+        when(server.createStatement()).thenReturn(statement);
+        when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
+        grantLock(server, lock);
+        when(server.prepareStatement("SELECT RELEASE_LOCK(?)")).thenReturn(unlock);
+        when(statement.executeQuery(Dialect.MYSQL.listTables())).thenAnswer(call -> {
+            ResultSet tables = mock(ResultSet.class);
+            when(tables.next()).thenReturn(true, false);
+            when(tables.getString(1)).thenReturn("p_schema_version");
+            return tables;
+        });
+        when(statement.executeQuery(LAYOUT_PROBE)).thenReturn(mock(ResultSet.class));
+        when(statement.executeQuery("SELECT version, checksum, statements_done, applied_at FROM p_schema_version"))
+            .thenReturn(mock(ResultSet.class));
+        String ours = Migrator.lockName("shop", "p_shop_schema_version");
+        String earlier = Migrator.lockName("shop", "p_schema_version");
+
+        migrator(Dialect.MYSQL, "p_", "p_shop_schema_version", List.of(probe), Migrator.LOCK_WAIT)
+            .migrate(server, null);
+
+        InOrder order = inOrder(statement, lock, unlock);
+        order.verify(lock).setString(1, ours);
+        order.verify(lock).executeQuery();
+        order.verify(statement).executeQuery(Dialect.MYSQL.listTables());
+        order.verify(lock).setString(1, earlier);
+        order.verify(lock).executeQuery();
+        order.verify(statement).executeQuery(Dialect.MYSQL.listTables());
+        order.verify(statement).execute(MARIADB_VERSION_TABLE.replace("p_schema_version", "p_shop_schema_version"));
+        order.verify(statement).execute("CREATE TABLE IF NOT EXISTS p_a (id INT)");
+        order.verify(unlock).setString(1, earlier);
+        order.verify(unlock).execute();
+        order.verify(unlock).setString(1, ours);
+        order.verify(unlock).execute();
     }
 
     private void backup(Connection ignored) {
@@ -866,13 +1381,16 @@ final class MigratorTest {
         grantLock(server, mock(PreparedStatement.class));
     }
 
+    // Grants the lock on the first try, whether it is taken with GET_LOCK or with pg_try_advisory_lock.
     private static void grantLock(Connection server, PreparedStatement lock) throws SQLException {
         nameDatabase(server, "shop");
         ResultSet granted = mock(ResultSet.class);
         when(server.prepareStatement("SELECT GET_LOCK(?, ?)")).thenReturn(lock);
+        when(server.prepareStatement("SELECT pg_try_advisory_lock(?)")).thenReturn(lock);
         when(lock.executeQuery()).thenReturn(granted);
         when(granted.next()).thenReturn(true);
         when(granted.getInt(1)).thenReturn(1);
+        when(granted.getBoolean(1)).thenReturn(true);
     }
 
     // Answers both SELECT DATABASE() and SELECT current_schema() with the name.
@@ -915,7 +1433,7 @@ final class MigratorTest {
         PreparedStatement lock = mock(PreparedStatement.class);
         when(server.createStatement()).thenReturn(statement);
         when(server.prepareStatement(anyString())).thenReturn(mock(PreparedStatement.class));
-        when(server.prepareStatement("SELECT pg_advisory_lock(?)")).thenReturn(lock);
+        grantLock(server, lock);
         when(statement.executeQuery(Dialect.POSTGRES.listTables())).thenReturn(mock(ResultSet.class));
         nameDatabase(server, schema);
 
@@ -942,9 +1460,22 @@ final class MigratorTest {
     }
 
     private Migrator migrator(Dialect dialect, String prefix, List<Migration> migrations) {
-        Function<String, InputStream> resources = path -> scripts.containsKey(path)
+        return new Migrator(dialect, prefix, CLOCK, log.logger, migrations, this::resource);
+    }
+
+    private Migrator named(String prefix, String versionTable, List<Migration> migrations) {
+        return migrator(Dialect.SQLITE, prefix, versionTable, migrations, Migrator.LOCK_WAIT);
+    }
+
+    private Migrator migrator(Dialect dialect, String prefix, String versionTable, List<Migration> migrations,
+                              Duration lockWait) {
+        return new Migrator(dialect, prefix, versionTable, CLOCK, log.logger, migrations, this::resource, null,
+            lockWait);
+    }
+
+    private @Nullable InputStream resource(String path) {
+        return scripts.containsKey(path)
             ? new ByteArrayInputStream(scripts.get(path).getBytes(StandardCharsets.UTF_8)) : null;
-        return new Migrator(dialect, prefix, CLOCK, log.logger, migrations, resources);
     }
 
     private List<String> tables() throws SQLException {

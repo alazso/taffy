@@ -149,10 +149,13 @@ public final class Params {
 
     /**
      * Binds an instant as its milliseconds since the epoch, in a {@code BIGINT}. Precision below a millisecond is
-     * dropped.
+     * dropped. The instant must be one whose milliseconds since the epoch fit a {@code long}, which is every
+     * instant within about 292 million years of 1970 and neither {@link Instant#MAX} nor {@link Instant#MIN}: a
+     * plugin stores "never" as {@code null}.
      *
      * @param value the instant, or {@code null}
      * @return this instance
+     * @throws ArithmeticException if the milliseconds since the epoch of the instant do not fit a {@code long}
      * @throws SQLException if the driver refuses the value
      */
     public Params time(@Nullable Instant value) throws SQLException {

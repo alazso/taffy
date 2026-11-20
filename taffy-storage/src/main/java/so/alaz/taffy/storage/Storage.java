@@ -51,9 +51,10 @@ import javax.sql.DataSource;
  *
  * <p>Every SQLite connection is opened with {@code journal_mode=WAL}, {@code synchronous=FULL},
  * {@code busy_timeout=5000} and {@code foreign_keys=true}, so foreign keys are enforced, and the read connections
- * also run {@code PRAGMA query_only = ON}. A SQLite transaction begins deferred: work that reads and then writes,
- * while another process holds the file's write lock, fails at once with {@code SQLITE_BUSY} instead of waiting for
- * the busy timeout, and {@link #asyncRetrying} does not retry it.
+ * also run {@code PRAGMA query_only = ON}. The writer connection is opened with {@code transaction_mode=IMMEDIATE},
+ * so a write transaction takes the file's write lock when it begins: while another process holds that lock, work
+ * that reads and then writes waits for it up to the busy timeout and then reads what that process wrote. A read
+ * transaction begins deferred.
  *
  * <p>MySQL and MariaDB connections are opened with {@code useAffectedRows=true}, so an {@code UPDATE} counts only
  * the rows whose values it changed (see {@link Tx#update}). Every server connection has a socket timeout of 30
@@ -140,9 +141,10 @@ public final class Storage {
      * thread instead, so a wait in it for other database work never ends while no other read thread is free, as the
      * class description states.
      *
-     * @param plugin the owner plugin: {@link Plugin#getName()} names the database threads and the connection pools
-     *     and must not be blank, the version of {@link Plugin#getPluginMeta()} is written into the file name of a
-     *     SQLite backup, {@link Plugin#getDataPath()} holds the SQLite file and its backups,
+     * @param plugin the owner plugin: {@link Plugin#getName()} names the database threads and the connection pools,
+     *     and on a server the default version table, and must not be blank, the version of
+     *     {@link Plugin#getPluginMeta()} is written into the file name of a SQLite backup,
+     *     {@link Plugin#getDataPath()} holds the SQLite file and its backups,
      *     {@link Plugin#getLogger()} receives the lines for applied migrations and backups and the warnings, and
      *     {@link Plugin#getResource(String)} opens each migration script at a resource path such as
      *     {@code db/migration/sqlite/V1__accounts.sql}. Storage closes each stream it opens
@@ -161,8 +163,9 @@ public final class Storage {
      *     belongs to a migration script; or with what the connection pool throws when it cannot connect
      * @throws NullPointerException if an argument is {@code null}, or the plugin's name, version, data path or
      *     logger is {@code null}
-     * @throws IllegalArgumentException if the plugin's name is blank or the versions of {@code migrations} are not
-     *     strictly increasing
+     * @throws IllegalArgumentException if the plugin's name is blank, the versions of {@code migrations} are not
+     *     strictly increasing, or {@link StorageSettings#asyncThreads()} is above
+     *     {@link StorageSettings.Pool#maxSize()}
      */
     public static CompletableFuture<Storage> start(Plugin plugin, ErrorReports errors, StorageSettings settings,
                                                    List<Migration> migrations, Clock clock) {
@@ -188,8 +191,9 @@ public final class Storage {
      *     more, or records a version of 1 or more that no migration in {@code migrations} has
      * @throws NullPointerException if an argument is {@code null}, or the plugin's name, version, data path or
      *     logger is {@code null}
-     * @throws IllegalArgumentException if the plugin's name is blank or the versions of {@code migrations} are not
-     *     strictly increasing
+     * @throws IllegalArgumentException if the plugin's name is blank, the versions of {@code migrations} are not
+     *     strictly increasing, or {@link StorageSettings#asyncThreads()} is above
+     *     {@link StorageSettings.Pool#maxSize()}
      */
     public static CompletableFuture<Storage> start(Plugin plugin, ErrorReports errors, StorageSettings settings,
                                                    List<Migration> migrations, Baseline baseline, Clock clock) {
@@ -209,8 +213,14 @@ public final class Storage {
         String version = Objects.requireNonNull(plugin.getPluginMeta().getVersion(), "version");
         Path dataFolder = Objects.requireNonNull(plugin.getDataPath(), "dataPath");
         Logger logger = Objects.requireNonNull(plugin.getLogger(), "logger");
-        Migrator migrator = new Migrator(settings.dialect(), settings.tablePrefix(), clock, logger, migrations,
-            plugin::getResource, baseline);
+        int maxSize = settings.pool().maxSize();
+        if (settings.asyncThreads() > maxSize) {
+            throw new IllegalArgumentException("asyncThreads is " + settings.asyncThreads() + ", above the pool's"
+                + " maxSize of " + maxSize + "; each database thread needs a connection, so raise maxSize or lower"
+                + " asyncThreads");
+        }
+        Migrator migrator = new Migrator(settings.dialect(), settings.tablePrefix(), settings.versionTableFor(name),
+            clock, logger, migrations, plugin::getResource, baseline, Migrator.LOCK_WAIT);
         Workers workers = workers(name, settings.asyncThreads(), settings.dialect() == Dialect.SQLITE);
         CompletableFuture<Storage> started = new CompletableFuture<>();
         workers.writes().execute(() -> {
@@ -267,7 +277,8 @@ public final class Storage {
      * demand. The wiring lives in the plugin's own tests: they bring the schema up to date with {@link #start},
      * close that storage, and open this one over a {@code FaultyDataSource} on the same database. Its connections
      * carry only the properties the test passes, so a SQLite test that should behave as {@link #start} does passes
-     * {@code journal_mode=WAL}, {@code synchronous=FULL}, {@code busy_timeout=5000} and {@code foreign_keys=true}.
+     * {@code journal_mode=WAL}, {@code synchronous=FULL}, {@code busy_timeout=5000}, {@code foreign_keys=true} and
+     * {@code transaction_mode=IMMEDIATE}.
      *
      * @param plugin the owner plugin: {@link Plugin#getName()} names the database thread and must not be blank,
      *     and {@link Plugin#getLogger()} receives the warnings
@@ -341,8 +352,11 @@ public final class Storage {
      * another order than the writes, which still commit in the order they were submitted. The work itself must not
      * wait for another write: that write queues behind it on the one writer thread and never runs.
      *
-     * <p>The transaction commits when the work returns and rolls back when it throws. A failure of the commit
-     * statement itself completes the future with a {@link CommitUnknownException}.
+     * <p>The transaction commits when the work returns and rolls back when it throws. A commit the database refuses
+     * because it rolled the transaction back, which is an {@link SQLTransactionRollbackException} or an
+     * {@link SQLException} whose SQLState, or that of a cause, starts with {@code 40}, completes the future with that
+     * exception: nothing was written. Any other failure of the commit statement itself completes the future with a
+     * {@link CommitUnknownException}.
      *
      * @param <T> the type of the result
      * @param work the work
@@ -380,11 +394,13 @@ public final class Storage {
      * {@link #start}, the returned future completes on one of the read threads, so a dependent stage added without
      * an executor never holds up the writer thread. The work must not wait for another write, as for {@link #async}.
      *
-     * <p>A transaction counts as rolled back by the database when the work or the database threw an
+     * <p>A transaction counts as rolled back by the database when the work, a statement or the commit threw an
      * {@link SQLException} that is, or has as a cause, an {@link SQLTransactionRollbackException} or an exception
-     * whose SQLState starts with {@code 40}. Every attempt has a connection and a {@link Tx} of its own, so the
-     * {@link Tx#afterCommit} actions of an attempt that rolled back never run. A {@link CommitUnknownException} is
-     * never retried, whatever its SQLState, because the transaction may have been written.
+     * whose SQLState starts with {@code 40}. A commit that fails so, such as the commit of a PostgreSQL
+     * {@code SERIALIZABLE} transaction that fails with SQLState {@code 40001}, is therefore run again. Every attempt
+     * has a connection and a {@link Tx} of its own, so the {@link Tx#afterCommit} actions of an attempt that rolled
+     * back never run. A {@link CommitUnknownException} is never retried, whatever its SQLState, because the
+     * transaction may have been written.
      *
      * <p>The work may therefore run more than once. Each run must be safe to repeat: an effect outside the database
      * belongs in {@link Tx#afterCommit}, which runs only for the attempt that committed.
@@ -698,8 +714,8 @@ public final class Storage {
                 try {
                     connection.commit();
                     committed = true;
-                } catch (SQLException unknown) {
-                    CommitUnknownException outcome = new CommitUnknownException(unknown);
+                } catch (SQLException refused) {
+                    SQLException outcome = rolledBack(refused) ? refused : new CommitUnknownException(refused);
                     rollback(connection, outcome);
                     throw outcome;
                 }
@@ -720,7 +736,8 @@ public final class Storage {
      * Whether the database rolled a transaction back for a deadlock or a serialization failure. SQLState class 40
      * covers both ({@code 40001} on MySQL and MariaDB, {@code 40P01} on PostgreSQL), and a driver may wrap it, so
      * the causes are checked too. A {@link CommitUnknownException} copies the SQLState of the failed commit, so it
-     * is recognised by its type first and never counts as rolled back. A cause chain that loops ends at the first
+     * is recognised by its type first and never counts as rolled back; a failed commit that counts as rolled back
+     * is never wrapped in one. A cause chain that loops ends at the first
      * exception seen twice.
      */
     static boolean rolledBack(SQLException ex) {
@@ -775,8 +792,13 @@ public final class Storage {
         pragmas.setProperty("synchronous", "FULL");
         pragmas.setProperty("busy_timeout", "5000");
         pragmas.setProperty("foreign_keys", "true");
+        // BEGIN IMMEDIATE takes the write lock as the transaction begins and waits for it up to the busy timeout. A
+        // deferred transaction that read before another process committed fails at once when it then writes.
+        Properties writing = new Properties();
+        writing.putAll(pragmas);
+        writing.setProperty("transaction_mode", "IMMEDIATE");
         StorageSettings.Pool pool = settings.pool();
-        HikariDataSource writer = pool(name + "-writer", Dialect.SQLITE.driverClassName(), url, pragmas, 1, 1,
+        HikariDataSource writer = pool(name + "-writer", Dialect.SQLITE.driverClassName(), url, writing, 1, 1,
             pool.connectionTimeout(), null, null, null);
         pools.add(writer);
         HikariDataSource reader = pool(name + "-reader", Dialect.SQLITE.driverClassName(), url, pragmas,

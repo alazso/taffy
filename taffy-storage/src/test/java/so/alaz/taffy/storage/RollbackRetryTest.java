@@ -43,8 +43,8 @@ final class RollbackRetryTest {
 
     @BeforeEach
     void start() {
-        StorageSettings settings = new StorageSettings(Dialect.SQLITE, "data.db", null,
-            new StorageSettings.Pool(2, 1, Duration.ofSeconds(5)), 2, 0);
+        StorageSettings settings = StorageSettings.sqlite("data.db")
+            .pool(StorageSettings.Pool.of(2).connectionTimeout(Duration.ofSeconds(5))).backupKeep(0);
         storage = Storage.start(TestPlugins.plugin(NAME, folder, log.logger), new ErrorReports(), settings, List.of(),
             StorageContract.CLOCK).join();
         storage.async(tx -> {
@@ -221,13 +221,59 @@ final class RollbackRetryTest {
     }
 
     @Test
-    void aFailedCommitWhoseCauseCarriesARollbackStateIsNotRestarted() throws SQLException {
+    void aCommitTheDatabaseRolledBackIsRestartedAndItsActionsRunOnce() throws SQLException {
         DataSource source = mock(DataSource.class);
         Connection connection = mock(Connection.class);
         when(source.getConnection()).thenReturn(connection);
-        doThrow(new SQLException("could not serialize access", "40001")).when(connection).commit();
+        doThrow(new SQLException("could not serialize access", "40001")).doNothing().when(connection).commit();
         Storage over = Storage.over(TestPlugins.plugin("retry-over", log.logger), new ErrorReports(), Dialect.POSTGRES,
             source, "p_", StorageContract.CLOCK);
+        AtomicInteger attempts = new AtomicInteger();
+        AtomicInteger ran = new AtomicInteger();
+
+        CompletableFuture<Integer> retried = over.asyncRetrying(tx -> {
+            tx.afterCommit(ran::incrementAndGet);
+            return attempts.incrementAndGet();
+        });
+
+        assertThat(retried.join()).isEqualTo(2);
+        assertThat(ran).hasValue(1);
+        verify(source, times(2)).getConnection();
+        verify(connection, times(2)).commit();
+        verify(connection, times(1)).rollback();
+        assertThat(over.close(Duration.ofSeconds(5))).isTrue();
+    }
+
+    @Test
+    void aCommitTheDatabaseRolledBackFailsAsyncWithTheDatabaseException() throws SQLException {
+        DataSource source = mock(DataSource.class);
+        Connection connection = mock(Connection.class);
+        when(source.getConnection()).thenReturn(connection);
+        SQLException refused = new SQLException("could not serialize access", "40001");
+        doThrow(refused).when(connection).commit();
+        Storage over = Storage.over(TestPlugins.plugin("retry-once", log.logger), new ErrorReports(), Dialect.POSTGRES,
+            source, "p_", StorageContract.CLOCK);
+        AtomicBoolean ran = new AtomicBoolean();
+
+        CompletableFuture<Integer> failed = over.async(tx -> {
+            tx.afterCommit(() -> ran.set(true));
+            return 1;
+        });
+
+        assertThatThrownBy(failed::join).cause().isSameAs(refused);
+        assertThat(ran).isFalse();
+        verify(connection, times(1)).commit();
+        assertThat(over.close(Duration.ofSeconds(5))).isTrue();
+    }
+
+    @Test
+    void aFailedCommitWithAnotherStateIsUnknownAndNotRestarted() throws SQLException {
+        DataSource source = mock(DataSource.class);
+        Connection connection = mock(Connection.class);
+        when(source.getConnection()).thenReturn(connection);
+        doThrow(new SQLException("connection lost", "08006")).when(connection).commit();
+        Storage over = Storage.over(TestPlugins.plugin("retry-unknown", log.logger), new ErrorReports(),
+            Dialect.POSTGRES, source, "p_", StorageContract.CLOCK);
         AtomicInteger attempts = new AtomicInteger();
         AtomicBoolean ran = new AtomicBoolean();
 
@@ -237,8 +283,8 @@ final class RollbackRetryTest {
         });
 
         assertThatThrownBy(unknown::join).cause().isInstanceOf(CommitUnknownException.class)
-            .satisfies(failure -> assertThat(((SQLException) failure).getSQLState()).isEqualTo("40001"))
-            .cause().hasMessage("could not serialize access");
+            .satisfies(failure -> assertThat(((SQLException) failure).getSQLState()).isEqualTo("08006"))
+            .cause().hasMessage("connection lost");
         assertThat(attempts).hasValue(1);
         assertThat(ran).isFalse();
         verify(source, times(1)).getConnection();
