@@ -58,12 +58,12 @@ All notable changes to Taffy are documented here. This project follows
 - `CustomItems` waits for HeadDatabase to load its database before it builds a head. HeadDatabase knows no head
   until that load ends shortly after startup, so `create("hdb:1234")` in `onEnable` returned `null` as for an
   unknown id while `ready()` read `true` and `statuses()` read `ON`. HeadDatabase is now `LOADING` until
-  `DatabaseLoadEvent`: `create` skips it, `build` gives `NOT_READY` and `ready()` is `false` until then. Its
-  integration registers a listener for the owner, which `CustomItems.close()` unregisters. A `detect` that
-  follows a `DatabaseLoadEvent` an earlier `detect` of the same plugin heard in this server run reads `ON` at
-  once. HeadDatabase has no query for whether its database is loaded, so any other `detect` asks it for a random
-  head and reads `ON` at once when it gives one. A database that holds no head gives none, so it then reads
-  `LOADING` until its next `DatabaseLoadEvent`.
+  `DatabaseLoadEvent` when it gives no random head at detection: `create` skips it, `build` gives `NOT_READY`
+  and `ready()` is `false` until then. Its integration registers a listener for the owner, which
+  `CustomItems.close()` unregisters. A `detect` that follows a `DatabaseLoadEvent` an earlier `detect` of the
+  same plugin heard in this server run reads `ON` at once. HeadDatabase has no query for whether its database is
+  loaded, so any other `detect` asks it for a random head and reads `ON` at once when it gives one. A database
+  that holds no head gives none, so it then reads `LOADING` until its next `DatabaseLoadEvent`.
 
 ## [0.3.0] - 2026-11-20
 
