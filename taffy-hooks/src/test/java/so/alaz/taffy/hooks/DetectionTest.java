@@ -171,6 +171,60 @@ final class DetectionTest {
         assertThat(reports).isEmpty();
     }
 
+    private static final Detection.Through THROUGH =
+        new Detection.Through("WorldEdit", "com.sk89q.worldedit.bukkit.BukkitAdapter");
+
+    private Detected<String> detectThrough(boolean switchedOn) {
+        return Detection.run("WorldGuard", PROBE, THROUGH, switchedOn, presence, bound -> {
+            built.add(bound);
+            return "WorldGuard provider";
+        }, log.logger, errors);
+    }
+
+    @Test
+    void aPluginWhoseThroughClassIsVisibleIsBuilt() {
+        Detected<String> detected = detectThrough(true);
+
+        assertThat(detected.status()).isEqualTo(new HookStatus("WorldGuard", HookState.ON, "1.0", null));
+        assertThat(detected.provider()).isEqualTo("WorldGuard provider");
+        assertThat(presence.probes).containsExactly(PROBE, THROUGH.probe());
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void aVisiblePluginWhoseThroughClassIsNotVisibleIsNotVisibleAndNamesTheOtherEntry() {
+        presence.invisibleClasses.add(THROUGH.probe());
+
+        Detected<String> detected = detectThrough(true);
+
+        assertThat(detected.status()).isEqualTo(new HookStatus("WorldGuard", HookState.NOT_VISIBLE, "1.0",
+            "WorldGuard is installed, but this plugin cannot see WorldEdit, which WorldGuard is read through, because"
+                + " its paper-plugin.yml does not list WorldEdit under dependencies.server."));
+        assertThat(detected.status().describe()).isEqualTo("WorldGuard 1.0 not visible to this plugin");
+        assertThat(detected.provider()).isNull();
+        assertThat(detected.bound()).isNull();
+        assertThat(built).isEmpty();
+        assertThat(log.lines()).containsExactly("WARNING WorldGuard 1.0 stays off, because WorldEdit, which it is read"
+            + " through, is not visible to this plugin: this plugin's paper-plugin.yml does not list WorldEdit under"
+            + " dependencies.server.");
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
+    void theThroughClassIsNotProbedForAPluginThatIsOffOrStoppedByItsOwnChecks() {
+        presence.invisibleClasses.add(THROUGH.probe());
+
+        assertThat(detectThrough(false).status().state()).isEqualTo(HookState.SWITCHED_OFF);
+        presence.invisibleClasses.add(PROBE);
+        assertThat(detectThrough(true).status()).isEqualTo(new HookStatus("WorldGuard", HookState.NOT_VISIBLE, "1.0",
+            Detection.notVisible("WorldGuard")));
+        presence.disabled.add("WorldGuard");
+        assertThat(detectThrough(true).status().state()).isEqualTo(HookState.NOT_ENABLED);
+
+        assertThat(presence.probes).containsExactly(PROBE);
+        assertThat(built).isEmpty();
+    }
+
     @Test
     void aPluginUnloadedBeforeItsLoaderCouldBeAskedLacksTheApi() {
         presence.invisibleClasses.add(PROBE);

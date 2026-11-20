@@ -18,6 +18,10 @@ All notable changes to Taffy are documented here. This project follows
   detection, so its status read `NOT_ENABLED` with no reason while the new instance was enabled. The
   `NOT_ENABLED` status now carries a reason in that case, which tells the owner to restart the server or to run
   the plugin's reload command if it detects again. The state, the provider and every other status are unchanged.
+- `RegionProvider.worldGuard` gives `NOT_VISIBLE`, with a reason that names the missing `WorldEdit` entry, when
+  WorldGuard is visible and WorldEdit's `BukkitAdapter`, which every region lookup goes through, is not. It was
+  `FAILED` with a report under `hook.worldguard` and no word on what to change. A plugin that uses WorldGuard
+  lists both `WorldGuard` and `WorldEdit` under `dependencies.server` in its `paper-plugin.yml`.
 
 ## [0.3.0] - 2026-11-20
 

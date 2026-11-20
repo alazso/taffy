@@ -16,14 +16,16 @@ import java.util.logging.Logger;
 public interface RegionProvider {
 
     /**
-     * Detects WorldGuard and builds a provider on it. The plugin that calls this lists WorldGuard in its
-     * {@code paper-plugin.yml} with {@code load: BEFORE} and {@code required: false}, so WorldGuard is enabled first
-     * when it is installed. WorldGuard is read only when it is switched on, installed, enabled and its API classes
-     * are visible, and it is {@link HookState#FAILED} when a method the provider calls is missing; otherwise the
-     * result carries the state that stopped it and no provider. A WorldGuard that is not visible or lacks the API is
-     * warned about; one that could not be hooked is warned about and reported to {@code errors} under
-     * {@code hook.worldguard}. A failure inside a later lookup is logged as a warning, at most once a minute with its
-     * stack the first time, and reported under {@code hook.worldguard} too.
+     * Detects WorldGuard and builds a provider on it. The plugin that calls this lists WorldGuard, and also
+     * WorldEdit, in its {@code paper-plugin.yml} with {@code load: BEFORE} and {@code required: false}, so WorldGuard
+     * is enabled first when it is installed. WorldGuard is read only when it is switched on, installed, enabled and
+     * its API classes are visible, and it is {@link HookState#FAILED} when a method the provider calls is missing;
+     * otherwise the result carries the state that stopped it and no provider. A lookup turns a location into a
+     * WorldEdit position through WorldEdit's {@code BukkitAdapter}, so a WorldGuard that is visible while that class
+     * is not is {@link HookState#NOT_VISIBLE}, with a reason that names the missing WorldEdit entry. A WorldGuard
+     * that is not visible or lacks the API is warned about; one that could not be hooked is warned about and reported
+     * to {@code errors} under {@code hook.worldguard}. A failure inside a later lookup is logged as a warning, at
+     * most once a minute with its stack the first time, and reported under {@code hook.worldguard} too.
      *
      * @param owner the plugin that uses WorldGuard: its server's plugin manager is searched and its logger receives
      *     every warning
@@ -38,7 +40,8 @@ public interface RegionProvider {
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(errors, "errors");
         Logger logger = owner.getLogger();
-        return Detection.run("WorldGuard", "com.sk89q.worldguard.WorldGuard", switchedOn,
+        return Detection.run("WorldGuard", "com.sk89q.worldguard.WorldGuard",
+            new Detection.Through("WorldEdit", "com.sk89q.worldedit.bukkit.BukkitAdapter"), switchedOn,
             new PluginPresence(owner.getServer().getPluginManager(), logger),
             plugin -> WorldGuardRegions.create(plugin, logger, errors), logger, errors);
     }

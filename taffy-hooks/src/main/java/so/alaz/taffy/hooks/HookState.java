@@ -29,7 +29,8 @@ public enum HookState {
      * The integration plugin is installed and holds the API that is read, but the plugin that uses this module cannot
      * see its classes. For every integration but Vault, the integration plugin is also enabled. A plugin described by
      * {@code paper-plugin.yml} sees another plugin's classes only when it lists that plugin under
-     * {@code dependencies.server}.
+     * {@code dependencies.server}. WorldGuard also reads as this state while it is visible itself and WorldEdit,
+     * which its regions are read through, is not.
      */
     NOT_VISIBLE,
     /**

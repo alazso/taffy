@@ -624,6 +624,41 @@ final class AbsentIntegrationsTest {
         assertThat(reported).isEmpty();
     }
 
+    @Test
+    void regionDetectionWithWorldGuardVisibleAndWorldEditHiddenIsNotVisibleAndNamesWorldEdit() throws Throwable {
+        ClassLoader loader = SimulatedClasspath.hiding(OWN, "com.sk89q.worldedit.");
+        assertThatCode(() -> Class.forName(WORLDGUARD, false, loader)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> Class.forName("com.sk89q.worldedit.bukkit.BukkitAdapter", false, loader))
+            .isInstanceOf(ClassNotFoundException.class);
+        PluginManager plugins = installed(pluginOn(loader, "7.0.20"), "WorldGuard");
+        CapturedLog log = new CapturedLog();
+        List<String> reported = new ArrayList<>();
+        ErrorReports errors = new ErrorReports();
+        errors.install((source, error) -> reported.add(source));
+
+        Class<?> providerType = Class.forName(RegionProvider.class.getName(), true, loader);
+        Class<?> detectedType = Class.forName(Detected.class.getName(), true, loader);
+        MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+        MethodHandle detect = lookup.findStatic(providerType, "worldGuard",
+            MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class));
+        MethodHandle status = lookup.findVirtual(detectedType, "status",
+            MethodType.methodType(Class.forName(HookStatus.class.getName(), true, loader)));
+        MethodHandle provider = lookup.findVirtual(detectedType, "provider", MethodType.methodType(Object.class));
+
+        Object detected = detect.invoke(owner(plugins, log), errors, true);
+        Object found = status.invoke(detected);
+
+        assertThat(stateOf(loader, found)).isEqualTo(HookState.NOT_VISIBLE.name());
+        assertThat(read(loader, found, "reason", String.class)).isEqualTo("WorldGuard is installed, but this plugin"
+            + " cannot see WorldEdit, which WorldGuard is read through, because its paper-plugin.yml does not list"
+            + " WorldEdit under dependencies.server.");
+        assertThat(provider.invoke(detected)).isNull();
+        assertThat(log.lines()).containsExactly("WARNING WorldGuard 7.0.20 stays off, because WorldEdit, which it is"
+            + " read through, is not visible to this plugin: this plugin's paper-plugin.yml does not list WorldEdit"
+            + " under dependencies.server.");
+        assertThat(reported).isEmpty();
+    }
+
     private static Object registerPlaceholders(ClassLoader loader, Plugin owner, ErrorReports errors,
                                                boolean switchedOn) throws Throwable {
         Class<?> builderType = Class.forName(PlaceholderExpansionBuilder.class.getName(), true, loader);

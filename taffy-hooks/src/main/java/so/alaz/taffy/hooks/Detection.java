@@ -17,11 +17,21 @@ import java.util.stream.Collectors;
 // nothing; FAILED logs one warning and reports under hook.<plugin in lower case>.
 final class Detection {
 
+    // A class of another plugin that the integration is read through.
+    record Through(String plugin, String probe) {
+    }
+
     private Detection() {
     }
 
     static <T> Detected<T> run(String plugin, String probe, boolean switchedOn, Presence presence,
                                Function<Plugin, T> factory, Logger logger, ErrorReports errors) {
+        return run(plugin, probe, null, switchedOn, presence, factory, logger, errors);
+    }
+
+    // A through class that is not visible stops detection as NOT_VISIBLE, after every check of the plugin passed.
+    static <T> Detected<T> run(String plugin, String probe, @Nullable Through through, boolean switchedOn,
+                               Presence presence, Function<Plugin, T> factory, Logger logger, ErrorReports errors) {
         if (!switchedOn) {
             return off(plugin, HookState.SWITCHED_OFF, null);
         }
@@ -30,6 +40,13 @@ final class Detection {
             return new Detected<>(stopped, null);
         }
         String version = presence.version(plugin);
+        if (through != null && !presence.classPresent(through.probe())) {
+            logger.warning(plugin + " " + version + " stays off, because " + through.plugin() + ", which it is read"
+                + " through, is not visible to this plugin: this plugin's paper-plugin.yml does not list "
+                + through.plugin() + " under dependencies.server.");
+            return new Detected<>(new HookStatus(plugin, HookState.NOT_VISIBLE, version,
+                notVisibleThrough(plugin, through.plugin())), null);
+        }
         Plugin bound = presence.plugin(plugin);
         if (bound == null) {
             return off(plugin, HookState.NOT_INSTALLED, null);
@@ -69,6 +86,13 @@ final class Detection {
     static String notVisible(String plugin) {
         return plugin + " is installed, but this plugin cannot see it, because its paper-plugin.yml does not list "
             + plugin + " under dependencies.server.";
+    }
+
+    // The owner's reason for a NOT_VISIBLE status of a plugin that is visible itself.
+    static String notVisibleThrough(String plugin, String through) {
+        return plugin + " is installed, but this plugin cannot see " + through + ", which " + plugin
+            + " is read through, because its paper-plugin.yml does not list " + through
+            + " under dependencies.server.";
     }
 
     static HookStatus notVisible(String plugin, String version, String reason, Logger logger) {

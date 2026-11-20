@@ -28,7 +28,8 @@
  *
  * <p>The names are {@code ItemsAdder}, {@code Nexo}, {@code Oraxen}, {@code HeadDatabase}, {@code Vault},
  * {@code LuckPerms}, {@code WorldGuard}, {@code PlaceholderAPI}, {@code MiniPlaceholders}, {@code DecentHolograms},
- * {@code FancyHolograms}, {@code Holograms} and {@code HologramLib}. An integration that is
+ * {@code FancyHolograms}, {@code Holograms} and {@code HologramLib}. A plugin that uses WorldGuard also lists
+ * {@code WorldEdit}, which WorldGuard's regions are read through. An integration that is
  * installed but not listed is {@link so.alaz.taffy.hooks.HookState#NOT_VISIBLE}, and its warning names the missing
  * entry.
  *
