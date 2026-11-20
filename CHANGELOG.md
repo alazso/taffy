@@ -11,6 +11,12 @@ All notable changes to Taffy are documented here. This project follows
   the `CustomItems` it holds first, so no listener of an earlier detection stays registered. A closed
   `CustomItems` keeps answering, but a plugin that was still loading its items stays `LOADING` in it. A second
   call does nothing.
+- `CustomItems.build(String reference)` builds the item a reference names as `create` does and returns a
+  `CustomItems.Built`: the item, or a `Built.Reason` that says why there is none. `UNKNOWN_PLUGIN` is a
+  reference whose text before the first colon names no plugin and that no plugin knows whole, `PLUGIN_OFF` a
+  plugin with no integration on or no longer enabled, `NOT_READY` a plugin still loading its items, `UNKNOWN_ID`
+  an id the plugin does not know, and `FAILED` a plugin that threw. `create` is unchanged: it returns
+  `build(reference).item()`, so `null` for every one of these.
 
 ### Fixed
 - `Detected.status()` and `CustomItems.statuses()` say why an integration stays off after its plugin was loaded

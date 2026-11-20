@@ -667,6 +667,103 @@ final class CustomItemsTest {
         assertThat(log.records).isEmpty();
     }
 
+    private static CustomItems.Built none(CustomItems.Built.Reason reason) {
+        return new CustomItems.Built(null, reason);
+    }
+
+    @Test
+    void buildGivesTheItemWithNoReasonAndCreateGivesTheSameItem() {
+        provider(CustomItemPlugin.NEXO).id("nexo_ruby", "ruby");
+        provider(CustomItemPlugin.ITEMSADDER).id("ia_ruby", "gems:ruby");
+        CustomItems items = detected();
+
+        for (String reference : List.of("nexo:ruby", "ruby", "gems:ruby", "ia:gems:ruby")) {
+            CustomItems.Built built = items.build(reference);
+            assertThat(built.reason()).as(reference).isNull();
+            assertThat(FakeItems.type(built.item())).as(reference)
+                .isEqualTo(FakeItems.type(items.create(reference))).isNotNull();
+        }
+    }
+
+    @Test
+    void buildNamesTheCauseForAReferenceThatNamesAPlugin() {
+        presence.missing.add("Oraxen");
+        provider(CustomItemPlugin.ITEMSADDER).ready = false;
+        provider(CustomItemPlugin.HEADDATABASE).failure = new IllegalStateException("boom");
+        CustomItems items = detected();
+
+        assertThat(items.build("oraxen:ruby")).isEqualTo(none(CustomItems.Built.Reason.PLUGIN_OFF));
+        assertThat(items.build("ia:gems:ruby")).isEqualTo(none(CustomItems.Built.Reason.NOT_READY));
+        assertThat(items.build("nexo:ruby")).isEqualTo(none(CustomItems.Built.Reason.UNKNOWN_ID));
+        assertThat(items.build("hdb:1234")).isEqualTo(none(CustomItems.Built.Reason.FAILED));
+        assertThat(reports).extracting(Map.Entry::getKey).containsExactly("hook.headdatabase");
+
+        when(bound(CustomItemPlugin.NEXO).isEnabled()).thenReturn(false);
+        assertThat(items.build("nexo:ruby")).isEqualTo(none(CustomItems.Built.Reason.PLUGIN_OFF));
+        when(bound(CustomItemPlugin.ITEMSADDER).isEnabled()).thenReturn(false);
+        assertThat(items.build("ia:gems:ruby")).as("a disabled plugin is off, loading or not")
+            .isEqualTo(none(CustomItems.Built.Reason.PLUGIN_OFF));
+        for (String reference : List.of("oraxen:ruby", "ia:gems:ruby", "nexo:ruby", "hdb:1234")) {
+            assertThat(items.create(reference)).as(reference).isNull();
+        }
+    }
+
+    @Test
+    void buildNamesTheCauseForAReferenceWithoutAHint() {
+        CustomItems items = detected();
+
+        assertThat(items.build("ruby")).isEqualTo(none(CustomItems.Built.Reason.UNKNOWN_ID));
+
+        provider(CustomItemPlugin.ORAXEN).failure = new IllegalStateException("boom");
+        assertThat(items.build("ruby")).isEqualTo(none(CustomItems.Built.Reason.FAILED));
+
+        provider(CustomItemPlugin.ITEMSADDER).ready = false;
+        assertThat(items.build("ruby")).isEqualTo(none(CustomItems.Built.Reason.NOT_READY));
+
+        provider(CustomItemPlugin.HEADDATABASE).id("head", "ruby");
+        assertThat(FakeItems.type(items.build("ruby").item())).as("a later plugin still builds it").isEqualTo("head");
+
+        for (CustomItemPlugin plugin : CustomItemPlugin.values()) {
+            when(bound(plugin).isEnabled()).thenReturn(false);
+        }
+        assertThat(items.build("ruby")).isEqualTo(none(CustomItems.Built.Reason.PLUGIN_OFF));
+        assertThat(detect(Set.of()).build("ruby")).isEqualTo(none(CustomItems.Built.Reason.PLUGIN_OFF));
+    }
+
+    @Test
+    void buildNamesTheCauseForAReferenceWhoseHintNamesNoPlugin() {
+        CustomItems items = detected();
+
+        assertThat(items.build("mmoitems:ruby")).isEqualTo(none(CustomItems.Built.Reason.UNKNOWN_PLUGIN));
+
+        provider(CustomItemPlugin.ORAXEN).failure = new IllegalStateException("boom");
+        assertThat(items.build("gems:ruby")).isEqualTo(none(CustomItems.Built.Reason.FAILED));
+
+        provider(CustomItemPlugin.ITEMSADDER).ready = false;
+        assertThat(items.build("gems:ruby")).isEqualTo(none(CustomItems.Built.Reason.NOT_READY));
+
+        assertThat(detect(Set.of()).build("gems:ruby")).isEqualTo(none(CustomItems.Built.Reason.UNKNOWN_PLUGIN));
+    }
+
+    @Test
+    void buildRefusesAReferenceWithoutAnIdAsCreateDoes() {
+        CustomItems items = detected();
+
+        assertThatThrownBy(() -> items.build("nexo:")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> items.build(null)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void aBuiltHoldsEitherAnItemOrAReason() {
+        assertThat(new CustomItems.Built(gem, null).item()).isSameAs(gem);
+        assertThatThrownBy(() -> new CustomItems.Built(null, null))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("a result without an item needs a reason");
+        assertThatThrownBy(() -> new CustomItems.Built(gem, CustomItems.Built.Reason.FAILED))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("a result with an item takes no reason");
+    }
+
     @Test
     void aReferenceWithoutAnIdIsRefused() {
         CustomItems items = detected();

@@ -43,6 +43,57 @@ public final class CustomItems {
     public record Resolution(@Nullable String id, boolean failed) {
     }
 
+    /**
+     * What {@link #build} made of a reference: the item, or why there is none.
+     *
+     * @param item the item, or {@code null} when none was built
+     * @param reason why no item was built, or {@code null} when one was
+     */
+    public record Built(@Nullable ItemStack item, @Nullable Reason reason) {
+
+        /**
+         * Why {@link #build} built no item. A later version may add reasons, so a {@code switch} over them keeps a
+         * {@code default} branch.
+         */
+        public enum Reason {
+            /**
+             * The text before the first colon names no {@link CustomItemPlugin}, and no plugin knows the whole
+             * reference as its own id.
+             */
+            UNKNOWN_PLUGIN,
+            /**
+             * The plugin the reference names has no integration on, or is no longer enabled. For a reference
+             * without a hint, no plugin has an integration on and is enabled.
+             */
+            PLUGIN_OFF,
+            /**
+             * The plugin the reference names is still loading its items. For a reference that names no plugin, no
+             * plugin built the item and one that might is still loading its items. The same call can build the item
+             * once {@link CustomItems#ready()} is {@code true}.
+             */
+            NOT_READY,
+            /** Every plugin that was asked answered that it does not know the id. */
+            UNKNOWN_ID,
+            /**
+             * A plugin that was asked threw, which was logged and reported, and no plugin built the item or is
+             * still loading its items.
+             */
+            FAILED
+        }
+
+        /**
+         * Checks that there is either an item or a reason.
+         *
+         * @throws IllegalArgumentException if {@code item} and {@code reason} are both {@code null} or both set
+         */
+        public Built {
+            if ((item == null) == (reason == null)) {
+                throw new IllegalArgumentException(item == null ? "a result without an item needs a reason"
+                    : "a result with an item takes no reason");
+            }
+        }
+    }
+
     private record Active(CustomItemPlugin plugin, CustomItemProvider provider, Plugin bound, HookStatus detected,
                           Detected<CustomItemProvider> detection) {
     }
@@ -177,14 +228,7 @@ public final class CustomItems {
     }
 
     /**
-     * Builds the item a reference names, parsed by {@link CustomItemRef#parse}. A reference whose hint names a
-     * plugin, by its key or an alias, goes only to that plugin and never to another one, and the plugin is given the
-     * id without the hint. Any other reference is unqualified: it is offered to each plugin in turn, and the first
-     * item built wins. A reference without a hint is offered as its id, and one whose hint names no plugin is offered
-     * whole, hint and colon included, so an ItemsAdder id written without its key, such as {@code gems:ruby},
-     * builds the ItemsAdder item. A plugin that is no longer enabled or still loading its items is skipped. A plugin
-     * that throws is skipped after a warning, at most once a minute with its stack the first time, and the failure
-     * is reported under {@code hook.<key>}.
+     * Builds the item a reference names, as {@link #build} does, dropping why no item was built.
      *
      * @param reference the reference, such as {@code ia:gems:ruby}, {@code hdb:1234}, {@code gems:ruby} or
      *     {@code ruby}
@@ -192,38 +236,83 @@ public final class CustomItems {
      * @throws IllegalArgumentException if {@code reference} is {@code null} or its id is blank
      */
     public @Nullable ItemStack create(String reference) {
+        return build(reference).item();
+    }
+
+    /**
+     * Builds the item a reference names, parsed by {@link CustomItemRef#parse}, and says why when there is none. A
+     * reference whose hint names a plugin, by its key or an alias, goes only to that plugin and never to another
+     * one, and the plugin is given the id without the hint. Any other reference is unqualified: it is offered to
+     * each plugin in turn, and the first item built wins. A reference without a hint is offered as its id, and one
+     * whose hint names no plugin is offered whole, hint and colon included, so an ItemsAdder id written without its
+     * key, such as {@code gems:ruby}, builds the ItemsAdder item. A plugin that is no longer enabled or still
+     * loading its items is skipped. A plugin that throws is skipped after a warning, at most once a minute with its
+     * stack the first time, and the failure is reported under {@code hook.<key>}.
+     *
+     * <p>When several plugins were offered an unqualified reference and none built it, the reason is the first of
+     * these that holds: {@link Built.Reason#NOT_READY} when a plugin is still loading its items,
+     * {@link Built.Reason#FAILED} when a plugin threw, {@link Built.Reason#UNKNOWN_PLUGIN} when the reference has
+     * a hint, {@link Built.Reason#UNKNOWN_ID} when a plugin was asked, and {@link Built.Reason#PLUGIN_OFF}.
+     *
+     * @param reference the reference, such as {@code ia:gems:ruby}, {@code hdb:1234}, {@code gems:ruby} or
+     *     {@code ruby}
+     * @return the item, or the reason no plugin built one
+     * @throws IllegalArgumentException if {@code reference} is {@code null} or its id is blank
+     */
+    public Built build(String reference) {
         CustomItemRef ref = CustomItemRef.parse(reference);
         CustomItemPlugin named = ref.provider();
         if (named != null) {
             for (Active hook : active) {
                 if (hook.plugin() == named) {
-                    return create(hook, ref.id());
+                    return build(hook, ref.id());
                 }
             }
-            return null;
+            return new Built(null, Built.Reason.PLUGIN_OFF);
         }
-        String id = ref.providerHint() == null ? ref.id() : reference;
+        boolean hinted = ref.providerHint() != null;
+        String id = hinted ? reference : ref.id();
+        boolean loading = false;
+        boolean failed = false;
+        boolean asked = false;
         for (Active hook : active) {
-            ItemStack item = create(hook, id);
-            if (item != null) {
-                return item;
+            Built built = build(hook, id);
+            if (built.item() != null) {
+                return built;
             }
+            loading |= built.reason() == Built.Reason.NOT_READY;
+            failed |= built.reason() == Built.Reason.FAILED;
+            asked |= built.reason() == Built.Reason.UNKNOWN_ID;
         }
-        return null;
+        if (loading) {
+            return new Built(null, Built.Reason.NOT_READY);
+        }
+        if (failed) {
+            return new Built(null, Built.Reason.FAILED);
+        }
+        if (hinted) {
+            return new Built(null, Built.Reason.UNKNOWN_PLUGIN);
+        }
+        return new Built(null, asked ? Built.Reason.UNKNOWN_ID : Built.Reason.PLUGIN_OFF);
     }
 
-    private @Nullable ItemStack create(Active hook, String id) {
-        if (!hook.bound().isEnabled() || !hook.provider().ready()) {
-            return null;
+    private Built build(Active hook, String id) {
+        if (!hook.bound().isEnabled()) {
+            return new Built(null, Built.Reason.PLUGIN_OFF);
         }
+        if (!hook.provider().ready()) {
+            return new Built(null, Built.Reason.NOT_READY);
+        }
+        ItemStack item;
         try {
-            return hook.provider().create(id);
+            item = hook.provider().create(id);
         } catch (Exception | LinkageError failure) {
             throwLog.warn("create " + hook.plugin().key(), hook.plugin().plugin() + " could not create " + id + " ("
                 + failure + ").", failure);
             errors.report("hook." + hook.plugin().key(), failure);
-            return null;
+            return new Built(null, Built.Reason.FAILED);
         }
+        return item == null ? new Built(null, Built.Reason.UNKNOWN_ID) : new Built(item, null);
     }
 
     /**
