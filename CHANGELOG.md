@@ -15,7 +15,6 @@ All notable changes to Taffy are documented here. This project follows
   and the result of a future that completes after that, or for a player who left the server, is dropped. A future
   that fails or completes with `null` is logged, reported under `gui.prompt`, tells the player `gui.error` and
   opens the origin, as an answer function that throws does; a cancelled future opens the origin with no message.
-  A plugin's own `switch` over the sealed `Answer` needs a case for `Later` to compile.
 - `Frame.list(int count, int requestedPage, IntFunction<Frame.Entry> entryAt)` fills the list from the number
   of entries and a function that gives the entry at an index. It works out the page first and asks for the
   entries on that page only, each once and in order, so a menu over a long list no longer builds an icon for
@@ -61,6 +60,11 @@ All notable changes to Taffy are documented here. This project follows
   as their Javadoc now states, so a `switch` over either has a `default` branch.
 
 ### Changed
+- Breaking: `Answer` has a third permitted subtype, `Answer.Later`, so a `switch` over an `Answer` that names
+  `Accept` and `Retry` and has no `default` branch no longer compiles, and one compiled against 0.2.2 throws a
+  `MatchException` when it is given a `Later`. An answer function that returns an `Accept` or a `Retry` needs no
+  change. Give the `switch` a `default` branch, which also covers a result a later release adds, or a case for
+  `Answer.Later`.
 - Breaking: a record pattern over `PromptRequest` needs a fifth component, for `abandoned`. Every `new
   PromptRequest(question, initial, origin, answer)` compiles and behaves as before. Add the component to the
   pattern, as in `PromptRequest(var question, var initial, var origin, var answer, var abandoned)`.
