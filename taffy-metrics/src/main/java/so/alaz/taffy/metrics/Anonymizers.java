@@ -7,26 +7,67 @@ import java.util.Arrays;
 import java.util.regex.Pattern;
 
 /**
- * The anonymize rules every FastStats error tracker of this module gets: email addresses, bearer tokens, AWS
- * access key ids, UUIDs, {@code api_key}, {@code apikey}, {@code token} and {@code secret} query values, whole
- * jdbc URLs, SQL statements and Windows paths.
+ * The anonymize rules every FastStats error tracker of this module gets, in the order they apply:
+ *
+ * <ol>
+ *   <li>a whole jdbc URL;</li>
+ *   <li>the user name and password before the {@code @} of a URI of any scheme, such as
+ *       {@code redis://default:hunter2@cache:6379}, when both are present;</li>
+ *   <li>an email address;</li>
+ *   <li>a bearer token;</li>
+ *   <li>an AWS access key id;</li>
+ *   <li>a UUID in either letter case, with its dashes or as 32 hex digits without them;</li>
+ *   <li>the quoted user and host of a MySQL or MariaDB account, as in {@code 'mc_prod'@'db.example.net'};</li>
+ *   <li>an {@code api_key}, {@code apikey}, {@code token} or {@code secret} query value;</li>
+ *   <li>the value after {@code =} or {@code :} of a key that holds {@code password}, {@code passwd},
+ *       {@code pwd}, {@code secret}, {@code token}, {@code api_key}, {@code access_key} or {@code private_key}
+ *       in either letter case, with {@code -} or nothing in place of the {@code _}. The value {@code YES} or
+ *       {@code NO} stays, so {@code (using password: YES)} reads as the driver wrote it;</li>
+ *   <li>an SQL statement;</li>
+ *   <li>a Windows path that starts with a drive letter and a backslash;</li>
+ *   <li>an absolute Unix path of two or more segments;</li>
+ *   <li>a host name of two or more labels that ends in {@code com}, {@code net}, {@code org}, {@code io},
+ *       {@code gg}, {@code dev}, {@code me}, {@code co}, {@code xyz}, {@code eu}, {@code de}, {@code uk},
+ *       {@code us}, {@code fr}, {@code nl}, {@code ca}, {@code au}, {@code ru}, {@code br}, {@code pl},
+ *       {@code internal}, {@code local} or {@code lan}. A name that a further label follows, such as the class
+ *       name {@code org.apache.commons.io.FileUtils}, stays.</li>
+ * </ol>
+ *
+ * <p>A host name of one label, such as {@code cache} or {@code localhost}, stays, and so does a host name with
+ * another ending.
  *
  * <p>They come on top of what the SDK already hides by itself in every report: IPv4 and IPv6 addresses, the
  * user name in a home directory path, Discord webhook ids and tokens, the password in a jdbc URL, and the
  * JVM's {@code user.name}.
+ *
+ * <p>Every rule runs in time linear in the length of the text.
  */
 final class Anonymizers {
 
-    /** Each rule as a regular expression and its replacement, applied in this order. */
+    private static final String HOST_ENDINGS =
+        "com|net|org|io|gg|dev|me|co|xyz|eu|de|uk|us|fr|nl|ca|au|ru|br|pl|internal|local|lan";
+
+    /**
+     * Each rule as a regular expression and its replacement, applied in this order.
+     *
+     * <p>The jdbc rule reads to the next whitespace and the placeholders hold a space, so it runs before the rules
+     * that match inside a jdbc URL.
+     */
     static final String[][] RULES = {
-        {"[\\w.-]+@([\\w-]+\\.)+[\\w-]{2,4}", "[email hidden]"},
+        {"jdbc:[^\\s\"']+", "jdbc:[redacted]"},
+        {"(?i)([a-z][a-z0-9+.-]{0,31}://)[^/\\s:@]*:[^@\\s/]+@", "$1[credentials hidden]@"},
+        {"(?<![\\w.-])[\\w.-]+@[\\w-][\\w.-]*\\.[\\w-]{2,4}", "[email hidden]"},
         {"Bearer [A-Za-z0-9._~+/=-]+", "Bearer [token hidden]"},
         {"AKIA[0-9A-Z]{16}", "[aws-key hidden]"},
-        {"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "[uuid hidden]"},
+        {"(?i)\\b[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}\\b", "[uuid hidden]"},
+        {"'[^'\\s]*'@'[^'\\s]*'", "[user hidden]@[host hidden]"},
         {"([?&](?:api_?key|token|secret)=)[^&\\s]+", "$1[redacted]"},
-        {"jdbc:[^\\s\"']+", "jdbc:[redacted]"},
+        {"(?i)((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)[\\w-]{0,20}"
+            + "[\"']?\\s*[=:]\\s*)(?!(?:yes|no)\\b)(?:\"[^\"\\n]*\"|'[^'\\n]*'|[^\\s\"'&,;)]+)", "$1[redacted]"},
         {"(?i)\\b(SELECT|INSERT|UPDATE|DELETE)\\b[^\\n]{0,200}", "[sql hidden]"},
         {"[A-Za-z]:\\\\[^\\s\"']+", "[path hidden]"},
+        {"(?<![\\w./:-])/[\\w.-]+/[\\w./-]*", "[path hidden]"},
+        {"(?i)(?<![\\w.-])[\\w.-]+\\.(?:" + HOST_ENDINGS + ")(?![\\w-]|\\.[\\w-])", "[host hidden]"},
     };
 
     private static final Pattern[] PATTERNS = Arrays.stream(RULES).map(rule -> Pattern.compile(rule[0]))

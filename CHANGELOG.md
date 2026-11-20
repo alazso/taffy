@@ -5,6 +5,30 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Changed
+- The FastStats error trackers of `taffy-metrics` hide more of a message before it leaves the server:
+  - the user name and password of a URI of any scheme: `redis://default:hunter2@cache:6379` is sent as
+    `redis://[credentials hidden]@cache:6379`;
+  - a UUID in upper case or without dashes, as `[uuid hidden]`;
+  - the quoted user and host of a MySQL or MariaDB account: `'mc_prod'@'db.example.net'` is sent as
+    `[user hidden]@[host hidden]`;
+  - the value after `=` or `:` of a key that holds `password`, `passwd`, `pwd`, `secret`, `token`, `api_key`,
+    `access_key` or `private_key`, as in `password=[redacted]`. `(using password: YES)` stays as written;
+  - an absolute Unix path of two or more segments, as `[path hidden]`;
+  - a host name of two or more labels that ends in `com`, `net`, `org`, `io`, `gg`, `dev`, `me`, `co`, `xyz`,
+    `eu`, `de`, `uk`, `us`, `fr`, `nl`, `ca`, `au`, `ru`, `br`, `pl`, `internal`, `local` or `lan`, as
+    `[host hidden]`. A class name such as `org.apache.commons.io.FileUtils` and a host name of one label stay.
+
+  Reports whose messages differ only in such a value now merge into one kind.
+
+### Fixed
+- A jdbc URL with a user name before an `@`, such as `jdbc:mysql://root@db.example.com/game?password=x`, is
+  redacted whole in a FastStats error report. The email rule ran before the jdbc rule and left
+  `/game?password=x` in the message.
+- The email rule of the FastStats error trackers took quadratic time on a long run of letters and overflowed
+  the stack on a long dotted name after an `@`, when a report's message was compared with the kinds its source
+  already holds. Every rule now runs in linear time.
+
 ## [0.2.0] - 2026-11-19
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.
