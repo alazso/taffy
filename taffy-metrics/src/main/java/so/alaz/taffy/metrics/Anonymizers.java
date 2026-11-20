@@ -16,7 +16,8 @@ import java.util.regex.Pattern;
  *   <li>an email address;</li>
  *   <li>a bearer token;</li>
  *   <li>an AWS access key id;</li>
- *   <li>a UUID in either letter case, with its dashes or as 32 hex digits without them;</li>
+ *   <li>a UUID in either letter case, with its dashes, also inside a longer word such as
+ *       {@code data_<uuid>}, or as 32 hex digits without them that no further hex digit touches;</li>
  *   <li>the quoted user and host of a MySQL or MariaDB account, as in {@code 'mc_prod'@'db.example.net'};</li>
  *   <li>an {@code api_key}, {@code apikey}, {@code token} or {@code secret} query value;</li>
  *   <li>the value after {@code =} or {@code :} of a key that holds {@code password}, {@code passwd},
@@ -69,7 +70,8 @@ final class Anonymizers {
         {"(?<![\\w.-])[\\w.-]+@[\\w-][\\w.-]*\\.[\\w-]{2,4}", "[email hidden]"},
         {"Bearer [A-Za-z0-9._~+/=-]+", "Bearer [token hidden]"},
         {"AKIA[0-9A-Z]{16}", "[aws-key hidden]"},
-        {"(?i)\\b[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}\\b", "[uuid hidden]"},
+        {"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+            + "|(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])", "[uuid hidden]"},
         {"'[^'\\s]*'@'[^'\\s]*'", "[user hidden]@[host hidden]"},
         {"([?&](?:api_?key|token|secret)=)[^&\\s]+", "$1[redacted]"},
         {"(?i)((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)[\\w-]{0,20}"

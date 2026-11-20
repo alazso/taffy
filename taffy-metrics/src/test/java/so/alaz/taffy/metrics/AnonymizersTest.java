@@ -117,6 +117,19 @@ class AnonymizersTest {
     }
 
     @Test
+    void aUuidNextToAWordCharacterIsHidden() {
+        assertThat(apply(UUID, "Failed to save data_123e4567-e89b-42d3-a456-426614174000"))
+            .isEqualTo("Failed to save data_[uuid hidden]");
+        assertThat(apply(UUID, "cooldown_123e4567-e89b-42d3-a456-426614174000_daily missing"))
+            .isEqualTo("cooldown_[uuid hidden]_daily missing");
+        assertThat(apply(UUID, "player123e4567-e89b-42d3-a456-426614174000 left"))
+            .isEqualTo("player[uuid hidden] left");
+        assertThat(apply(UUID, "key shop:123e4567-e89b-42d3-a456-426614174000x"))
+            .isEqualTo("key shop:[uuid hidden]x");
+        assertThat(apply(UUID, "data_123e4567e89b42d3a456426614174000.yml")).isEqualTo("data_[uuid hidden].yml");
+    }
+
+    @Test
     void aHexRunOfAnotherLengthIsLeftAsWritten() {
         assertThat(apply(UUID, "commit 3f786850e387550fdab836ed7e6dc881de23001b"))
             .isEqualTo("commit 3f786850e387550fdab836ed7e6dc881de23001b");
