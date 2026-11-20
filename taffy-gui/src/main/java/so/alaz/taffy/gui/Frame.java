@@ -144,15 +144,16 @@ public final class Frame<S> {
             }
             for (int slot : item.slots()) {
                 place(slot, icon, spec.handler() == null ? null
-                    : new Button(icon, spec.clicks(), item.id(), spec.exclusive(), spec.handler()));
+                    : new Button(icon, spec.clicks(), item.id(), true, spec.exclusive(), spec.handler()));
             }
         }
     }
 
     /**
      * Fills the first {@link #capacity()} list slots with the page of entries nearest {@code requestedPage}. A row's
-     * button key is {@code row:<slot>}. Every entry of the list exists before the call;
-     * {@link #list(int, int, IntFunction)} builds only the entries of the page shown.
+     * button key is {@code entry:<key>} for an entry with an {@link Entry#key()} and {@code row:<slot>} for one
+     * without. Every entry of the list exists before the call; {@link #list(int, int, IntFunction)} builds only the
+     * entries of the page shown.
      *
      * @param entries every entry of the list, in order
      * @param requestedPage the index of the page asked for, counting from 0
@@ -166,7 +167,8 @@ public final class Frame<S> {
     /**
      * Fills the first {@link #capacity()} list slots with the page nearest {@code requestedPage} of a list of
      * {@code count} entries, and asks {@code entryAt} only for the entries on that page, each once, in order. A row's
-     * button key is {@code row:<slot>}.
+     * button key is {@code entry:<key>} for an entry with an {@link Entry#key()} and {@code row:<slot>} for one
+     * without.
      *
      * @param count the number of entries in the list
      * @param requestedPage the index of the page asked for, counting from 0
@@ -183,8 +185,9 @@ public final class Frame<S> {
         for (int index = page.from(); index < page.to(); index++) {
             int slot = pager.slots().get(index - page.from());
             Entry entry = Objects.requireNonNull(entryAt.apply(index), "entry " + index);
-            place(slot, entry.icon(), entry.handler() == null ? null
-                : new Button(entry.icon(), entry.clicks(), "row:" + slot, entry.exclusive(), entry.handler()));
+            String key = entry.key();
+            place(slot, entry.icon(), entry.handler() == null ? null : new Button(entry.icon(), entry.clicks(),
+                key == null ? "row:" + slot : "entry:" + key, key != null, entry.exclusive(), entry.handler()));
         }
         return page;
     }
@@ -428,12 +431,21 @@ public final class Frame<S> {
     /**
      * One list row.
      *
+     * <p>A click on a list slot is dropped for the click debounce window after a redraw put another entry there. With
+     * a key, another entry is one with another key, so a row that redraws with another icon, such as a countdown or
+     * an animation, stays clickable, and a row that moved to another slot keeps its click debounce. Without a key,
+     * another entry is one whose icon differs from the one the slot showed, so each redraw that changes the icon
+     * drops the clicks of the window after it.
+     *
      * @param icon what the row shows
      * @param handler what a click does, or {@code null} for display only
      * @param clicks the click types the row acts on; only those in {@link ClickGuard#ANY_PLAIN} ever reach it
      * @param exclusive whether the row is exclusive, as {@link #exclusively()} states
+     * @param key what names the thing the row acts on among the entries of the menu, such as the id of a listing,
+     *     the same on every render that shows it; or {@code null} for none
      */
-    public record Entry(Icon icon, @Nullable ClickHandler handler, Set<ClickType> clicks, boolean exclusive) {
+    public record Entry(Icon icon, @Nullable ClickHandler handler, Set<ClickType> clicks, boolean exclusive,
+                        @Nullable String key) {
 
         /**
          * Checks the icon and copies the clicks.
@@ -443,6 +455,19 @@ public final class Frame<S> {
         public Entry {
             Objects.requireNonNull(icon, "icon");
             clicks = Set.copyOf(clicks);
+        }
+
+        /**
+         * Creates a row with no key.
+         *
+         * @param icon what the row shows
+         * @param handler what a click does, or {@code null} for display only
+         * @param clicks the click types the row acts on
+         * @param exclusive whether the row is exclusive
+         * @throws NullPointerException if {@code icon}, {@code clicks} or a click is {@code null}
+         */
+        public Entry(Icon icon, @Nullable ClickHandler handler, Set<ClickType> clicks, boolean exclusive) {
+            this(icon, handler, clicks, exclusive, null);
         }
 
         /**
@@ -476,7 +501,19 @@ public final class Frame<S> {
          * @return a copy that is exclusive
          */
         public Entry exclusively() {
-            return new Entry(icon, handler, clicks, true);
+            return new Entry(icon, handler, clicks, true, key);
+        }
+
+        /**
+         * Gives this row with a key.
+         *
+         * @param stable what names the thing the row acts on among the entries of the menu, the same on every
+         *     render that shows it, such as the id of a listing
+         * @return a copy with the key set
+         * @throws NullPointerException if {@code stable} is {@code null}
+         */
+        public Entry key(String stable) {
+            return new Entry(icon, handler, clicks, exclusive, Objects.requireNonNull(stable, "stable"));
         }
     }
 }

@@ -5,6 +5,7 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -27,6 +28,7 @@ public final class MenuSession<S> implements InventoryHolder {
     private int generation;
     private long loadToken;
     private Map<Integer, Button> buttons = Map.of();
+    private Map<Integer, Long> changedAt = Map.of();
     private @Nullable Inventory inventory;
     private @Nullable Canvas canvas;
     private boolean held;
@@ -239,9 +241,37 @@ public final class MenuSession<S> implements InventoryHolder {
         this.canvas = surface.canvas();
     }
 
-    void rendered(Map<Integer, Button> buttons) {
+    /**
+     * Takes the buttons of a render that ended at the reading {@code now} of the menus' nanosecond time source. A slot
+     * whose button is another one than before is remembered as changed at {@code now}: a keyed button is another one
+     * when its key differs, a button that is not keyed when its icon differs, and a button in a slot that had none is
+     * always another one. Any other slot keeps the reading it had.
+     */
+    void rendered(Map<Integer, Button> buttons, long now) {
+        Map<Integer, Long> changed = new HashMap<>();
+        buttons.forEach((slot, button) -> {
+            Long at = same(this.buttons.get(slot), button) ? changedAt.get(slot) : Long.valueOf(now);
+            if (at != null) {
+                changed.put(slot, at);
+            }
+        });
         this.buttons = Map.copyOf(buttons);
+        this.changedAt = changed;
         this.generation++;
+    }
+
+    /**
+     * Gives the reading of the menus' nanosecond time source at the render that last put another button in the slot.
+     *
+     * @return the reading, or {@code null} for a slot with no button
+     */
+    @Nullable Long changedAt(int slot) {
+        return changedAt.get(slot);
+    }
+
+    private static boolean same(@Nullable Button before, Button after) {
+        return before != null && before.keyed() == after.keyed() && before.key().equals(after.key())
+            && (after.keyed() || before.icon().equals(after.icon()));
     }
 
     long nextLoad() {

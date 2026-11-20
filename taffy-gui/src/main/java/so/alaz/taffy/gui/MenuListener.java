@@ -33,8 +33,11 @@ import java.util.logging.Logger;
  *
  * <p>Only a click whose type is one of {@link ClickGuard#ANY_PLAIN}, by the viewer of an open session, on a raw slot
  * of the menu inventory that holds a button accepting that click type, reaches the button. The checks then run in this
- * order: the open arming (no click within the click debounce window of the menu opening), the busy check (an exclusive
- * button is dropped while {@link MenuSession#busy()}), and the per-button click debounce. An accepted click plays
+ * order: the open arming (no click within the click debounce window of the menu opening), the redraw arming (no click
+ * within that window of a redraw that put another button in the slot: one with another key, or for a list entry with
+ * no {@link Frame.Entry#key()} one with another icon), the busy check (an exclusive button is dropped while
+ * {@link MenuSession#busy()}), and the per-button click debounce, which follows the key of a list entry that has one
+ * and the slot of one that has none. An accepted click plays
  * {@link Cue#CLICK}. When the handler of an exclusive button returns with a load it started through
  * {@link Menus#load} still in flight, the session stays busy until that load ends. A hold the handler took through
  * {@link MenuSession#busy(boolean)} is left as the handler set it. A handler that throws a {@link RuntimeException}
@@ -98,6 +101,10 @@ final class MenuListener implements Listener {
             return;
         }
         if (!menus.debounce().settled(session.openedAt())) {
+            return;
+        }
+        Long changed = session.changedAt(raw);
+        if (changed != null && !menus.debounce().settled(changed)) {
             return;
         }
         if (button.exclusive() && session.busy()) {

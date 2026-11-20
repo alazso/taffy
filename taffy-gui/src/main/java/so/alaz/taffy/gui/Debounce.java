@@ -8,7 +8,8 @@ import java.util.function.Supplier;
 
 /**
  * Drops a second accepted click on the same button within the window, and any click within the window of a menu
- * opening. Only accepted clicks move the window. The window is read on every check. Time is read in nanoseconds from
+ * opening or of a redraw that put another button in the clicked slot. Only accepted clicks move the window of a
+ * button. The window is read on every check. Time is read in nanoseconds from
  * a source that never steps back, such as {@link System#nanoTime()}, and only the difference of two readings is used.
  */
 final class Debounce {
@@ -37,7 +38,10 @@ final class Debounce {
         return true;
     }
 
-    /** Tells whether the window has passed since a menu opened at the reading {@code since} of the time source. */
+    /**
+     * Tells whether the window has passed since the reading {@code since} of the time source, at which a menu opened
+     * or a redraw put another button in a slot.
+     */
     boolean settled(long since) {
         return nanos.getAsLong() - since >= window.get().toNanos();
     }

@@ -929,7 +929,7 @@ public final class Menus {
         if (canvas == null) {
             throw new IllegalStateException("the " + session.id() + " menu has no inventory yet");
         }
-        session.rendered(frame.paint(canvas, filler));
+        session.rendered(frame.paint(canvas, filler), nanos.getAsLong());
     }
 
     private void onViewerThread(Player viewer, String method, String instead) {

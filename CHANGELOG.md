@@ -35,8 +35,25 @@ All notable changes to Taffy are documented here. This project follows
   (every key is held, and the text is one line), which a source overrides to leave optional text out, such as lore
   no file holds, and to give lore one component per line. `TextSource.of(Messages)` is the source over Taffy's
   lang files, and `Menus.Parts.of` takes either a `TextSource` or the `Messages` themselves.
+- `Frame.Entry.key(String)` gives a list row a stable key, such as the id of the listing it shows, and
+  `Frame.Entry.key()` reads it, `null` for none. The key names the row across redraws: a keyed row that a redraw
+  left in its slot stays clickable whatever its icon shows, so a row with a countdown or an animation takes
+  clicks, a row whose key is new to its slot drops the clicks of the click debounce window after that redraw,
+  and the per-button click debounce follows the key, so a row that moved to another slot is still debounced.
+  `Frame.Entry` has `key` as a fifth record component; `Entry.click`, `Entry.display` and the four-argument
+  constructor give a row with no key, and `exclusively()` keeps the key.
 
 ### Changed
+- Breaking: a click on a menu slot is dropped for the click debounce window (250 ms by default) after a redraw
+  put another button in that slot, as a click within that window of the menu opening already is. Before, a click
+  that arrived just after `Menus.rerender` or a load redrew the menu ran the handler of whatever the slot showed
+  by then, so when a sold listing shifted the rows up, a viewer aiming at one listing bought the next. Another
+  button is a list row with another `Frame.Entry.key`, for a row with no key a row with another icon, a button
+  of another layout item, or any button in a slot that had none; a layout action that redraws with other text
+  or another icon keeps taking clicks. A list row with no key whose icon changes on every redraw, such as an
+  animated one, therefore drops the clicks of the window after each redraw, and a record pattern over
+  `Frame.Entry` needs a fifth component. Give each clickable row a key that stays the same while the row shows
+  the same thing, as in `Frame.Entry.click(icon, handler).key(listing.id().toString())`.
 - Breaking: `Menus.register` and `Menus.reload` throw an `IllegalArgumentException` for a material that is not an
   item a slot can show, air included: the material of an `ItemLayout` (shown or not), the `filler` of a
   `MenuLayout`, the `emptyMaterial` of a `PagerLayout`, and, in `register`, the `filler` and `loadingItem` of the

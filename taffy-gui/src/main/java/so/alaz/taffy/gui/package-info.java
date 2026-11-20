@@ -45,8 +45,9 @@
  *
  * <p>The menus register their listener as a listener of the plugin when they are built, so no menu opens without
  * it and the plugin registers nothing. It cancels every click and drag in a menu view, passes a plain click by the
- * menu's viewer to the button in the clicked slot once the menu is past its opening window, the button is not held
- * back by a busy session and its own click debounce passed, and deletes menu copies it finds outside menus. A close
+ * menu's viewer to the button in the clicked slot once the menu is past its opening window, the slot is past the
+ * window of the redraw that last put another button in it, the button is not held back by a busy session and its own
+ * click debounce passed, and deletes menu copies it finds outside menus. A close
  * ends the session and a quit forgets what the menus and prompts kept for the player.
  *
  * <p>A menu loads slow data through {@code Menus.load}: the source completes on any thread, the value is applied on
