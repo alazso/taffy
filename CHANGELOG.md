@@ -3,6 +3,8 @@
 All notable changes to Taffy are documented here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## [Unreleased]
+
 ## [0.2.2] - 2026-11-20
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.
