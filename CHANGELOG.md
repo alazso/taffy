@@ -5,6 +5,12 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `YamlFileProvider.Builder.notLoadedMessage(String)` sets the message of the `savedRestartRequired` result that
+  `apply` returns when the file was saved and the activation did not put the values in effect, so the editor can
+  name the plugin's reload command. A provider built without it keeps the message "The values were saved, but
+  the plugin could not load them, so they are not in effect."
+
 ### Fixed
 - `YamlFileProvider.apply` compares the whole proposal with the values the file held when the provider was built,
   so an apply that changes only live fields still returns `savedRestartRequired` naming every `restartRequired()`

@@ -304,6 +304,49 @@ class YamlFileProviderTest {
     }
 
     @Test
+    void aFailedActivationCarriesThePluginsNotLoadedMessage() throws Exception {
+        String message = "The values were saved, but Example could not load them. They take effect after /example "
+            + "reload or a restart.";
+        IllegalStateException failure = new IllegalStateException("reload failed");
+        YamlFileProvider refusing = YamlFileProvider.builder(file, mapper(), () -> false)
+            .notLoadedMessage(message).build(log.logger);
+        YamlFileProvider throwing = YamlFileProvider.builder(file, mapper(), () -> {
+            throw failure;
+        }).notLoadedMessage(message).build(log.logger);
+
+        ApplyResult refused = refusing.apply(changing(refusing, "greeting", "Hi", ApplyMode.LIVE));
+        ApplyResult thrown = throwing.apply(changing(throwing, "greeting", "Hey", ApplyMode.LIVE));
+
+        assertThat(refused.status()).isEqualTo(ApplyStatus.SAVED_RESTART_REQUIRED);
+        assertThat(refused.message()).isEqualTo(message);
+        assertThat(refused.restartRequired()).isEmpty();
+        assertThat(thrown.status()).isEqualTo(ApplyStatus.SAVED_RESTART_REQUIRED);
+        assertThat(thrown.message()).isEqualTo(message);
+        assertThat(log.lines()).containsExactly(LOAD_FAILED);
+    }
+
+    @Test
+    void aFailedActivationCarriesTheDefaultMessageWhenThePluginSetsNone() throws Exception {
+        YamlFileProvider failing = YamlFileProvider.builder(file, mapper(), () -> false).build(log.logger);
+
+        ApplyResult result = failing.apply(changing(failing, "greeting", "Hi", ApplyMode.LIVE));
+
+        assertThat(result.message()).isEqualTo("The values were saved, but the plugin could not load them, so they "
+            + "are not in effect.");
+    }
+
+    @Test
+    void thePluginsNotLoadedMessageLeavesTheRestartOnlyMessageAlone() throws Exception {
+        YamlFileProvider messaged = YamlFileProvider.builder(file, mapper(), () -> true)
+            .notLoadedMessage("Run /example reload.").build(log.logger);
+
+        ApplyResult result = messaged.apply(changing(messaged, "mode", "safe", ApplyMode.RESTART));
+
+        assertThat(result.message()).isEqualTo("Saved. Settings marked Restart required take effect after a server "
+            + "restart; all other changes are active.");
+    }
+
+    @Test
     void neverReportsAppliedWhenTheActivationReturnsNull() throws Exception {
         YamlFileProvider failing = providerActivatedBy(() -> null);
 
@@ -897,6 +940,8 @@ class YamlFileProviderTest {
         YamlFileProvider.Builder builder = YamlFileProvider.builder(file, mapper, activation);
         assertThatThrownBy(() -> builder.rules(null))
             .isInstanceOf(NullPointerException.class).hasMessage("rules");
+        assertThatThrownBy(() -> builder.notLoadedMessage(null))
+            .isInstanceOf(NullPointerException.class).hasMessage("message");
         assertThatThrownBy(() -> builder.build(null))
             .isInstanceOf(NullPointerException.class).hasMessage("logger");
     }

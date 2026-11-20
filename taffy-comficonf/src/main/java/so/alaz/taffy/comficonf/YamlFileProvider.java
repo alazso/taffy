@@ -55,6 +55,7 @@ import java.util.logging.Logger;
  * interrupted all mean the values are not in effect. A failure the activation threw and a {@code callSync} that
  * timed out or was interrupted are each logged as a warning with its stack and never reported to the plugin's
  * {@code ErrorReports}, because the message of a failure of the plugin's loader can quote a configuration value.
+ * The {@code savedRestartRequired} result then carries the text of {@link Builder#notLoadedMessage}.
  * {@code holder::reload} of a {@link so.alaz.taffy.config.ConfigHolder} serves as the activation.
  *
  * <p>The result is true only when the schema and the plugin's rules accept no more than the loader the activation
@@ -123,6 +124,7 @@ public final class YamlFileProvider implements ConfigProvider {
     private final Callable<Boolean> activation;
     private final SectionMapper mapper;
     private final Function<ConfigValues, ValidationResult> rules;
+    private final String notLoadedMessage;
     private final @Nullable ConfigValues startup;
 
     private YamlFileProvider(Builder builder, Logger logger) {
@@ -133,6 +135,7 @@ public final class YamlFileProvider implements ConfigProvider {
         this.activation = builder.activation;
         this.mapper = builder.mapper;
         this.rules = builder.rules;
+        this.notLoadedMessage = builder.notLoadedMessage;
         this.startup = readStartupValues();
     }
 
@@ -233,7 +236,7 @@ public final class YamlFileProvider implements ConfigProvider {
             }
             logLoadFailed(e);
         }
-        return ApplyResult.savedRestartRequired(newRevision, NOT_LOADED);
+        return ApplyResult.savedRestartRequired(newRevision, notLoadedMessage);
     }
 
     private void logLoadFailed(Throwable failure) {
@@ -380,6 +383,7 @@ public final class YamlFileProvider implements ConfigProvider {
         private final SectionMapper mapper;
         private final Callable<Boolean> activation;
         private Function<ConfigValues, ValidationResult> rules = proposed -> ValidationResult.ok();
+        private String notLoadedMessage = NOT_LOADED;
 
         private Builder(Path file, SectionMapper mapper, Callable<Boolean> activation) {
             this.file = Objects.requireNonNull(file, "file");
@@ -400,6 +404,21 @@ public final class YamlFileProvider implements ConfigProvider {
          */
         public Builder rules(Function<ConfigValues, ValidationResult> rules) {
             this.rules = Objects.requireNonNull(rules, "rules");
+            return this;
+        }
+
+        /**
+         * Sets the message of the {@code savedRestartRequired} result that {@link YamlFileProvider#apply} returns
+         * when the file was saved and the activation did not put the values in effect. The editor shows it to the
+         * server owner, so it names what makes the plugin load the file, such as the plugin's reload command. Without
+         * this call the message is "The values were saved, but the plugin could not load them, so they are not in
+         * effect."
+         *
+         * @param message the text shown to the server owner; it holds no configuration value
+         * @return this builder
+         */
+        public Builder notLoadedMessage(String message) {
+            this.notLoadedMessage = Objects.requireNonNull(message, "message");
             return this;
         }
 
