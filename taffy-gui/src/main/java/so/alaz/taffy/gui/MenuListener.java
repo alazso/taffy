@@ -40,8 +40,10 @@ import java.util.logging.Logger;
  * {@link MenuSession#busy()}), and the per-button click debounce, which follows the key of a list entry that has one
  * and the slot of one that has none. An accepted click plays
  * {@link Cue#CLICK}. When the handler of an exclusive button returns with a load it started through
- * {@link Menus#load} still in flight, the session stays busy until that load ends. A hold the handler took through
- * {@link MenuSession#busy(boolean)} is left as the handler set it. A handler that throws a {@link RuntimeException}
+ * {@link Menus#load} still in flight, the session stays busy until that load ends, and the end of a load another
+ * button started does not release it. A hold the handler took through {@link MenuSession#busy(boolean)} is left as
+ * the handler set it, and a load the same handler started releases it. A handler that throws a
+ * {@link RuntimeException}
  * leaves the event cancelled, is logged with its stack, reported to {@link ErrorReports} under {@code gui.click},
  * clears {@link MenuSession#busy()} and plays {@link Cue#FAIL}.
  *
@@ -129,10 +131,11 @@ final class MenuListener implements Listener {
         }
         menus.feedback().play(player, Cue.CLICK);
         long load = session.loadToken();
+        session.step();
         try {
             handler.click(new Click(session, player, click, raw));
             if (button.exclusive() && session.loadToken() != load && session.loading()) {
-                session.guard();
+                session.guard(session.loadToken());
             }
         } catch (RuntimeException failure) {
             logger.log(Level.WARNING, "gui: " + session.id() + " button " + button.key() + " failed for "
@@ -140,6 +143,8 @@ final class MenuListener implements Listener {
             errors.report("gui.click", failure);
             session.busy(false);
             menus.feedback().play(player, Cue.FAIL);
+        } finally {
+            session.step();
         }
     }
 

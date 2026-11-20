@@ -706,14 +706,25 @@ final class MenuLifecycleTest {
 
     @Test
     void aLoadAppliesOnTheEntityThreadAndDrawsAgainClearingBusy() {
-        Fixture fixture = new Fixture(folder);
-        fixture.session().busy(true);
+        Fixture fixture = new Fixture(folder, true);
+        assertThat(fixture.session().busy()).isTrue();
 
         fixture.first.complete("ready");
 
         assertThat(fixture.session().data()).isEqualTo("ready");
         assertThat(fixture.session().busy()).isFalse();
         assertThat(fixture.viewer.lore(0)).containsExactly("ready");
+    }
+
+    @Test
+    void aLoadLeavesAHoldTakenAfterTheOpenedStepThatStartedIt() {
+        Fixture fixture = new Fixture(folder);
+        fixture.session().busy(true);
+
+        fixture.first.complete("ready");
+
+        assertThat(fixture.session().data()).isEqualTo("ready");
+        assertThat(fixture.session().busy()).isTrue();
     }
 
     @Test
@@ -744,8 +755,8 @@ final class MenuLifecycleTest {
 
     @Test
     void aFailedLoadIsLoggedReportedToldAndClearsBusy() {
-        Fixture fixture = new Fixture(folder);
-        fixture.session().busy(true);
+        Fixture fixture = new Fixture(folder, true);
+        assertThat(fixture.session().busy()).isTrue();
         IllegalStateException failure = new IllegalStateException("database down");
 
         fixture.first.completeExceptionally(failure);
@@ -793,8 +804,8 @@ final class MenuLifecycleTest {
 
     @Test
     void aCancelledLoadIsNoFailureAndClearsBusy() {
-        Fixture fixture = new Fixture(folder);
-        fixture.session().busy(true);
+        Fixture fixture = new Fixture(folder, true);
+        assertThat(fixture.session().busy()).isTrue();
 
         fixture.first.cancel(false);
 
@@ -1203,8 +1214,16 @@ final class MenuLifecycleTest {
         final MenuHarness.Viewer viewer;
 
         Fixture(Path folder) {
+            this(folder, false);
+        }
+
+        // With hold, the opened step holds the session busy before it starts the load.
+        Fixture(Path folder, boolean hold) {
             harness = new MenuHarness(folder, MenuSettings.DEFAULTS, Map.of(PLAIN.id(), PLAIN_LAYOUT));
-            menu.opened = session -> harness.menus.load(session, first, (s, value) -> s.data(value));
+            menu.opened = session -> {
+                session.busy(hold);
+                harness.menus.load(session, first, (s, value) -> s.data(value));
+            };
             menu.render = frame -> frame.action("show", Frame.Spec.display().lore(frame.session().data() == null
                 ? List.of() : List.of(Component.text(String.valueOf(frame.session().data())))));
             harness.menus.register(menu);

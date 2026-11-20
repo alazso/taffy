@@ -417,9 +417,9 @@ public final class Frame<S> {
 
         /**
          * Gives this spec as exclusive: a click on it is dropped while the session is {@link MenuSession#busy()}, and
-         * a load its handler starts through {@link Menus#load} keeps the session busy until the load applies, fails or
-         * is cancelled, with no call in the handler. A handler whose work runs outside {@code Menus.load} holds the
-         * session itself through {@link MenuSession#busy(boolean)}.
+         * a load its handler starts through {@link Menus#load} keeps the session busy until that load applies, fails or
+         * is cancelled, with no call in the handler; a load another button starts does not end it. A handler whose
+         * work runs outside {@code Menus.load} holds the session itself through {@link MenuSession#busy(boolean)}.
          *
          * @return a copy that is exclusive
          */
@@ -494,9 +494,9 @@ public final class Frame<S> {
 
         /**
          * Gives this row as exclusive: a click on it is dropped while the session is {@link MenuSession#busy()}, and
-         * a load its handler starts through {@link Menus#load} keeps the session busy until the load applies, fails or
-         * is cancelled, with no call in the handler. A handler whose work runs outside {@code Menus.load} holds the
-         * session itself through {@link MenuSession#busy(boolean)}.
+         * a load its handler starts through {@link Menus#load} keeps the session busy until that load applies, fails or
+         * is cancelled, with no call in the handler; a load another button starts does not end it. A handler whose
+         * work runs outside {@code Menus.load} holds the session itself through {@link MenuSession#busy(boolean)}.
          *
          * @return a copy that is exclusive
          */

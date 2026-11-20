@@ -74,6 +74,12 @@ All notable changes to Taffy are documented here. This project follows
   animated one, therefore drops the clicks of the window after each redraw, and a record pattern over
   `Frame.Entry` needs a fifth component. Give each clickable row a key that stays the same while the row shows
   the same thing, as in `Frame.Entry.click(icon, handler).key(listing.id().toString())`.
+- Breaking: a load clears `MenuSession.busy()` only for the hold that belongs to it: the exclusive button whose
+  handler started the load, or a `busy(true)` taken in the same handler or `Menu.opened` as the `Menus.load` call.
+  It clears that hold also when a later load started meanwhile. Before, the end of the latest load of a session
+  released every hold, so a refresh or a page turn that ended while a claim held the session with `busy(true)`
+  let the same claim run a second time. A handler that takes `busy(true)` for work outside `Menus.load` and relied
+  on a later load to release it calls `session.busy(false)` when its work ends.
 - Breaking: `Menus.register` and `Menus.reload` throw an `IllegalArgumentException` for a material that is not an
   item a slot can show, air included: the material of an `ItemLayout` (shown or not), the `filler` of a
   `MenuLayout`, the `emptyMaterial` of a `PagerLayout`, and, in `register`, the `filler` and `loadingItem` of the
@@ -158,12 +164,13 @@ All notable changes to Taffy are documented here. This project follows
 - `Frame.Spec.exclusively()`, `Frame.Entry.exclusively()` and the footer's refresh guard their handler with no
   `session.busy(true)` in it. When the handler of an exclusive button returns with a load it started through
   `Menus.load` still in flight, the session stays busy until that load applies, fails or is cancelled, and every
-  click on an exclusive button is dropped meanwhile. Before, `exclusively()` did nothing unless the handler called
-  `MenuSession.busy(true)` itself, so a buy button without that call ran a second purchase once the 250 ms
-  debounce passed. A handler that calls `busy(true)` keeps working: its hold lasts past the handler's return
-  until `busy(false)`, a load that ends or a handler that throws, which is how a handler whose work runs outside
-  `Menus.load`, such as a claim that calls back on the viewer's thread, holds the session and releases it in the
-  callback. `MenuSession.busy()` still reads `false` inside the handler of the first click.
+  click on an exclusive button is dropped meanwhile, whatever load another button starts or ends in that time.
+  Before, `exclusively()` did nothing unless the handler called `MenuSession.busy(true)` itself, so a buy button
+  without that call ran a second purchase once the 250 ms debounce passed. A handler that calls `busy(true)` keeps
+  working: its hold lasts past the handler's return until `busy(false)`, the end of a load the same handler
+  started, or a handler that throws, which is how a handler whose work runs outside `Menus.load`, such as a claim
+  that calls back on the viewer's thread, holds the session and releases it in the callback. `MenuSession.busy()`
+  still reads `false` inside the handler of the first click.
 - The menu listener sends a player's inventory again, through `Player.updateInventory()` on the next tick on the
   player's entity thread, after it cancelled the player's shift-click in a menu view and after the viewer's menu
   closed, and `Menus.shutdown` sends it to each viewer whose menu it closes. The client moves a stack on its own

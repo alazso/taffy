@@ -200,6 +200,134 @@ final class ExclusiveClickTest {
         assertThat(tidies).hasValue(1);
     }
 
+    private void plainLoads() {
+        ClickHandler buy = click -> {
+            buys.incrementAndGet();
+            harness.menus.load(session(), next(), (s, value) -> s.data(value));
+        };
+        menu.render = frame -> {
+            MenuSession<Integer> session = frame.session();
+            frame.action("buy", Frame.Spec.click(buy).exclusively());
+            frame.action("claim", Frame.Spec.click(click -> {
+                session.busy(true);
+                claims.add(() -> session.busy(false));
+            }).exclusively());
+            frame.action("tidy", Frame.Spec.click(click -> {
+                session.busy(true);
+                tidies.incrementAndGet();
+                harness.menus.load(session, next(), (s, value) -> s.data(value));
+            }).exclusively());
+            frame.action("crash", Frame.Spec.click(click -> {
+                tidies.incrementAndGet();
+                harness.menus.load(session, next(), (s, value) -> s.data(value));
+                session.busy(true);
+            }).exclusively());
+            frame.action("plain", Frame.Spec.click(click ->
+                harness.menus.load(session, next(), (s, value) -> s.data(value))));
+        };
+        harness.menus.rerender(session());
+        harness.advance(Sample.SETTLED);
+    }
+
+    @Test
+    void aLoadAnotherButtonStartedDoesNotReleaseTheLoadOfAnExclusiveButton() {
+        plainLoads();
+        click(10);
+        click(14);
+
+        loads.get(1).complete("b");
+
+        assertThat(session().data()).isEqualTo("b");
+        assertThat(session().busy()).isTrue();
+        click(10);
+        assertThat(buys).hasValue(1);
+
+        loads.get(0).complete("a");
+
+        assertThat(session().busy()).isFalse();
+        assertThat(session().data()).isEqualTo("b");
+        click(10);
+        assertThat(buys).hasValue(2);
+    }
+
+    @Test
+    void anOvertakenLoadOfAnExclusiveButtonReleasesTheSessionWhenItFailsOrIsCancelled() {
+        plainLoads();
+        click(10);
+        click(14);
+
+        loads.get(0).completeExceptionally(new IllegalStateException("down"));
+
+        assertThat(session().busy()).isFalse();
+        assertThat(viewer.said()).isEmpty();
+        click(10);
+        click(14);
+        assertThat(session().busy()).isTrue();
+        loads.get(2).cancel(false);
+        assertThat(session().busy()).isFalse();
+    }
+
+    @Test
+    void aLoadAnotherButtonStartedDoesNotReleaseAHandlersOwnHold() {
+        plainLoads();
+        click(11);
+        click(14);
+
+        loads.getFirst().complete("b");
+
+        assertThat(session().busy()).isTrue();
+        click(11);
+        assertThat(claims).hasSize(1);
+
+        claims.getFirst().run();
+
+        assertThat(session().busy()).isFalse();
+        click(11);
+        assertThat(claims).hasSize(2);
+    }
+
+    @Test
+    void aHoldTakenInTheHandlerThatStartsALoadIsReleasedByThatLoad() {
+        plainLoads();
+
+        click(12);
+        assertThat(session().busy()).isTrue();
+        click(14);
+        loads.get(1).complete("other");
+        assertThat(session().busy()).isTrue();
+        loads.get(0).complete("held before the load");
+
+        assertThat(session().busy()).isFalse();
+
+        click(13);
+        assertThat(session().busy()).isTrue();
+        loads.get(2).completeExceptionally(new IllegalStateException("down"));
+
+        assertThat(session().busy()).isFalse();
+        assertThat(tidies).hasValue(2);
+    }
+
+    @Test
+    void aHoldTakenInTheOpenedStepThatStartsALoadIsReleasedByThatLoadAndNotByALaterHandlersLoad() {
+        menu.opened = session -> {
+            session.busy(true);
+            harness.menus.load(session, next(), (s, value) -> s.data(value));
+        };
+        plainLoads();
+        MenuHarness.Viewer sam = harness.viewer("Sam");
+        harness.open(sam, JOBS.id());
+        harness.advance(Sample.SETTLED);
+        MenuSession<Integer> opened = session();
+        assertThat(opened.busy()).isTrue();
+
+        sam.click(14, ClickType.LEFT);
+        loads.get(1).complete("other");
+        assertThat(opened.busy()).isTrue();
+        loads.get(0).complete("first");
+
+        assertThat(opened.busy()).isFalse();
+    }
+
     @Test
     void anExclusiveHandlerThatThrowsAfterStartingALoadLeavesTheSessionFree() {
         click(13);

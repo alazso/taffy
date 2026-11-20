@@ -33,6 +33,11 @@ public final class MenuSession<S> implements InventoryHolder {
     private @Nullable Canvas canvas;
     private boolean held;
     private boolean guarded;
+    private long holdLoad;
+    private long guardLoad;
+    private long step;
+    private long holdStep;
+    private long loadStep;
     private boolean loading;
     private boolean closed;
     private boolean handoff;
@@ -165,9 +170,9 @@ public final class MenuSession<S> implements InventoryHolder {
 
     /**
      * Tells whether an exclusive action is in flight, during which a click on an exclusive button is dropped. The
-     * session is busy while the load the handler of an exclusive button started has not ended, and while a handler
-     * holds it through {@link #busy(boolean)}. Inside a handler it is {@code false} unless one of the two holds from
-     * an earlier click.
+     * session is busy while the load the handler of an exclusive button started has not ended, whatever other load
+     * started or ended meanwhile, and while a handler holds it through {@link #busy(boolean)}. Inside a handler it is
+     * {@code false} unless one of the two holds from an earlier click.
      *
      * @return whether the session is busy
      */
@@ -181,21 +186,42 @@ public final class MenuSession<S> implements InventoryHolder {
      * neither: the session is busy until that load ends. A handler whose work runs outside {@code Menus.load}, such
      * as a claim that calls back, calls {@code busy(true)} before it starts the work, and the hold lasts past the
      * handler's return until {@code busy(false)} is called on the viewer's entity thread, such as in that callback.
-     * {@code busy(false)} also releases a session that is busy for a load. A load that applies, fails or is cancelled
-     * and a handler that throws release the hold too.
+     * {@code busy(false)} also releases a session that is busy for a load, and a handler that throws releases the
+     * hold too.
+     *
+     * <p>A hold belongs to a load when both start in one step: the same run of a {@link ClickHandler}, the same
+     * {@link Menu#opened(MenuSession, Player)}, or the time between two of those. Such a hold is released when that
+     * load applies, fails or is cancelled, also when a later load started meanwhile, so a handler that calls
+     * {@code busy(true)} and then {@code Menus.load} calls no {@code busy(false)}. A hold with no load in its step is
+     * released only by {@code busy(false)} or a handler that throws: a load another button or a timer starts does not
+     * release it.
      *
      * @param busy {@code true} to hold the session, {@code false} to release it
      */
     public void busy(boolean busy) {
         this.held = busy;
-        if (!busy) {
+        if (busy) {
+            this.holdStep = step;
+            this.holdLoad = loading && loadStep == step ? loadToken : 0;
+        } else {
+            this.holdLoad = 0;
             this.guarded = false;
+            this.guardLoad = 0;
         }
     }
 
-    /** Keeps the session busy until the load in flight ends or {@link #busy(boolean)} releases it. */
-    void guard() {
+    /** Keeps the session busy until the load with the token ends or {@link #busy(boolean)} releases it. */
+    void guard(long token) {
         this.guarded = true;
+        this.guardLoad = token;
+    }
+
+    /**
+     * Ends a step: a hold and a load belong together only when both started between two calls. The listener calls it
+     * around each handler, and the menus after {@link Menu#opened(MenuSession, Player)}.
+     */
+    void step() {
+        step++;
     }
 
     /** Tells whether the latest load has neither applied, failed nor been cancelled yet. */
@@ -203,10 +229,22 @@ public final class MenuSession<S> implements InventoryHolder {
         return loading;
     }
 
-    /** The latest load applied, failed or was cancelled: releases the session. */
-    void loadEnded() {
-        this.loading = false;
-        busy(false);
+    /**
+     * The load with the token applied, failed, was cancelled or ended overtaken by a later load: releases the guard
+     * and the hold that belong to it, and no other.
+     */
+    void loadEnded(long token) {
+        if (token == loadToken) {
+            this.loading = false;
+        }
+        if (guarded && guardLoad == token) {
+            this.guarded = false;
+            this.guardLoad = 0;
+        }
+        if (held && holdLoad == token) {
+            this.held = false;
+            this.holdLoad = 0;
+        }
     }
 
     /**
@@ -274,9 +312,15 @@ public final class MenuSession<S> implements InventoryHolder {
             && (after.keyed() || before.icon().equals(after.icon()));
     }
 
+    /** Starts a load and gives its token. A hold taken earlier in this step belongs to the load. */
     long nextLoad() {
         loading = true;
-        return ++loadToken;
+        loadStep = step;
+        loadToken++;
+        if (held && holdStep == step) {
+            holdLoad = loadToken;
+        }
+        return loadToken;
     }
 
     void handoff(boolean on) {
