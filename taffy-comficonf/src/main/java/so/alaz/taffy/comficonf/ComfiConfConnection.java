@@ -81,8 +81,8 @@ public final class ComfiConfConnection {
      * initialize, counts as a failed registration. A bridge whose API version is lower than the one
      * {@link ComfiConfRegistration#register} was compiled against lacks the API too: it logs the same warning, naming
      * both versions, registers nothing and reports nothing. The link's {@link ComfiConfLink#resourceId()} is read
-     * once, here, and a link that throws from it counts as a registration that throws. A registration that succeeds
-     * logs one line naming the resource id.
+     * once, here; a link that throws from it is closed and counts as a registration that throws. A registration that
+     * succeeds logs one line naming the resource id.
      * A {@link RuntimeException} or {@link LinkageError} from {@code registration} never leaves this method.
      *
      * @param owner the plugin whose settings are registered; its logger receives the lines
@@ -143,7 +143,12 @@ public final class ComfiConfConnection {
         String resourceId;
         try {
             link = Objects.requireNonNull(registration.get(), "the registration returned null");
-            resourceId = link.resourceId();
+            try {
+                resourceId = link.resourceId();
+            } catch (RuntimeException | LinkageError e) {
+                closeQuietly(link);
+                throw e;
+            }
         } catch (ExceptionInInitializerError e) {
             return failed(bridge, version, e, logger, errors);
         } catch (LinkageError e) {
@@ -308,6 +313,15 @@ public final class ComfiConfConnection {
         return error.getMessage() == null
             ? error.getClass().getSimpleName()
             : "missing " + error.getMessage().replace('/', '.');
+    }
+
+    /** Closes {@code link}; a {@link RuntimeException} or {@link LinkageError} from it is dropped. */
+    private static void closeQuietly(ComfiConfLink link) {
+        try {
+            link.close();
+        } catch (RuntimeException | LinkageError ignored) {
+            // The failure of resourceId() is the one logged and reported.
+        }
     }
 
     private static ComfiConfConnection off(ComfiConfState state, Logger logger) {

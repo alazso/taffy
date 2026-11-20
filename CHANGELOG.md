@@ -25,9 +25,9 @@ All notable changes to Taffy are documented here. This project follows
 - `ComfiConfConnection.connect` reads the link's `resourceId()` once, with the registration, and
   `ComfiConfConnection.resourceId()` returns that id without asking the link again. A `ComfiConfLink` of the
   plugin's own whose `resourceId()` throws no longer lets the error leave `connect` or `resourceId()`: `connect`
-  treats it as a registration that failed, so it logs one warning with the stack, reports it under
-  `hook.comficonf` and gives `FAILED`. The link `ComfiConfRegistration.register` returns never throws there, so
-  nothing changes for it.
+  closes the link, which unregisters the resource, and treats it as a registration that failed, so it logs one
+  warning with the stack, reports it under `hook.comficonf` and gives `FAILED`. The link
+  `ComfiConfRegistration.register` returns never throws there, so nothing changes for it.
 - `YamlFileProvider.read`, the first read of `YamlFileProvider.apply` and the read of
   `YamlFileProvider.Builder.build` hold the lock of `SafeFileWriter.lockFor(file)`, the lock
   `ComfiConfConnection.lockFor(file)` gives while a resource is registered. A write of the file by the plugin

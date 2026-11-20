@@ -397,6 +397,24 @@ class ComfiConfConnectionTest {
             + failure + "), so they are edited in their files only.");
         assertThat(log.records.getFirst().getThrown()).isSameAs(failure);
         assertThat(reports).containsExactly(Map.entry("hook.comficonf", failure));
+        assertThat(link.closed).hasValue(1);
+        assertThat(link.registered).isFalse();
+    }
+
+    @Test
+    void aLinkWhoseResourceIdAndCloseBothThrowFailsWithTheReportOfTheResourceId() {
+        IllegalStateException failure = new IllegalStateException("no id");
+        link.idFailure = failure;
+        link.failure = new IllegalStateException("no close");
+
+        ComfiConfConnection connection = connect(() -> link);
+
+        assertThat(connection.status())
+            .isEqualTo(new ComfiConfStatus(ComfiConfState.FAILED, "0.1.0", FAILED_REASON));
+        assertThat(log.lines()).containsExactly("WARNING ComfiConf 0.1.0 could not register this plugin's settings ("
+            + failure + "), so they are edited in their files only.");
+        assertThat(reports).containsExactly(Map.entry("hook.comficonf", failure));
+        assertThat(link.closed).hasValue(1);
     }
 
     @Test
