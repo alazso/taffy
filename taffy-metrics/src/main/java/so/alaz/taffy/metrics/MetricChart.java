@@ -21,6 +21,11 @@ import java.util.regex.Pattern;
  * {@code platform_version}. A factory given another id throws {@link IllegalArgumentException}, and a null id
  * or supplier throws {@link NullPointerException}.
  *
+ * <p>A chart's id and every value its supplier returns leave the server as they are: the rules that hide
+ * addresses, UUIDs and the like in error reports do not apply to them. A value is therefore a constant of the
+ * plugin or a category from its configuration, such as a storage type or a language code, and never a player
+ * name, a UUID, an address, a world name or a server name.
+ *
  * <p>The supplier contract, for every factory:
  * <ul>
  *   <li>A supplier only reads in-memory state. It never resets what it reads, never blocks and never

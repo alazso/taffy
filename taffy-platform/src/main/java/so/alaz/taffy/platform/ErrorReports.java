@@ -75,6 +75,11 @@ public final class ErrorReports {
      * it when neither {@link #install} nor {@link #clear} has run yet, as the class description states, and
      * does nothing when no target is installed after that. Never throws: anything the target throws, an
      * {@link Error} included, is discarded.
+     *
+     * <p>A target may send the source key off the server as it is: {@code taffy-metrics} sends it to FastStats
+     * as the {@code source} attribute of the error, and no rule hides anything in it. The key is therefore a
+     * constant of the plugin or a category from its configuration, and never holds a player name, a UUID, an
+     * address, a world name or a server name.
      */
     public void report(String source, Throwable error) {
         BiConsumer<String, Throwable> handle = target;

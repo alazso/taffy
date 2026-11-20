@@ -138,7 +138,8 @@ public final class Metrics {
      * to FastStats and somewhere else as well. Does nothing on a handle without a FastStats error service and
      * after {@link #shutdown()}. Never throws.
      *
-     * @param source where the error was handled, as a short stable key
+     * @param source where the error was handled, as a short stable key; it is sent unchanged as the
+     *     {@code source} attribute, so it follows the rule {@link ErrorReports#report} gives for a source key
      * @param error the error
      */
     public void report(String source, Throwable error) {
