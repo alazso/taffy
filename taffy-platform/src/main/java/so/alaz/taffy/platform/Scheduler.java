@@ -111,6 +111,10 @@ public final class Scheduler implements Dispatcher {
     /**
      * Runs {@code task} on the global region thread, as soon as possible. Returns {@code false} when the
      * plugin is disabling: the task will never run.
+     *
+     * <p>On Paper the global region thread is the main thread, which owns every chunk and entity. On Folia it
+     * owns no chunk and no entity, so world and entity work in {@code task} must hop to the thread that owns
+     * its target: Paper's region scheduler for a location, {@link #entity} for an entity.
      */
     public boolean global(Runnable task) {
         return submit(() -> server.getGlobalRegionScheduler().run(plugin, reported(GLOBAL_SOURCE, task)));
