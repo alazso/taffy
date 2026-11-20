@@ -2,7 +2,6 @@ package so.alaz.taffy.metrics;
 
 import dev.faststats.ErrorTracker;
 import dev.faststats.ErrorTrackerService;
-import dev.faststats.TrackedError;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -20,12 +19,15 @@ import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
 /**
- * Sends reports to FastStats error tracking, one tracker per source, so handled reports of one kind from one source
- * merge into one error with a count and each error carries its source as the {@code source} attribute.
+ * Sends reports to FastStats error tracking, one tracker per source for its handled reports and a second for its
+ * unhandled ones, so handled reports of one kind from one source merge into one error with a count and each error
+ * carries its source as the {@code source} attribute.
  *
  * <p>The tracker of a source is created on the first report from it, given the {@link Anonymizers} rules and the
- * source attribute, and registered with the error service. At most {@value #MAX_SOURCES} sources get a tracker; a
- * report from any other source goes to the service's global tracker, with no source attribute.
+ * source attribute, and registered with the error service. Its tracker for unhandled reports is created the same
+ * way on its first unhandled report. At most {@value #MAX_SOURCES} sources get trackers; a handled report from any
+ * other source goes to the service's global tracker, with no source attribute, and an unhandled one to one tracker
+ * those sources share, with the rules and no source attribute.
  *
  * <p>Two reports are of one kind when every throwable of their cause chains has the same class, the same
  * {@link #messageKey} and the same stack frames. A report of a kind already seen is tracked as the first report of
@@ -37,9 +39,11 @@ import java.util.regex.Pattern;
  * the source is logged on the logger this instance was given.
  *
  * <p>An unhandled report is tracked with {@code handled} set to {@code false}, once for its kind: a later unhandled
- * report of that kind from the source is dropped, and a handled report of that kind is tracked as a handled error
- * beside it. The SDK keeps each error it is told is unhandled as an entry of its own, which no later report merges
- * into, so tracking every unhandled report would hold one entry for each while submissions fail.
+ * report of that kind from the source is dropped, and a handled report of that kind, made before or after it, is
+ * tracked as a handled error beside it. The SDK keeps each error it is told is unhandled as an entry of its own,
+ * which no later report merges into, so tracking every unhandled report would hold one entry for each while
+ * submissions fail. A tracker counts a report that equals a handled entry it holds into that entry before the
+ * report can be marked unhandled, so unhandled reports go to a tracker that holds no handled entry.
  *
  * <p>Once a tracker is registered, every scheduled error submission and the send inside the context's shutdown
  * post an {@code errors} array, even when it is empty.
@@ -70,14 +74,14 @@ final class SourceTrackers {
     SourceTrackers(ErrorTrackerService service, Logger logger) {
         this.service = service;
         this.logger = logger;
-        this.overflow = new Source(service.globalErrorTracker());
+        this.overflow = new Source(service.globalErrorTracker(), null);
     }
 
     /**
-     * Tracks {@code error} on the tracker of {@code source}, or on the global tracker once the sources are full, unless
-     * that source already holds {@value #MAX_KINDS} other kinds, or {@code handled} is {@code false} and the source
-     * already tracked an unhandled report of the kind. Logs one warning when {@code error} is the
-     * {@value #MAX_KINDS}th kind of its source.
+     * Tracks {@code error} on the tracker of {@code source} for handled or for unhandled reports, or on those of the
+     * sources past the bound once the sources are full, unless that source already holds {@value #MAX_KINDS} other
+     * kinds, or {@code handled} is {@code false} and the source already tracked an unhandled report of the kind. Logs
+     * one warning when {@code error} is the {@value #MAX_KINDS}th kind of its source.
      */
     void report(String source, Throwable error, boolean handled) {
         Objects.requireNonNull(error, "error");
@@ -93,7 +97,7 @@ final class SourceTrackers {
         }
     }
 
-    /** The number of sources that have a tracker. */
+    /** The number of sources that have a tracker of their own. */
     int sources() {
         return bySource.size();
     }
@@ -111,13 +115,23 @@ final class SourceTrackers {
             if (bySource.size() >= MAX_SOURCES) {
                 return overflow;
             }
-            ErrorTracker tracker = Anonymizers.apply(ErrorTracker.contextUnaware());
-            tracker.getAttributes().put("source", source);
-            service.registerErrorTracker(tracker);
-            Source created = new Source(tracker);
+            Source created = new Source(tracker(source), source);
             bySource.put(source, created);
             return created;
         }
+    }
+
+    /**
+     * A new tracker with the {@link Anonymizers} rules and, unless {@code source} is {@code null}, the source
+     * attribute, registered with the error service.
+     */
+    private ErrorTracker tracker(@Nullable String source) {
+        ErrorTracker tracker = Anonymizers.apply(ErrorTracker.contextUnaware());
+        if (source != null) {
+            tracker.getAttributes().put("source", source);
+        }
+        service.registerErrorTracker(tracker);
+        return tracker;
     }
 
     /**
@@ -151,15 +165,26 @@ final class SourceTrackers {
         return DIGITS.matcher(key).replaceAll(NUMBER);
     }
 
-    /** One tracker, the first report of each kind it was given and the kinds it tracked as unhandled. */
-    private static final class Source {
+    /**
+     * The tracker for handled reports, the first report of each kind it was given, the kinds it tracked as unhandled
+     * and the tracker for those.
+     */
+    private final class Source {
 
         private final ErrorTracker tracker;
+        private final @Nullable String name;
         private final Map<List<Object>, Throwable> kinds = new HashMap<>();
         private final Set<List<Object>> unhandled = new HashSet<>();
 
-        Source(ErrorTracker tracker) {
+        /** Guarded by {@link #kinds}. */
+        private @Nullable ErrorTracker unhandledTracker;
+
+        /**
+         * @param name the source attribute of the tracker for unhandled reports, or {@code null} for none
+         */
+        Source(ErrorTracker tracker, @Nullable String name) {
             this.tracker = tracker;
+            this.name = name;
         }
 
         /**
@@ -182,14 +207,17 @@ final class SourceTrackers {
                     first = error;
                     filled = kinds.size() == MAX_KINDS;
                 }
-                if (!handled && !unhandled.add(kind)) {
-                    return false;
+                if (!handled) {
+                    if (unhandled.add(kind)) {
+                        if (unhandledTracker == null) {
+                            unhandledTracker = SourceTrackers.this.tracker(name);
+                        }
+                        unhandledTracker.trackError(first).handled(false);
+                    }
+                    return filled;
                 }
             }
-            TrackedError tracked = tracker.trackError(first);
-            if (!handled) {
-                tracked.handled(false);
-            }
+            tracker.trackError(first);
             return filled;
         }
     }

@@ -292,6 +292,51 @@ class SourceTrackersTest {
     }
 
     @Test
+    void aHandledKindReportedLaterAsUnhandledGivesOneHandledErrorAndOneUnhandledError() {
+        IllegalStateException error = new IllegalStateException("storage offline");
+
+        trackers.report("storage", error, true);
+        trackers.report("storage", error, false);
+
+        String body = errorBody();
+        assertThat(count(body, "\"handled\":false")).isEqualTo(1);
+        assertThat(count(body, "\"handled\":true")).isEqualTo(1);
+        assertThat(count(body, "\"source\":\"storage\"")).isEqualTo(2);
+        assertThat(body).doesNotContain("\"count\"");
+    }
+
+    @Test
+    void aHandledKindReportedBothWaysAgainKeepsOneUnhandledErrorAndCountsTheHandledOnes() {
+        IllegalStateException error = new IllegalStateException("storage offline");
+
+        trackers.report("storage", error, true);
+        trackers.report("storage", error, false);
+        trackers.report("storage", error, false);
+        trackers.report("storage", error, true);
+
+        String body = errorBody();
+        assertThat(count(body, "\"handled\":false")).isEqualTo(1);
+        assertThat(count(body, "\"handled\":true")).isEqualTo(1);
+        assertThat(count(body, "\"count\":2")).isEqualTo(1);
+    }
+
+    @Test
+    void anUnhandledReportFromASourcePastTheBoundIsSentAsUnhandledWithoutASource() {
+        for (int i = 0; i < SourceTrackers.MAX_SOURCES; i++) {
+            trackers.report("source_" + i, new IllegalStateException("x"), true);
+        }
+        IllegalStateException late = new IllegalStateException("late failure");
+
+        trackers.report("late_a", late, true);
+        trackers.report("late_b", late, false);
+
+        String body = errorBody();
+        assertThat(count(body, "\"handled\":false")).isEqualTo(1);
+        assertThat(count(body, "\"handled\":true")).isEqualTo(SourceTrackers.MAX_SOURCES + 1);
+        assertThat(body).doesNotContain("late_a").doesNotContain("late_b");
+    }
+
+    @Test
     void unhandledKindsCountTowardsTheBoundOfTheirSource() {
         for (int i = 0; i < SourceTrackers.MAX_KINDS + 5; i++) {
             trackers.report("scheduler.async", new IllegalStateException("failure " + word(i)), false);
