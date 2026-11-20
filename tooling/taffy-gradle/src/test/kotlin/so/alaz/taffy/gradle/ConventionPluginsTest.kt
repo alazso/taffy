@@ -24,7 +24,10 @@ class ConventionPluginsTest {
         "playerpoints", "oraxen", "nexo", "enginehub", "fancyinnovations", "thenextlvl", "packetevents", "jitpack",
     )
 
-    /** Every group a filter of so.alaz.taffy.repositories names, and one that none names. */
+    /**
+     * Every group a filter of so.alaz.taffy.repositories names, and one that none names. A filter is probed with
+     * these groups only, so a group a filter names and this list lacks is not seen by a probe.
+     */
     private val filterGroups = listOf(
         "io.papermc", "com.mojang", "net.md-5", "so.alaz", "me.clip", "dev.faststats.metrics", "net.milkbowl.vault",
         "org.black_ixx", "io.th0rgal", "md.thomas.hopper", "com.nexomc", "com.tcoded", "me.gabytm.util",
@@ -168,6 +171,16 @@ class ConventionPluginsTest {
         val second = run("build", "--configuration-cache")
 
         assertThat(second.output).contains("Reusing configuration cache.")
+    }
+
+    @Test
+    fun filterGroupsHoldsEveryGroupTheRepositoriesScriptNames() {
+        val script = File(System.getProperty("taffy.sourceRoot"))
+            .resolve("tooling/taffy-gradle/src/main/kotlin/so.alaz.taffy.repositories.settings.gradle.kts")
+            .readText()
+        val named = Regex("include[A-Za-z]*\\(\\s*\"([^\":]+)[\":]").findAll(script).map { it.groupValues[1] }.toSet()
+
+        assertThat(named).containsExactlyInAnyOrderElementsOf(filterGroups - "org.example")
     }
 
     @Test
