@@ -5,8 +5,9 @@ import java.util.function.LongSupplier;
 
 /**
  * One provider's reporting position on a monotonic counter. Each provider holds its own mark, so a
- * single running total feeds several providers and each reports only the increase since its own last
- * report: nothing is split between providers or counted twice.
+ * single running total feeds several providers and each reports only the increase since its own mark:
+ * nothing is split between providers. An increase read with {@link #takeDelta()} for a submission that fails
+ * is lost, and one read with {@link #peekDelta()} is reported again until {@link #commit()} runs.
  */
 final class CounterMark {
 

@@ -125,9 +125,11 @@ public final class MetricChart {
     /**
      * An event count backed by a monotonically increasing {@code total} (bStats SingleLineChart,
      * FastStats number metric). The total is a running sum that is never reset, such as
-     * {@code LongAdder::sum}. Each provider reports the increase since its own last report, so the charts
-     * show activity per interval and no event is split between providers or counted twice. A total that
-     * goes down reports 0 for that interval.
+     * {@code LongAdder::sum}. Each provider keeps its own position on the total, so the charts show activity
+     * per interval and no event is split between providers. bStats reports the increase since it last read the
+     * chart: an increase it read for a submission that then failed is lost. FastStats reports the increase
+     * since its last accepted submission: an increase in a submission that arrived without FastStats seeing it
+     * accepted is reported again in the next one. A total that goes down reports 0 for that interval.
      *
      * @param id the chart id, matching {@code ^[a-z0-9_]+$}
      * @param total reads the running total, following the supplier contract of this class
