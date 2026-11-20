@@ -505,8 +505,8 @@ public final class YamlFileProvider implements ConfigProvider {
          * call the 10 newest backups are kept in the {@code backups} folder beside the file.
          *
          * <p>Each backup is a full copy of the file as it was before a write: every value in it, the secrets
-         * included, in plain text, and it stays until newer backups replace it. The folder of the policy is as
-         * private as the file itself.
+         * included, in plain text, and it stays until newer backups replace it. The plugin keeps the folder of the
+         * policy as private as the file itself.
          *
          * @param policy the folder that receives the backups and the number of backups kept
          * @return this builder
