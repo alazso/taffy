@@ -5,6 +5,14 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `ErrorReports.reportUnhandled(String, Throwable)` reports an error the caller does not deal with and rethrows
+  or lets escape, and `ErrorReports.install(BiConsumer, BiConsumer)` installs one handler for the reports made
+  through `report` and one for those made through `reportUnhandled`. A target installed with
+  `install(BiConsumer)` receives both, as before.
+- `Metrics.reportUnhandled(String, Throwable)` sends a report to FastStats error tracking with `handled` set to
+  `false`.
+
 ### Changed
 - The FastStats error trackers of `taffy-metrics` hide more of a message before it leaves the server:
   - the user name and password of a URI of any scheme: `redis://default:hunter2@cache:6379` is sent as
@@ -30,6 +38,14 @@ All notable changes to Taffy are documented here. This project follows
   logger that names the source and states that a report of any further kind is not sent until metrics start
   again. The sources past the first 64, which share one limit, log one such warning together. Such reports were
   dropped with no log line.
+- A task that throws under `Scheduler` reaches FastStats with `handled` set to `false`, as an exception FastStats
+  catches itself does. It was sent with `handled` set to `true`. `Scheduler` now makes the report through
+  `ErrorReports.reportUnhandled`, and `MetricsBuilder.start()` installs `Metrics.report` and
+  `Metrics.reportUnhandled` into the sink. FastStats does not merge unhandled errors into one with a count, so
+  the first unhandled report of a kind from a source is sent and a later one of that kind is not sent until
+  metrics start again: a repeating task that throws the same exception on every run is sent once, where it was
+  sent as one error with a count. A target a plugin installed with `ErrorReports.install(BiConsumer)` still
+  receives each of these reports.
 
 ### Fixed
 - A jdbc URL with a user name before an `@`, such as `jdbc:mysql://root@db.example.com/game?password=x`, is

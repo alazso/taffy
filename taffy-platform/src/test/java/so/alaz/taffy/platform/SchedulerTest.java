@@ -64,6 +64,7 @@ final class SchedulerTest {
     private final AtomicInteger retiredRuns = new AtomicInteger();
     private final ErrorReports errors = new ErrorReports();
     private final List<Report> reports = new ArrayList<>();
+    private final List<Report> handledReports = new ArrayList<>();
     private final Scheduler scheduler;
 
     SchedulerTest(Scheduler.Mode mode) {
@@ -81,7 +82,8 @@ final class SchedulerTest {
         ClassLoader loader = mode == Scheduler.Mode.FOLIA
             ? SimulatedClasspath.with(Scheduler.FOLIA_MARKER)
             : SchedulerTest.class.getClassLoader();
-        errors.install((source, error) -> reports.add(new Report(source, error)));
+        errors.install((source, error) -> handledReports.add(new Report(source, error)),
+            (source, error) -> reports.add(new Report(source, error)));
         scheduler = new Scheduler(plugin, errors, loader);
         assertThat(scheduler.mode()).isEqualTo(mode);
     }
@@ -115,11 +117,13 @@ final class SchedulerTest {
         throw (T) failure;
     }
 
+    /** Asserts that {@code failure} is the one report made, and that it was made as unhandled. */
     private void assertReportedOnce(String source, Throwable failure) {
         assertThat(reports).singleElement().satisfies(report -> {
             assertThat(report.source()).isEqualTo(source);
             assertThat(report.error()).isSameAs(failure);
         });
+        assertThat(handledReports).isEmpty();
     }
 
     @Test

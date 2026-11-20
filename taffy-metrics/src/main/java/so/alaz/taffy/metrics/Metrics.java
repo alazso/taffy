@@ -18,8 +18,9 @@ import java.util.logging.Logger;
  * registered until the plugin is disabled, so each further start in the same enable adds to them.
  *
  * <p>When FastStats starts with its error service, {@link MetricsBuilder#start()} routes the plugin's
- * {@link ErrorReports} to {@link #report}, and each report goes to FastStats error tracking: reports of one kind from
- * one source merge into one error with a count, and each error carries its source as the {@code source} attribute.
+ * {@link ErrorReports} to {@link #report} and {@link #reportUnhandled}, and each report goes to FastStats error
+ * tracking: reports of one kind from one source merge into one error with a count, and each error carries its
+ * source as the {@code source} attribute.
  * Two reports are of one kind when their exception classes, stack frames and messages match once the anonymize
  * rules have hidden addresses, UUIDs and the like, through the whole cause chain. An IPv4 address, an IPv6 address
  * and a run of digits in a message each count as the same whatever their value, so {@code timeout after 5003ms}
@@ -30,6 +31,11 @@ import java.util.logging.Logger;
  * any further source are sent without a source, and those sources share one limit of 32 kinds. Once the first
  * report has arrived, every scheduled error submission (every 30 minutes) and the final send in {@link #shutdown()}
  * post an {@code errors} array, even when it is empty.
+ *
+ * <p>A report made through {@link ErrorReports#reportUnhandled}, as {@code Scheduler} makes for a task that throws,
+ * is sent with {@code handled} set to {@code false}, as FastStats marks the errors it catches itself. FastStats does
+ * not merge such errors into one with a count, so the first unhandled report of a kind from a source is sent, and
+ * a later unhandled report of that kind from that source is not sent for the life of this handle.
  *
  * <p>FastStats clears every report it holds once a scheduled error submission is accepted, so a report made while
  * that send is in flight is lost. A later report of the same kind is sent as usual, with its count starting again.
@@ -42,7 +48,9 @@ import java.util.logging.Logger;
  *
  * <p>The error sink has one target. A target the plugin installs into it after {@link MetricsBuilder#start()}
  * replaces this handle, and FastStats receives no further report through the sink. A plugin that also wants its
- * reports elsewhere installs one target that passes each report to {@link #report} and to its own handler.
+ * reports elsewhere installs one target that passes each report to {@link #report} and to its own handler, with
+ * {@link ErrorReports#install(java.util.function.BiConsumer, java.util.function.BiConsumer)} when unhandled
+ * reports are to reach {@link #reportUnhandled}.
  *
  * <p>The state methods report what each provider is actually doing, for a plugin's diagnostics command. They
  * read cached state without blocking and never throw, so they are safe on any thread. On an inert handle and
@@ -151,12 +159,29 @@ public final class Metrics {
      * @param error the error
      */
     public void report(String source, Throwable error) {
+        report(source, error, true);
+    }
+
+    /**
+     * Sends a report to FastStats error tracking under {@code source} with {@code handled} set to {@code false},
+     * as the class description states: once for its kind. For an error the plugin does not deal with and rethrows
+     * or lets escape. {@link MetricsBuilder#start()} routes {@link ErrorReports#reportUnhandled} here. Does
+     * nothing on a handle without a FastStats error service and after {@link #shutdown()}. Never throws.
+     *
+     * @param source where the error escaped, as a short stable key; the rule {@link #report} gives applies
+     * @param error the error
+     */
+    public void reportUnhandled(String source, Throwable error) {
+        report(source, error, false);
+    }
+
+    private void report(String source, Throwable error, boolean handled) {
         SourceTrackers trackers = sources;
         if (trackers == null || shutDown.get()) {
             return;
         }
         try {
-            trackers.report(source, error);
+            trackers.report(source, error, handled);
         } catch (RuntimeException | LinkageError ignored) {
             // Reporting an error must never raise one.
         }

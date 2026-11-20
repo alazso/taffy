@@ -2,12 +2,14 @@ package so.alaz.taffy.metrics;
 
 import dev.faststats.ErrorTracker;
 import dev.faststats.ErrorTrackerService;
+import dev.faststats.TrackedError;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +20,7 @@ import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
 /**
- * Sends handled reports to FastStats error tracking, one tracker per source, so reports of one kind from one source
+ * Sends reports to FastStats error tracking, one tracker per source, so handled reports of one kind from one source
  * merge into one error with a count and each error carries its source as the {@code source} attribute.
  *
  * <p>The tracker of a source is created on the first report from it, given the {@link Anonymizers} rules and the
@@ -33,6 +35,11 @@ import java.util.regex.Pattern;
  * {@link Metrics} handle that holds it; a report of any further kind from that source is dropped. This bounds what
  * the trackers hold while submissions fail. When a source holds its {@value #MAX_KINDS}th kind, one warning that names
  * the source is logged on the logger this instance was given.
+ *
+ * <p>An unhandled report is tracked with {@code handled} set to {@code false}, once for its kind: a later unhandled
+ * report of that kind from the source is dropped, and a handled report of that kind is tracked as a handled error
+ * beside it. The SDK keeps each error it is told is unhandled as an entry of its own, which no later report merges
+ * into, so tracking every unhandled report would hold one entry for each while submissions fail.
  *
  * <p>Once a tracker is registered, every scheduled error submission and the send inside the context's shutdown
  * post an {@code errors} array, even when it is empty.
@@ -68,16 +75,17 @@ final class SourceTrackers {
 
     /**
      * Tracks {@code error} on the tracker of {@code source}, or on the global tracker once the sources are full, unless
-     * that source already holds {@value #MAX_KINDS} other kinds. Logs one warning when {@code error} is the
+     * that source already holds {@value #MAX_KINDS} other kinds, or {@code handled} is {@code false} and the source
+     * already tracked an unhandled report of the kind. Logs one warning when {@code error} is the
      * {@value #MAX_KINDS}th kind of its source.
      */
-    void report(String source, Throwable error) {
+    void report(String source, Throwable error, boolean handled) {
         Objects.requireNonNull(error, "error");
         Source target = bySource.get(source);
         if (target == null) {
             target = register(source);
         }
-        if (target.track(error)) {
+        if (target.track(error, handled)) {
             String from = target == overflow
                 ? "the sources past the first " + MAX_SOURCES : "the source '" + source + "'";
             logger.warning("Error reports from " + from + " reached " + MAX_KINDS + " kinds. A report of any"
@@ -143,22 +151,24 @@ final class SourceTrackers {
         return DIGITS.matcher(key).replaceAll(NUMBER);
     }
 
-    /** One tracker and the first report of each kind it was given. */
+    /** One tracker, the first report of each kind it was given and the kinds it tracked as unhandled. */
     private static final class Source {
 
         private final ErrorTracker tracker;
         private final Map<List<Object>, Throwable> kinds = new HashMap<>();
+        private final Set<List<Object>> unhandled = new HashSet<>();
 
         Source(ErrorTracker tracker) {
             this.tracker = tracker;
         }
 
         /**
-         * Tracks the first report of the kind of {@code error}, or nothing when the kinds are full.
+         * Tracks the first report of the kind of {@code error}, or nothing when the kinds are full or the kind was
+         * already tracked as unhandled and {@code handled} is {@code false}.
          *
          * @return {@code true} when {@code error} is the {@value #MAX_KINDS}th kind
          */
-        boolean track(Throwable error) {
+        boolean track(Throwable error, boolean handled) {
             List<Object> kind = kindOf(error);
             Throwable first;
             boolean filled = false;
@@ -172,8 +182,14 @@ final class SourceTrackers {
                     first = error;
                     filled = kinds.size() == MAX_KINDS;
                 }
+                if (!handled && !unhandled.add(kind)) {
+                    return false;
+                }
             }
-            tracker.trackError(first);
+            TrackedError tracked = tracker.trackError(first);
+            if (!handled) {
+                tracked.handled(false);
+            }
             return filled;
         }
     }

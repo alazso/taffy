@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import so.alaz.taffy.platform.ErrorReports;
+import so.alaz.taffy.platform.Scheduler;
 
 import java.io.IOException;
 import java.lang.reflect.Method;
@@ -29,6 +30,7 @@ import java.util.logging.Logger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
@@ -409,12 +411,59 @@ class MetricsTest {
     }
 
     @Test
+    void aSchedulerTaskThatThrowsReachesFastStatsAsUnhandledUnderItsSource() throws IOException {
+        Metrics metrics = startFastStats(true, true, true);
+        when(fixture.plugin.isEnabled()).thenReturn(true);
+        IllegalStateException failure = new IllegalStateException("task broken");
+        Scheduler scheduler = new Scheduler(fixture.plugin, errors);
+
+        assertThat(scheduler.async(() -> {
+            throw failure;
+        })).isTrue();
+        ArgumentCaptor<Consumer<ScheduledTask>> accepted = ArgumentCaptor.captor();
+        verify(fixture.asyncScheduler).runNow(any(Plugin.class), accepted.capture());
+        assertThatThrownBy(() -> accepted.getValue().accept(fixture.task)).isSameAs(failure);
+        metrics.shutdown();
+
+        assertThat(sink.requests).filteredOn(request -> request.path().equals("/v1/error")).singleElement()
+            .extracting(LoopbackSink.Request::body).asString()
+            .contains("task broken")
+            .contains("\"handled\":false")
+            .contains("\"source\":\"scheduler.async\"")
+            .doesNotContain("\"handled\":true");
+    }
+
+    @Test
+    void anUnhandledReportIsSentOnceForItsKindAndAHandledOneKeepsItsCount() throws IOException {
+        Metrics metrics = startFastStats(true, true, true);
+        IllegalStateException escaped = new IllegalStateException("task broken");
+        IllegalArgumentException caught = new IllegalArgumentException("storage offline");
+
+        for (int i = 0; i < 3; i++) {
+            errors.reportUnhandled("scheduler.global", escaped);
+            metrics.report("storage", caught);
+        }
+        metrics.reportUnhandled("scheduler.global", escaped);
+        metrics.shutdown();
+
+        String body = sink.requests.stream().filter(request -> request.path().equals("/v1/error"))
+            .map(LoopbackSink.Request::body).findFirst().orElseThrow();
+        assertThat(body.split("\"handled\":false", -1)).hasSize(2);
+        assertThat(body.split("\"count\"", -1)).hasSize(2);
+        assertThat(body).contains("\"count\":3");
+    }
+
+    @Test
     void aReportOnAnInertHandleDoesNothing() {
         assertThat(neither.sources).isNull();
 
         assertThatCode(() -> neither.report("storage", new IllegalStateException())).doesNotThrowAnyException();
+        assertThatCode(() -> neither.reportUnhandled("storage", new IllegalStateException()))
+            .doesNotThrowAnyException();
         neither.shutdown();
         assertThatCode(() -> neither.report("storage", new IllegalStateException())).doesNotThrowAnyException();
+        assertThatCode(() -> neither.reportUnhandled("storage", new IllegalStateException()))
+            .doesNotThrowAnyException();
     }
 
     @Test
@@ -451,6 +500,8 @@ class MetricsTest {
         metrics.shutdown();
 
         assertThatCode(() -> metrics.report("storage", new IllegalStateException())).doesNotThrowAnyException();
+        assertThatCode(() -> metrics.reportUnhandled("scheduler.async", new IllegalStateException()))
+            .doesNotThrowAnyException();
 
         assertThat(metrics.sources.sources()).isZero();
         assertThat(sink.paths()).containsExactly("/v1/collect");

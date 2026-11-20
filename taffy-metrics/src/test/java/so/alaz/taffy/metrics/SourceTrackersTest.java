@@ -67,7 +67,7 @@ class SourceTrackersTest {
         IllegalStateException error = new IllegalStateException("storage offline");
 
         for (int i = 0; i < 3; i++) {
-            trackers.report("storage", error);
+            trackers.report("storage", error, true);
         }
 
         String body = errorBody();
@@ -79,8 +79,8 @@ class SourceTrackersTest {
     void twoSourcesGiveTwoErrorsEachWithItsSource() {
         IllegalStateException error = new IllegalStateException("storage offline");
 
-        trackers.report("storage", error);
-        trackers.report("shutdown", error);
+        trackers.report("storage", error, true);
+        trackers.report("shutdown", error, true);
 
         String body = errorBody();
         assertThat(count(body, "\"source\":\"")).isEqualTo(2);
@@ -93,7 +93,7 @@ class SourceTrackersTest {
         IllegalStateException error = new IllegalStateException("storage offline");
 
         for (int i = 0; i <= SourceTrackers.MAX_SOURCES; i++) {
-            trackers.report("source_" + i, error);
+            trackers.report("source_" + i, error, true);
         }
 
         assertThat(SourceTrackers.MAX_SOURCES).isEqualTo(64);
@@ -108,12 +108,12 @@ class SourceTrackersTest {
     void aSourcePastTheBoundStillMergesOnTheGlobalTracker() {
         IllegalStateException error = new IllegalStateException("storage offline");
         for (int i = 0; i < SourceTrackers.MAX_SOURCES; i++) {
-            trackers.report("source_" + i, error);
+            trackers.report("source_" + i, error, true);
         }
 
-        trackers.report("late", error);
-        trackers.report("late", error);
-        trackers.report("source_0", error);
+        trackers.report("late", error, true);
+        trackers.report("late", error, true);
+        trackers.report("source_0", error, true);
 
         String body = errorBody();
         assertThat(count(body, "\"handled\":true")).isEqualTo(65);
@@ -126,7 +126,7 @@ class SourceTrackersTest {
         IllegalStateException error = new IllegalStateException("storage offline");
 
         RaceRunner.race(200, index -> {
-            trackers.report("source_" + index, error);
+            trackers.report("source_" + index, error, true);
             return index;
         });
 
@@ -141,7 +141,7 @@ class SourceTrackersTest {
     void reportsWhoseMessagesDifferOnlyInWhatTheRulesHideMergeIntoOneError() {
         for (int i = 0; i < 3; i++) {
             trackers.report("storage", new IllegalStateException("could not save profile " + UUID.randomUUID(),
-                new IllegalArgumentException("player " + UUID.randomUUID())));
+                new IllegalArgumentException("player " + UUID.randomUUID())), true);
         }
 
         String body = errorBody();
@@ -152,7 +152,7 @@ class SourceTrackersTest {
     @Test
     void reportsThatDifferInAnUnhiddenPartStaySeparate() {
         for (int i = 0; i < 3; i++) {
-            trackers.report("storage", new IllegalStateException("could not save item " + word(i)));
+            trackers.report("storage", new IllegalStateException("could not save item " + word(i)), true);
         }
 
         String body = errorBody();
@@ -164,9 +164,9 @@ class SourceTrackersTest {
     void aSourceSendsAtMostTheBoundOfKindsAndAKnownKindStillCounts() {
         int[] failures = IntStream.concat(IntStream.range(0, SourceTrackers.MAX_KINDS + 5), IntStream.of(0)).toArray();
         for (int i : failures) {
-            trackers.report("storage", new IllegalStateException("failure " + word(i)));
+            trackers.report("storage", new IllegalStateException("failure " + word(i)), true);
         }
-        trackers.report("hook.example", new IllegalStateException("failure " + word(40)));
+        trackers.report("hook.example", new IllegalStateException("failure " + word(40)), true);
 
         assertThat(SourceTrackers.MAX_KINDS).isEqualTo(32);
         String body = errorBody();
@@ -178,15 +178,15 @@ class SourceTrackersTest {
     @Test
     void theKindThatFillsASourceLogsOneWarningThatNamesIt() {
         for (int i = 0; i < SourceTrackers.MAX_KINDS - 1; i++) {
-            trackers.report("storage.save", new IllegalStateException("failure " + word(i)));
+            trackers.report("storage.save", new IllegalStateException("failure " + word(i)), true);
         }
-        trackers.report("hook.example", new IllegalStateException("failure"));
+        trackers.report("hook.example", new IllegalStateException("failure"), true);
         assertThat(fixture.log.lines()).isEmpty();
 
         for (int i = SourceTrackers.MAX_KINDS - 1; i < SourceTrackers.MAX_KINDS + 5; i++) {
-            trackers.report("storage.save", new IllegalStateException("failure " + word(i)));
+            trackers.report("storage.save", new IllegalStateException("failure " + word(i)), true);
         }
-        trackers.report("storage.save", new IllegalStateException("failure " + word(0)));
+        trackers.report("storage.save", new IllegalStateException("failure " + word(0)), true);
 
         assertThat(fixture.log.lines()).containsExactly("WARNING Error reports from the source 'storage.save'"
             + " reached 32 kinds. A report of any further kind from there is not sent to FastStats until metrics"
@@ -197,11 +197,11 @@ class SourceTrackersTest {
     void theKindThatFillsTheSourcesPastTheBoundLogsOneWarning() {
         IllegalStateException error = new IllegalStateException("storage offline");
         for (int i = 0; i < SourceTrackers.MAX_SOURCES; i++) {
-            trackers.report("source_" + i, error);
+            trackers.report("source_" + i, error, true);
         }
 
         for (int i = 0; i < SourceTrackers.MAX_KINDS + 5; i++) {
-            trackers.report("late_" + i, new IllegalStateException("late " + word(i)));
+            trackers.report("late_" + i, new IllegalStateException("late " + word(i)), true);
         }
 
         assertThat(fixture.log.lines()).containsExactly("WARNING Error reports from the sources past the first 64"
@@ -216,10 +216,10 @@ class SourceTrackersTest {
         String[] routes = {"2001:db8::8a2e:370:7334", "fe80::1", "::1"};
         for (int i = 0; i < 3; i++) {
             trackers.report("storage.save", new IllegalStateException(waits[i],
-                new IllegalArgumentException("Connection refused: " + hosts[i] + " through " + routes[i])));
+                new IllegalArgumentException("Connection refused: " + hosts[i] + " through " + routes[i])), true);
         }
         for (int i = 0; i < SourceTrackers.MAX_KINDS + 5; i++) {
-            trackers.report("storage.load", new IllegalStateException("could not load row " + i));
+            trackers.report("storage.load", new IllegalStateException("could not load row " + i), true);
         }
 
         String body = errorBody();
@@ -248,16 +248,59 @@ class SourceTrackersTest {
     void theSourcesPastTheBoundShareOneBoundOfKinds() {
         IllegalStateException error = new IllegalStateException("storage offline");
         for (int i = 0; i < SourceTrackers.MAX_SOURCES; i++) {
-            trackers.report("source_" + i, error);
+            trackers.report("source_" + i, error, true);
         }
 
         for (int i = 0; i < SourceTrackers.MAX_KINDS + 5; i++) {
-            trackers.report("late_" + i, new IllegalStateException("late " + word(i)));
+            trackers.report("late_" + i, new IllegalStateException("late " + word(i)), true);
         }
 
         String body = errorBody();
         assertThat(count(body, "\"handled\":true")).isEqualTo(SourceTrackers.MAX_SOURCES + SourceTrackers.MAX_KINDS);
         assertThat(body).contains("late " + word(31)).doesNotContain("late " + word(32));
+    }
+
+    @Test
+    void anUnhandledReportIsSentAsUnhandledOnceForItsKind() {
+        IllegalStateException error = new IllegalStateException("task broken");
+
+        for (int i = 0; i < 3; i++) {
+            trackers.report("scheduler.async", error, false);
+        }
+        trackers.report("scheduler.async", new IllegalArgumentException("other task broken"), false);
+
+        String body = errorBody();
+        assertThat(count(body, "\"handled\":false")).isEqualTo(2);
+        assertThat(count(body, "\"source\":\"scheduler.async\"")).isEqualTo(2);
+        assertThat(body).contains("task broken").contains("other task broken").doesNotContain("\"count\"")
+            .doesNotContain("\"handled\":true");
+    }
+
+    @Test
+    void aKindReportedBothWaysGivesOneUnhandledErrorAndOneHandledErrorWithItsCount() {
+        IllegalStateException error = new IllegalStateException("storage offline");
+
+        trackers.report("storage", error, false);
+        trackers.report("storage", error, true);
+        trackers.report("storage", error, false);
+        trackers.report("storage", error, true);
+
+        String body = errorBody();
+        assertThat(count(body, "\"handled\":false")).isEqualTo(1);
+        assertThat(count(body, "\"handled\":true")).isEqualTo(1);
+        assertThat(count(body, "\"count\":2")).isEqualTo(1);
+    }
+
+    @Test
+    void unhandledKindsCountTowardsTheBoundOfTheirSource() {
+        for (int i = 0; i < SourceTrackers.MAX_KINDS + 5; i++) {
+            trackers.report("scheduler.async", new IllegalStateException("failure " + word(i)), false);
+        }
+
+        String body = errorBody();
+        assertThat(count(body, "\"handled\":false")).isEqualTo(32);
+        assertThat(body).contains("failure " + word(31)).doesNotContain("failure " + word(32));
+        assertThat(fixture.log.lines()).singleElement().asString().contains("'scheduler.async'");
     }
 
     @Test
@@ -273,21 +316,21 @@ class SourceTrackersTest {
 
     @Test
     void aNullErrorIsRefused() {
-        assertThatNullPointerException().isThrownBy(() -> trackers.report("storage", null)).withMessage("error");
+        assertThatNullPointerException().isThrownBy(() -> trackers.report("storage", null, true)).withMessage("error");
         assertThat(trackers.sources()).isZero();
     }
 
     @Test
     void theAnonymizeRulesApplyToASourceReport() {
-        trackers.report("storage", new IllegalStateException("mail admin@example.org failed"));
+        trackers.report("storage", new IllegalStateException("mail admin@example.org failed"), true);
 
         assertThat(errorBody()).contains("mail [email hidden] failed").doesNotContain("admin@example.org");
     }
 
     @Test
     void oneSourceKeepsOneTracker() {
-        trackers.report("storage", new IllegalStateException("first"));
-        trackers.report("storage", new IllegalArgumentException("second"));
+        trackers.report("storage", new IllegalStateException("first"), true);
+        trackers.report("storage", new IllegalArgumentException("second"), true);
 
         assertThat(trackers.sources()).isEqualTo(1);
         String body = errorBody();
@@ -296,7 +339,7 @@ class SourceTrackersTest {
 
     @Test
     void aRegisteredSourcePostsAnEmptyErrorsArrayAtEverySendAfterItsReportsWereSent() {
-        trackers.report("storage", new IllegalStateException("storage offline"));
+        trackers.report("storage", new IllegalStateException("storage offline"), true);
         ArgumentCaptor<Consumer<ScheduledTask>> scheduled = ArgumentCaptor.captor();
         verify(fixture.asyncScheduler)
             .runAtFixedRate(any(Plugin.class), scheduled.capture(), anyLong(), anyLong(), any(TimeUnit.class));

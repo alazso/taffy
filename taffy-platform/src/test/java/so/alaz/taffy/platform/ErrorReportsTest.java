@@ -11,6 +11,7 @@ import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 
 final class ErrorReportsTest {
 
@@ -261,5 +262,90 @@ final class ErrorReportsTest {
         errors.report("second", new IllegalStateException("handled"));
 
         assertThat(attempts).containsExactly("first", "second");
+    }
+
+    @Test
+    void anUnhandledReportReachesTheOneHandlerOfASingleInstall() {
+        IllegalStateException escaped = new IllegalStateException("escaped");
+        errors.install(this::collect);
+
+        errors.reportUnhandled("scheduler.async", escaped);
+
+        assertThat(received).containsExactly(new Report("scheduler.async", escaped));
+    }
+
+    @Test
+    void anInstallOfTwoHandlersSendsEachReportToTheOneThatTakesIt() {
+        List<Report> unhandled = new ArrayList<>();
+        IllegalStateException caught = new IllegalStateException("caught");
+        IllegalStateException escaped = new IllegalStateException("escaped");
+        errors.install(this::collect, (source, error) -> unhandled.add(new Report(source, error)));
+
+        errors.report("storage.save", caught);
+        errors.reportUnhandled("scheduler.async", escaped);
+
+        assertThat(received).containsExactly(new Report("storage.save", caught));
+        assertThat(unhandled).containsExactly(new Report("scheduler.async", escaped));
+    }
+
+    @Test
+    void heldReportsAreDeliveredToTheHandlerThatTakesEachInTheOrderTheyWereMade() {
+        List<String> order = new ArrayList<>();
+        errors.reportUnhandled("scheduler.global", new IllegalStateException("escaped"));
+        errors.report("config.load", new IllegalStateException("caught"));
+        errors.reportUnhandled("scheduler.global", new IllegalStateException("second of its source"));
+        errors.report("scheduler.global", new IllegalStateException("third of its source"));
+
+        errors.install((source, error) -> order.add("handled " + source),
+            (source, error) -> order.add("unhandled " + source));
+
+        assertThat(order).containsExactly("unhandled scheduler.global", "handled config.load");
+    }
+
+    @Test
+    void anInstallOfTwoHandlersReplacesTheTargetBeforeItAndASingleInstallReplacesBoth() {
+        List<String> order = new ArrayList<>();
+        errors.install(this::collect);
+        errors.install((source, error) -> order.add("handled " + source),
+            (source, error) -> order.add("unhandled " + source));
+        errors.report("first", new IllegalStateException("caught"));
+        errors.reportUnhandled("first", new IllegalStateException("escaped"));
+
+        errors.install(this::collect);
+        errors.report("second", new IllegalStateException("caught"));
+        errors.reportUnhandled("second", new IllegalStateException("escaped"));
+
+        assertThat(order).containsExactly("handled first", "unhandled first");
+        assertThat(received).extracting(Report::source).containsExactly("second", "second");
+    }
+
+    @Test
+    void anInstallOfTwoHandlersRefusesANullHandlerAndLeavesTheTargetInPlace() {
+        errors.install(this::collect);
+
+        assertThatNullPointerException().isThrownBy(() -> errors.install(null, this::collect))
+            .withMessage("handle");
+        assertThatNullPointerException().isThrownBy(() -> errors.install(this::collect, null))
+            .withMessage("unhandled");
+        errors.reportUnhandled("scheduler.async", new IllegalStateException("escaped"));
+
+        assertThat(received).extracting(Report::source).containsExactly("scheduler.async");
+    }
+
+    @Test
+    void anUnhandledReportIsDroppedAfterClearAndItsHandlerMayThrow() {
+        List<String> attempts = new ArrayList<>();
+        errors.install(this::collect, (source, error) -> {
+            attempts.add(source);
+            throw new NoClassDefFoundError("gone/Reporter");
+        });
+
+        assertThatCode(() -> errors.reportUnhandled("first", new IllegalStateException("escaped")))
+            .doesNotThrowAnyException();
+        errors.clear();
+        errors.reportUnhandled("second", new IllegalStateException("escaped"));
+
+        assertThat(attempts).containsExactly("first");
+        assertThat(received).isEmpty();
     }
 }

@@ -48,10 +48,10 @@ import java.util.function.Supplier;
  * checked exception thrown without being declared included), the scheduler reports it to the {@link ErrorReports}
  * it was built with, under the source {@code scheduler.global}, {@code scheduler.async} or
  * {@code scheduler.entity}, and then rethrows it unchanged, so Paper logs and handles it as it would without the
- * scheduler. Each throw is reported
- * once: a repeating task that throws on several runs is reported for each of them. A task or {@code retired}
- * callback run on the calling thread is not reported, and what it throws reaches the caller. {@link #dispatch}
- * reports nothing: its future carries what the task threw.
+ * scheduler. The report is made through {@link ErrorReports#reportUnhandled}, since nothing handles the error.
+ * Each throw is reported once: a repeating task that throws on several runs is reported for each of them. A task
+ * or {@code retired} callback run on the calling thread is not reported, and what it throws reaches the caller.
+ * {@link #dispatch} reports nothing: its future carries what the task threw.
  *
  * <p>Every method may be called from any thread. {@link #dispatch} with an entity tag looks the player up on
  * the server from the calling thread.
@@ -338,13 +338,13 @@ public final class Scheduler implements Dispatcher {
         return scheduled -> run.run();
     }
 
-    /** {@code task} wrapped so that anything it throws is reported, then rethrown unchanged. */
+    /** {@code task} wrapped so that anything it throws is reported as unhandled, then rethrown unchanged. */
     private Runnable reporting(String source, Runnable task) {
         return () -> {
             try {
                 task.run();
             } catch (Throwable failure) {
-                errors.report(source, failure);
+                errors.reportUnhandled(source, failure);
                 throw failure;
             }
         };

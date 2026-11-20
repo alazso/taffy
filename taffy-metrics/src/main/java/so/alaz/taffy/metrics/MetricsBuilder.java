@@ -174,7 +174,7 @@ public final class MetricsBuilder {
         TaffyUsage usage = TaffyUsage.start(owner, bStats != null, fastStats != null);
         Metrics handle = new Metrics(bStats, fastStats, usage, errors, logger);
         if (handle.sources != null) {
-            errors.install(handle::report);
+            errors.install(handle::report, handle::reportUnhandled);
         } else {
             errors.clear();
         }
