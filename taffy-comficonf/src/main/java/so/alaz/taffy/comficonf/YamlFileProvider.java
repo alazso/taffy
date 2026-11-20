@@ -87,12 +87,14 @@ import java.util.logging.Logger;
  * is reported under its own path when a value inside it differs.
  *
  * <p>An item of an object list is compared with the item of the same item key at startup, and with the item at the
- * same index where the list declares no item key; an item with no such item at startup has no startup values. A
- * change of this apply inside an object list has a path through the index of its item, which names another item
- * once an item was added, removed or moved, so such a change is reported as waiting even when its new value equals
- * its value at startup. A restart-only change is never reported as in effect while its value differs from the value
- * at startup. When the file could not be read as the provider was built, there are no startup values, and each
- * apply reports the restart-only changes it makes itself and no others.
+ * same index where the list declares no item key; an item with no such item at startup has no startup values. An
+ * item the list held at startup that the proposal no longer holds has no index in the proposal, so the list is
+ * reported under its own path while such an item holds a restart-only value. A change of this apply inside an
+ * object list has a path through the index of its item, which names another item once an item was added, removed
+ * or moved, so such a change is reported as waiting even when its new value equals its value at startup. A
+ * restart-only change is never reported as in effect while its value differs from the value at startup. When the
+ * file could not be read as the provider was built, there are no startup values, and each apply reports the
+ * restart-only changes it makes itself and no others.
  *
  * <p>The report is true only when the code using a restart-only value reads the settings of the first load,
  * {@link so.alaz.taffy.config.ConfigHolder#startup()}; code reading the settings in effect sees the new value at
@@ -310,7 +312,8 @@ public final class YamlFileProvider implements ConfigProvider {
     /**
      * Adds to {@code waiting} the path of each restart-only field among {@code fields} whose value in
      * {@code proposed} differs from its value in {@code atStartup}; missing and null count as equal. A value that is
-     * not a map holds no fields.
+     * not a map holds no fields. An object list is added under its own path when an item it held at startup, holding
+     * a restart-only value, has no item in {@code proposed}.
      */
     private static void collectWaiting(List<ConfigField> fields, @Nullable Object proposed,
                                        @Nullable Object atStartup, String path, List<String> waiting) {
@@ -328,12 +331,16 @@ public final class YamlFileProvider implements ConfigProvider {
                 }
             } else if (field.type() == FieldType.OBJECT) {
                 collectWaiting(field.fields(), value, startupValue, fieldPath, waiting);
-            } else if (field.type() == FieldType.OBJECT_LIST && value instanceof List<?> items) {
+            } else if (field.type() == FieldType.OBJECT_LIST) {
+                List<?> items = value instanceof List<?> list ? list : List.of();
                 List<?> startupItems = startupValue instanceof List<?> list ? list : List.of();
                 for (int i = 0; i < items.size(); i++) {
                     collectWaiting(field.fields(), items.get(i),
                         startupItem(field.itemKey(), items.get(i), i, startupItems), ConfigPath.index(fieldPath, i),
                         waiting);
+                }
+                if (hasRemovedRestartValue(field, items, startupItems)) {
+                    waiting.add(fieldPath);
                 }
             }
         }
@@ -358,6 +365,46 @@ public final class YamlFileProvider implements ConfigProvider {
             }
         }
         return null;
+    }
+
+    /**
+     * Whether a startup item that no item of {@code items} stands for holds a restart-only value. Such an item has
+     * no index in the proposal.
+     */
+    private static boolean hasRemovedRestartValue(ConfigField list, List<?> items, List<?> startupItems) {
+        for (int i = 0; i < startupItems.size(); i++) {
+            Object startupItem = startupItems.get(i);
+            if (isProposed(list.itemKey(), startupItem, i, items)) {
+                continue;
+            }
+            List<String> lost = new ArrayList<>();
+            collectWaiting(list.fields(), null, startupItem, "", lost);
+            if (!lost.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether an item of {@code items} stands for {@code startupItem}: one with the same value under
+     * {@code itemKey}, or the one at {@code index} when {@code itemKey} is null.
+     */
+    private static boolean isProposed(@Nullable String itemKey, @Nullable Object startupItem, int index,
+                                      List<?> items) {
+        if (itemKey == null) {
+            return index < items.size();
+        }
+        Object key = startupItem instanceof Map<?, ?> map ? map.get(itemKey) : null;
+        if (key == null) {
+            return false;
+        }
+        for (Object candidate : items) {
+            if (candidate instanceof Map<?, ?> map && key.equals(map.get(itemKey))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

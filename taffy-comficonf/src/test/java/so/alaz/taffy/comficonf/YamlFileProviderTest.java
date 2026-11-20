@@ -119,6 +119,14 @@ class YamlFileProviderTest {
                 ConfigField.integer("port").range(1, 65535).restartRequired())));
     }
 
+    private static SectionMapper greetingAndServersMapper() {
+        return SectionMapper.of(ConfigSchema.of(
+            ConfigField.string("greeting"),
+            ConfigField.objectList("servers").itemKey("id").fields(
+                ConfigField.string("id"),
+                ConfigField.integer("port").range(1, 65535).restartRequired())));
+    }
+
     private static Handler throwingHandler() {
         return new Handler() {
             @Override
@@ -794,8 +802,49 @@ class YamlFileProviderTest {
             changes));
 
         assertThat(result.status()).isEqualTo(ApplyStatus.SAVED_RESTART_REQUIRED);
-        assertThat(result.restartRequired()).containsExactly("servers[0].port");
+        assertThat(result.restartRequired()).containsExactly("servers[0].port", "servers");
         assertThat(listed.read().values().get("servers[0].port")).isEqualTo(1L);
+    }
+
+    @Test
+    void aLaterLiveOnlyApplyStillNamesTheListAnItemWasRemovedFrom() throws Exception {
+        Path servers = file.resolveSibling("servers.yml");
+        Files.writeString(servers, """
+            greeting: Hello
+            servers:
+            - id: a
+              port: 1
+            - id: b
+              port: 2
+            """);
+        YamlFileProvider listed = YamlFileProvider.builder(servers, greetingAndServersMapper(), () -> true)
+            .build(log.logger);
+        ConfigSnapshot current = listed.read();
+        Map<String, Object> first = new LinkedHashMap<>();
+        first.put("id", "a");
+        first.put("port", 1L);
+        Map<String, Object> second = new LinkedHashMap<>();
+        second.put("id", "b");
+        second.put("port", 2L);
+
+        ApplyResult removed = listed.apply(new TestApplyContext(current.revision(), current.values(),
+            current.values().with("servers", List.of(second)), List.of(
+                new FieldChange("servers[0]", ChangeKind.REMOVED, ApplyMode.LIVE, false, "a", null, null))));
+        ConfigSnapshot afterRemoval = listed.read();
+        ApplyResult liveOnly = listed.apply(new TestApplyContext(afterRemoval.revision(), afterRemoval.values(),
+            afterRemoval.values().with("greeting", "Hi"), List.of(
+                new FieldChange("greeting", ChangeKind.MODIFIED, ApplyMode.LIVE, false, null, "Hello", "Hi"))));
+        ConfigSnapshot afterGreeting = listed.read();
+        ApplyResult restored = listed.apply(new TestApplyContext(afterGreeting.revision(), afterGreeting.values(),
+            afterGreeting.values().with("servers", List.of(first, second)), List.of(
+                new FieldChange("servers[0]", ChangeKind.ADDED, ApplyMode.LIVE, false, "a", null, null))));
+
+        assertThat(removed.status()).isEqualTo(ApplyStatus.SAVED_RESTART_REQUIRED);
+        assertThat(removed.restartRequired()).containsExactly("servers");
+        assertThat(liveOnly.status()).isEqualTo(ApplyStatus.SAVED_RESTART_REQUIRED);
+        assertThat(liveOnly.restartRequired()).containsExactly("servers");
+        assertThat(restored.status()).isEqualTo(ApplyStatus.APPLIED);
+        assertThat(restored.restartRequired()).isEmpty();
     }
 
     @Test
