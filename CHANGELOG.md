@@ -27,6 +27,15 @@ All notable changes to Taffy are documented here. This project follows
   `ClassCastException`; a menu overrides it, such as `return Integer.class;` in a `Menu<Integer>`, to get the
   check.
 
+### Changed
+- Breaking: `Menus.register` and `Menus.reload` throw an `IllegalArgumentException` for a material that is not an
+  item a slot can show, air included: the material of an `ItemLayout` (shown or not), the `filler` of a
+  `MenuLayout`, the `emptyMaterial` of a `PagerLayout`, and, in `register`, the `filler` and `loadingItem` of the
+  `MenuSettings`. The message names the menu and the item, such as "item buy of the shop menu has the material
+  WALL_TORCH, which is not an item". Before, such a layout registered and every open of the menu failed with a
+  stack trace. A refused `reload` leaves the layouts as they were. Give each of these an item material, and
+  catch the exception where the plugin reads layouts or settings from a file, to show the owner the message.
+
 ### Fixed
 - A chat line that answers a `Prompts` ask is judged once. Paper posts the legacy `AsyncPlayerChatEvent` and then
   `AsyncChatEvent` for one line, and when the answer was refused, or its function started another ask, the ask

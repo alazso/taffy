@@ -116,6 +116,7 @@ public final class Menus {
     private final PreviewMarker marker;
     private final Inventories inventories;
     private final Predicate<Player> ownedHere;
+    private final Predicate<Material> item;
     private final Feedback feedback;
     private final MenuText text;
     private final Debounce debounce;
@@ -136,11 +137,13 @@ public final class Menus {
      */
     public Menus(Parts parts) {
         this(parts, marker -> new PaperInventories(parts.server(), marker),
-            player -> parts.server().isOwnedByCurrentRegion(player), Clock.systemUTC());
+            player -> parts.server().isOwnedByCurrentRegion(player), Menus::showable, Clock.systemUTC());
     }
 
-    Menus(Parts parts, Function<PreviewMarker, Inventories> inventories, Predicate<Player> ownedHere, Clock clock) {
+    Menus(Parts parts, Function<PreviewMarker, Inventories> inventories, Predicate<Player> ownedHere,
+          Predicate<Material> item, Clock clock) {
         this.parts = Objects.requireNonNull(parts, "parts");
+        this.item = item;
         this.clock = clock;
         this.marker = new PreviewMarker(parts.preview());
         this.inventories = inventories.apply(marker);
@@ -182,6 +185,11 @@ public final class Menus {
         return List.copyOf(keys);
     }
 
+    // Material.isItem reads the item registry, which exists only on a running server.
+    private static boolean showable(Material material) {
+        return material.isItem() && !material.isAir();
+    }
+
     void prompts(MenuPrompts prompts) {
         this.prompts = prompts;
     }
@@ -196,7 +204,9 @@ public final class Menus {
      * @param menu the menu
      * @throws IllegalArgumentException if no layout was given for the menu's id, the layout does not fit the menu's
      *     kind (a kind that shows a list with a layout that has none, or an item whose action is neither one of the
-     *     kind's actions nor a footer action), or a menu is already registered under it
+     *     kind's actions nor a footer action), a material is not an item a slot can show (the material of a layout
+     *     item, the layout's filler or empty state, or the filler or loading item of the {@link MenuSettings}; air
+     *     is no such item), or a menu is already registered under it
      */
     public void register(Menu<?> menu) {
         String id = menu.kind().id();
@@ -205,6 +215,7 @@ public final class Menus {
             throw new IllegalArgumentException("no layout was given for the " + id + " menu");
         }
         fit(menu.kind(), layout);
+        materials(layout);
         if (menus.putIfAbsent(id, menu) != null) {
             throw new IllegalArgumentException("the " + id + " menu is already registered");
         }
@@ -413,7 +424,8 @@ public final class Menus {
      * @param layouts the layout of each menu, keyed by menu id
      * @throws NullPointerException if {@code layouts}, a key or a layout is {@code null}
      * @throws IllegalArgumentException if a key differs from its layout's {@link MenuLayout#menu()}, a registered
-     *     menu has no layout, or a registered menu's layout does not fit its kind as {@link #register(Menu)} requires
+     *     menu has no layout, or a registered menu's layout does not fit its kind or holds a material that is not
+     *     an item, as {@link #register(Menu)} requires
      */
     public void reload(Map<String, MenuLayout> layouts) {
         Map<String, MenuLayout> copy = checked(layouts);
@@ -423,6 +435,7 @@ public final class Menus {
                 throw new IllegalArgumentException("no layout was given for the " + menu.kind().id() + " menu");
             }
             fit(menu.kind(), layout);
+            materials(layout);
         }
         this.layouts = copy;
     }
@@ -653,6 +666,29 @@ public final class Menus {
                 throw new IllegalArgumentException("item " + item.id() + " of the " + kind.id() + " menu has the action "
                     + action + ", which the menu does not have");
             }
+        }
+    }
+
+    private void materials(MenuLayout layout) {
+        MenuSettings settings = parts.settings();
+        item("the filler of the menu settings", settings.filler());
+        item("the loading item of the menu settings", settings.loadingItem());
+        String menu = "the " + layout.menu() + " menu";
+        if (layout.filler() != null) {
+            item("the filler of " + menu, layout.filler());
+        }
+        PagerLayout pager = layout.pager();
+        if (pager != null && pager.emptyMaterial() != null) {
+            item("the empty state of " + menu, pager.emptyMaterial());
+        }
+        for (ItemLayout placed : layout.items().values()) {
+            item("item " + placed.id() + " of " + menu, placed.material());
+        }
+    }
+
+    private void item(String what, Material material) {
+        if (!item.test(material)) {
+            throw new IllegalArgumentException(what + " has the material " + material + ", which is not an item");
         }
     }
 

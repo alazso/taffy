@@ -47,7 +47,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 // Menus over the layouts built here and the English text below, or the lang files given, with fake inventories,
-// next-tick tasks that run on drain(), an inline entity thread and a clock the test moves. Extra layouts are added by
+// next-tick tasks that run on drain(), an inline entity thread and a clock the test moves. Every material is an item
+// but those in notItems, since Material.isItem needs a running server. Extra layouts are added by
 // menu id. Each viewer is a mocked player whose open and close go through the listener as on a server: an open closes
 // the previous view with OPEN_NEW first. Clicks and drags are real events passed to the listener. With listening false the close event
 // reaches no listener, as on a server while the plugin is disabled.
@@ -115,6 +116,7 @@ final class MenuHarness {
     final PreviewMarker marker;
     final MenuListener listener;
     Predicate<Player> owned = player -> true;
+    final Set<Material> notItems = new HashSet<>(Set.of(Material.AIR, Material.WATER, Material.WALL_TORCH));
     boolean listening = true;
 
     MenuHarness(Path folder) {
@@ -140,7 +142,7 @@ final class MenuHarness {
         errors.install((source, error) -> reports.add(new Report(source, error)));
         menus = new Menus(new Menus.Parts(layouts, settings, this.messages, Player::locale, mock(Server.class),
             new NamespacedKey("taffytest", "preview"), tasks, entity, () -> SOUNDS, home, log.logger, errors),
-            marker -> inventories, player -> owned.test(player), clock);
+            marker -> inventories, player -> owned.test(player), material -> !notItems.contains(material), clock);
         marker = menus.marker();
         menus.prompts(prompts);
         listener = (MenuListener) menus.listener();

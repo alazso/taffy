@@ -16,7 +16,8 @@ import java.util.Objects;
  *
  * @param id the item's id within its menu
  * @param slots the slots the item fills; not empty
- * @param material the item shown
+ * @param material the item shown; {@link Menus#register(Menu)} and {@link Menus#reload(java.util.Map)} refuse a
+ *     material that is not an item, air included
  * @param action the menu action the item stands for, or {@code null} for decoration
  * @param permission the permission a viewer needs to see the item, or {@code null} for none
  * @param enabled whether the item is shown at all

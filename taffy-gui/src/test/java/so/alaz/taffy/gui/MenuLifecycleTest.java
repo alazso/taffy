@@ -24,6 +24,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.RecordComponent;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
@@ -247,6 +248,57 @@ final class MenuLifecycleTest {
     }
 
     @Test
+    void aLayoutMaterialThatIsNotAnItemIsRefusedAtRegisterAndAtReload() {
+        Map<String, ItemLayout> wall = new LinkedHashMap<>(PLAIN_LAYOUT.items());
+        wall.put("torch", MenuHarness.item("torch", 5, Material.WALL_TORCH, null).enabled(false));
+        MenuLayout badItem = new MenuLayout(PLAIN.id(), 3, null, null, wall, null);
+        MenuLayout badFiller = new MenuLayout(PLAIN.id(), 3, Material.WATER, null, PLAIN_LAYOUT.items(), null);
+        MenuLayout badEmpty = new MenuLayout(PLAIN.id(), 3, null, new PagerLayout(List.of(9), 9, Material.AIR),
+            PLAIN_LAYOUT.items(), null);
+        MenuHarness refused = new MenuHarness(folder, MenuSettings.DEFAULTS, Map.of(PLAIN.id(), badItem));
+
+        assertThatThrownBy(() -> refused.menus.register(new TestMenu(PLAIN)))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("item torch of the plain menu has the material WALL_TORCH, which is not an item");
+        assertThat(refused.menus.registered(PLAIN.id())).isFalse();
+
+        MenuHarness harness = plainHarness();
+        harness.menus.register(new TestMenu(PLAIN));
+        Map<String, MenuLayout> layouts = new LinkedHashMap<>(harness.layouts);
+        layouts.put(PLAIN.id(), badFiller);
+        assertThatThrownBy(() -> harness.menus.reload(layouts))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the filler of the plain menu has the material WATER, which is not an item");
+        layouts.put(PLAIN.id(), badEmpty);
+        assertThatThrownBy(() -> harness.menus.reload(layouts))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the empty state of the plain menu has the material AIR, which is not an item");
+        layouts.put(PLAIN.id(), badItem);
+        assertThatThrownBy(() -> harness.menus.reload(layouts))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("item torch of the plain menu has the material WALL_TORCH, which is not an item");
+        MenuHarness.Viewer viewer = harness.viewer("Alex");
+        harness.open(viewer, PLAIN.id());
+        assertThat(viewer.session().layout()).isSameAs(PLAIN_LAYOUT);
+    }
+
+    @Test
+    void aSettingsMaterialThatIsNotAnItemIsRefusedWhenAMenuRegisters() {
+        MenuHarness filler = new MenuHarness(folder, new MenuSettings(45, Material.WATER, Duration.ofMillis(250),
+            Material.CLOCK), Map.of(PLAIN.id(), PLAIN_LAYOUT));
+        MenuHarness loading = new MenuHarness(folder, new MenuSettings(45, Material.STONE, Duration.ofMillis(250),
+            Material.AIR), Map.of(PLAIN.id(), PLAIN_LAYOUT));
+
+        assertThatThrownBy(() -> filler.menus.register(new TestMenu(PLAIN)))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the filler of the menu settings has the material WATER, which is not an item");
+        assertThatThrownBy(() -> loading.menus.register(new TestMenu(PLAIN)))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the loading item of the menu settings has the material AIR, which is not an item");
+        assertThat(loading.menus.registered(PLAIN.id())).isFalse();
+    }
+
+    @Test
     void aFooterActionTheKindLacksMayStandInTheLayout() {
         MenuHarness harness = new MenuHarness(folder);
 
@@ -386,7 +438,7 @@ final class MenuLifecycleTest {
         Menus menus = new Menus(new Menus.Parts(harness.layouts, MenuSettings.DEFAULTS, harness.messages,
             Player::locale, mock(Server.class), new NamespacedKey("taffytest", "preview"), harness.tasks,
             harness.entity, () -> sounds, null, harness.log.logger, harness.errors), marker -> harness.inventories,
-            player -> true, harness.clock);
+            player -> true, material -> true, harness.clock);
         MenuHarness.Viewer viewer = harness.viewer("Alex");
 
         menus.play(viewer.player, Cue.SUCCESS);

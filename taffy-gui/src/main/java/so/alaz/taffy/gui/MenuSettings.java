@@ -8,7 +8,8 @@ import java.util.Objects;
 
 /**
  * The limits and items every menu shares. The plugin reads them from its own settings and builds this record; they
- * stay fixed for the life of the {@link Menus} built with them.
+ * stay fixed for the life of the {@link Menus} built with them. {@link Menus#register(Menu)} refuses a
+ * {@code filler} or {@code loadingItem} that is not an item, air included.
  *
  * @param pageSize the most list entries one page shows, from 1 to {@link #MAX_PAGE_SIZE}
  * @param filler the item in every slot nothing else fills, unless the menu's layout names its own

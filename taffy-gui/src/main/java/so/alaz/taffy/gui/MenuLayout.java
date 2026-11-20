@@ -20,7 +20,8 @@ import java.util.Objects;
  *
  * @param menu the id of the menu this layout is for
  * @param rows the number of chest rows, from 1 to 6
- * @param filler the item in every slot nothing else fills, or {@code null} for the menus' default filler
+ * @param filler the item in every slot nothing else fills, or {@code null} for the menus' default filler;
+ *     {@link Menus#register(Menu)} and {@link Menus#reload(Map)} refuse a material that is not an item, air included
  * @param pager where the menu shows its list, or {@code null} for a menu without a list
  * @param items the items, each keyed by its own {@link ItemLayout#id()}; every slot of every item is from 0 to
  *     {@code rows * 9 - 1}

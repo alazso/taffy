@@ -13,7 +13,8 @@ import java.util.Set;
  *
  * @param slots the slots the list fills, in the order entries are placed; not empty, each from 0 to 53, no slot twice
  * @param emptySlot the slot that shows the empty state, one of {@code slots}, or {@code null} for no empty state
- * @param emptyMaterial the item of the empty state, or {@code null} for paper
+ * @param emptyMaterial the item of the empty state, or {@code null} for paper; {@link Menus#register(Menu)} and
+ *     {@link Menus#reload(java.util.Map)} refuse a material that is not an item, air included
  */
 public record PagerLayout(List<Integer> slots, @Nullable Integer emptySlot, @Nullable Material emptyMaterial) {
 
