@@ -88,9 +88,12 @@
  * therefore installs no target of its own before {@code start()}: such a target would take the held reports, and
  * {@code start()} would then replace it. A target installed after {@code start()} replaces the handle in turn, so a
  * plugin that also wants its reports elsewhere installs one target that passes each report to
- * {@link so.alaz.taffy.metrics.Metrics#report} and to its own handler. {@link so.alaz.taffy.metrics.Metrics#shutdown()}
- * clears the sink, which holds nothing after its first install or clear: a plugin that restarts its metrics on
- * reload with the same sink loses the reports raised between the shutdown and the next {@code start()}.
+ * {@link so.alaz.taffy.metrics.Metrics#report} and to its own handler, with
+ * {@link so.alaz.taffy.platform.ErrorReports#install(java.util.function.BiConsumer, java.util.function.BiConsumer)}
+ * and a second handler that passes to {@link so.alaz.taffy.metrics.Metrics#reportUnhandled} when unhandled reports
+ * are to stay unhandled. {@link so.alaz.taffy.metrics.Metrics#shutdown()} clears the sink, which holds nothing after
+ * its first install or clear: a plugin that restarts its metrics on reload with the same sink loses the reports
+ * raised between the shutdown and the next {@code start()}.
  *
  * <h2>Uncaught exceptions</h2>
  *
@@ -100,10 +103,10 @@
  * {@link so.alaz.taffy.metrics.MetricChart}) and the exceptions Paper reports for the plugin itself in a
  * {@code ServerExceptionEvent}, such as one thrown from one of its event handlers. Paper's region, async and entity
  * schedulers fire no {@code ServerExceptionEvent}, so {@link so.alaz.taffy.platform.Scheduler} reports a task Paper
- * runs for it that throws through {@link so.alaz.taffy.platform.ErrorReports}, and FastStats receives it as a
- * handled report. An uncaught exception on a thread the plugin starts itself is not sent to FastStats, and the JVM
- * prints it as usual. A plugin that wants such errors tracked catches them and reports them through
- * {@link so.alaz.taffy.platform.ErrorReports#report}.
+ * runs for it that throws through {@link so.alaz.taffy.platform.ErrorReports#reportUnhandled}, and FastStats
+ * receives it with {@code handled} set to {@code false}, once for its kind from that source. An uncaught exception
+ * on a thread the plugin starts itself is not sent to FastStats, and the JVM prints it as usual. A plugin that wants
+ * such errors tracked catches them and reports them through {@link so.alaz.taffy.platform.ErrorReports#report}.
  *
  * <h2>Diagnostics</h2>
  *
