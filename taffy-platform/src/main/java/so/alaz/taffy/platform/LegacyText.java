@@ -18,7 +18,8 @@ import java.util.Map;
  * becomes {@code <red><bold>ADMIN <gray><!bold>Steve}. The color tag is followed by the negation of each
  * decoration that a format code earlier in the same call opened, and {@code &r} becomes {@code <reset>}. Only
  * format codes count: a decoration opened by a tag in the input, or in a string converted by another call,
- * stays open after a color code.
+ * stays open after a color code, unless a format code earlier in the same call opened the same decoration, in
+ * which case the negation tag ends both.
  */
 public final class LegacyText {
 

@@ -130,11 +130,13 @@ All notable changes to Taffy are documented here. This project follows
   nested object, such as `thumbnail` or `author`, and in 0.1 such a section was handed to Gson as an arbitrary
   object, so the body did not carry it as the config wrote it.
 - `LegacyText.toMiniMessage`, `LegacyText.sectionToMiniMessage` and every `Text` and `Messages` render: a legacy
-  colour code ends the format codes before it, as it does in legacy text. `&c&lADMIN &7Steve` becomes
+  colour code ends the format codes before it, as it does in legacy text. `&c&lADMIN &7Steve` through
+  `toMiniMessage`, or the same text written with section signs in a `Text` or `Messages` render, becomes
   `<red><bold>ADMIN <gray><!bold>Steve`, so `Steve` is gray and not bold; before, `<bold>` stayed open and the
   rest of the line was bold. The colour tag is followed by the negation of each decoration that a format code
   earlier in the same string opened. A decoration opened by a tag, or by a format code in a separately converted
-  string such as a `Placeholder.parsed` value, stays open after a colour code.
+  string such as a `Placeholder.parsed` value, stays open after a colour code, unless a format code earlier in
+  the same string opened the same decoration.
 - `Messages.load` and `Messages.reload` warn when two files in `lang` read as one locale, such as `pt-BR.yml` and
   `pt_br.yml`. In 0.1 one of them replaced the other without a warning. The warning names both files and the one
   used, which is the one the folder listing gives last.
