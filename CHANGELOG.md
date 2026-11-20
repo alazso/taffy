@@ -10,6 +10,10 @@ All notable changes to Taffy are documented here. This project follows
   `apply` returns when the file was saved and the activation did not put the values in effect, so the editor can
   name the plugin's reload command. A provider built without it keeps the message "The values were saved, but
   the plugin could not load them, so they are not in effect."
+- `YamlFileProvider.Builder.backups(BackupPolicy)` sets the folder that receives the backups `apply` takes and
+  the number kept. A provider built without it keeps the 10 newest in the `backups` folder beside the file, as
+  before. Each backup is a full copy of the file as it was before the write, secrets included, which the
+  `YamlFileProvider` Javadoc now states.
 
 ### Fixed
 - `YamlFileProvider.read`, the first read of `YamlFileProvider.apply` and the read of

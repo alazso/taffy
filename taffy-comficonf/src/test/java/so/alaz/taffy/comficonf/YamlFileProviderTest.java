@@ -941,6 +941,31 @@ class YamlFileProviderTest {
     }
 
     @Test
+    void keepsBackupsUnderThePolicyThePluginSets() throws Exception {
+        BackupPolicy policy = new BackupPolicy(folder.resolve("archive"), 1);
+        YamlFileProvider archiving = YamlFileProvider.builder(file, mapper(), () -> true)
+            .backups(policy).build(log.logger);
+
+        archiving.apply(changing(archiving, "greeting", "Hi", ApplyMode.LIVE));
+        archiving.apply(changing(archiving, "greeting", "Hey", ApplyMode.LIVE));
+
+        List<Path> kept = SafeFileWriter.listBackups(file, policy);
+        assertThat(kept).hasSize(1).allSatisfy(backup -> assertThat(backup.getParent())
+            .isEqualTo(folder.resolve("archive")));
+        assertThat(Files.readString(kept.getFirst())).isEqualTo(SETTINGS.replace("greeting: Hello", "greeting: Hi"));
+        assertThat(backups).doesNotExist();
+    }
+
+    @Test
+    void aBackupIsAFullCopyOfTheFileWithItsSecrets() throws Exception {
+        provider.apply(changing(provider, "greeting", "Hi", ApplyMode.LIVE));
+
+        assertThat(SafeFileWriter.listBackups(file, BackupPolicy.in(backups))).singleElement()
+            .satisfies(backup -> assertThat(Files.readString(backup)).isEqualTo(SETTINGS)
+                .contains("password: s3cret"));
+    }
+
+    @Test
     void aBackupFolderThatIsAFileFailsTheWriteAndLeavesTheFileAlone() throws Exception {
         Files.writeString(backups, "not a folder");
         byte[] before = Files.readAllBytes(file);
@@ -1014,6 +1039,8 @@ class YamlFileProviderTest {
             .isInstanceOf(NullPointerException.class).hasMessage("rules");
         assertThatThrownBy(() -> builder.notLoadedMessage(null))
             .isInstanceOf(NullPointerException.class).hasMessage("message");
+        assertThatThrownBy(() -> builder.backups(null))
+            .isInstanceOf(NullPointerException.class).hasMessage("policy");
         assertThatThrownBy(() -> builder.build(null))
             .isInstanceOf(NullPointerException.class).hasMessage("logger");
     }

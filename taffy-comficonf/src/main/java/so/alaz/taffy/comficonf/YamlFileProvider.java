@@ -45,10 +45,11 @@ import java.util.logging.Logger;
  * the file, made while holding the lock of {@link SafeFileWriter#lockFor(Path)}. {@link #apply} takes that lock,
  * reads the file, checks the base revision against the current bytes, merges the proposal into the document parsed
  * from them, refuses a value the file cannot store unchanged and writes through {@link SafeFileWriter}, which keeps
- * the 10 newest backups in the {@code backups} folder beside the file, and releases the lock. With no lock held, it
- * then runs the activation on the main thread through {@link ApplyContext#callSync}. Nothing after
- * the write throws: the result is {@code applied} only when the activation returned {@code true} and no restart-only
- * change waits, and {@code savedRestartRequired} otherwise.
+ * the 10 newest backups in the {@code backups} folder beside the file unless {@link Builder#backups} names another
+ * policy, and releases the lock. Each backup is a full copy of the file as it was before the write, the secrets in
+ * it included. With no lock held, it then runs the activation on the main thread through
+ * {@link ApplyContext#callSync}. Nothing after the write throws: the result is {@code applied} only when the
+ * activation returned {@code true} and no restart-only change waits, and {@code savedRestartRequired} otherwise.
  *
  * <h2>The activation</h2>
  *
@@ -135,7 +136,8 @@ public final class YamlFileProvider implements ConfigProvider {
     private YamlFileProvider(Builder builder, Logger logger) {
         this.file = builder.file;
         this.fileName = builder.file.getFileName().toString();
-        this.backups = BackupPolicy.in(builder.file.resolveSibling("backups"));
+        this.backups = builder.backups != null ? builder.backups
+            : BackupPolicy.in(builder.file.resolveSibling("backups"));
         this.logger = logger;
         this.activation = builder.activation;
         this.mapper = builder.mapper;
@@ -409,6 +411,7 @@ public final class YamlFileProvider implements ConfigProvider {
         private final Callable<Boolean> activation;
         private Function<ConfigValues, ValidationResult> rules = proposed -> ValidationResult.ok();
         private String notLoadedMessage = NOT_LOADED;
+        private @Nullable BackupPolicy backups;
 
         private Builder(Path file, SectionMapper mapper, Callable<Boolean> activation) {
             this.file = Objects.requireNonNull(file, "file");
@@ -444,6 +447,22 @@ public final class YamlFileProvider implements ConfigProvider {
          */
         public Builder notLoadedMessage(String message) {
             this.notLoadedMessage = Objects.requireNonNull(message, "message");
+            return this;
+        }
+
+        /**
+         * Sets where {@link YamlFileProvider#apply} keeps the backups of the file and how many it keeps. Without this
+         * call the 10 newest backups are kept in the {@code backups} folder beside the file.
+         *
+         * <p>Each backup is a full copy of the file as it was before a write: every value in it, the secrets
+         * included, in plain text, and it stays until newer backups replace it. The folder of the policy is as
+         * private as the file itself.
+         *
+         * @param policy the folder that receives the backups and the number of backups kept
+         * @return this builder
+         */
+        public Builder backups(BackupPolicy policy) {
+            this.backups = Objects.requireNonNull(policy, "policy");
             return this;
         }
 
