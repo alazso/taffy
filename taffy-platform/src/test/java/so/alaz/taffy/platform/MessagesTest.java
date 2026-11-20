@@ -243,6 +243,34 @@ final class MessagesTest {
     }
 
     @Test
+    void twoFilesOfOneNormalizedLocaleGiveAWarningThatNamesTheOneUsed() throws IOException {
+        write("pt-BR.yml", BUNDLED.replace("Held", "Hyphen"));
+        write("pt_br.yml", BUNDLED.replace("Held", "Underscore"));
+
+        Messages messages = Messages.load(folder, bundled(), log.logger);
+
+        assertThat(messages.loadedLanguages()).containsExactlyInAnyOrder("en", "pt_br");
+        String held = plain(messages, Locale.of("pt", "BR"), "parcel.held");
+        String used = held.equals("Hyphen: 7.") ? "pt-BR.yml" : "pt_br.yml";
+        String replaced = used.equals("pt-BR.yml") ? "pt_br.yml" : "pt-BR.yml";
+        assertThat(held).isIn("Hyphen: 7.", "Underscore: 7.");
+        assertThat(log.lines()).containsExactly("WARNING lang/" + replaced + " and lang/" + used
+            + " are both read as the language pt_br, so only lang/" + used + " is used. Remove or rename one of"
+            + " them.");
+    }
+
+    @Test
+    void aFileThatIsSkippedTakesNoPartInTheWarningForOneNormalizedLocale() throws IOException {
+        write("pt-BR.yml", "parcel.held: [unclosed\n");
+        write("pt_br.yml", BUNDLED);
+
+        Messages.load(folder, bundled(), log.logger);
+
+        assertThat(log.lines()).containsExactly(
+            "WARNING lang/pt-BR.yml is not valid YAML saved as UTF-8, so its messages are not used.");
+    }
+
+    @Test
     void aHyphenInTheDefaultLocaleOrInAFileNameReadsAsAnUnderscore() throws IOException {
         assertThat(Messages.normalizeLocale("pt-BR")).isEqualTo("pt_br");
 

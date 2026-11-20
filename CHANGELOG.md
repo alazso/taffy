@@ -107,6 +107,9 @@ All notable changes to Taffy are documented here. This project follows
   rest of the line was bold. The colour tag is followed by the negation of each decoration that a format code
   earlier in the same string opened. A decoration opened by a tag, or by a format code in a separately converted
   string such as a `Placeholder.parsed` value, stays open after a colour code.
+- `Messages.load` and `Messages.reload` warn when two files in `lang` read as one locale, such as `pt-BR.yml` and
+  `pt_br.yml`. In 0.1 one of them replaced the other without a warning. The warning names both files and the one
+  used, which is the one the folder listing gives last.
 
 ## [0.1.2] - 2026-11-19
 

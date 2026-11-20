@@ -106,9 +106,11 @@ public final class Messages {
     /**
      * Writes the bundled English file into {@code dataFolder/lang/en.yml} when that file is absent, then reads every
      * {@code .yml} file in that folder. A file that cannot be read is skipped with a warning, and the keys each file
-     * lacks are listed in one warning per file. A folder that cannot be written or listed is reported with a warning
-     * and the bundled English text is used. A default locale other than en that has no file is reported with a
-     * warning as well.
+     * lacks are listed in one warning per file. Two files whose names read as one locale, such as
+     * {@code pt-BR.yml} and {@code pt_br.yml}, are reported with a warning that names the one used: the one the
+     * folder listing gives last. A folder that cannot be written or listed is reported with a warning and the
+     * bundled English text is used. A default locale other than en that has no file is reported with a warning as
+     * well.
      *
      * @param bundled       opens the bundled English file, a new stream on each call
      * @param defaultLocale the language used when the viewer's own does not apply, read as
@@ -176,6 +178,7 @@ public final class Messages {
                 + ". Messages use the bundled English text.");
         }
         Map<String, Map<String, List<String>>> loaded = new HashMap<>();
+        Map<String, String> names = new HashMap<>();
         if (Files.isDirectory(folder)) {
             try (DirectoryStream<Path> files = Files.newDirectoryStream(folder, "*.yml")) {
                 for (Path file : files) {
@@ -192,6 +195,12 @@ public final class Messages {
                     if (!missing.isEmpty()) {
                         logger.warning(FOLDER + "/" + name + " lacks " + String.join(", ", missing) + "; those messages"
                             + fallback(locale));
+                    }
+                    String replaced = names.put(locale, name);
+                    if (replaced != null) {
+                        logger.warning(FOLDER + "/" + replaced + " and " + FOLDER + "/" + name + " are both read as"
+                            + " the language " + locale + ", so only " + FOLDER + "/" + name + " is used. Remove or"
+                            + " rename one of them.");
                     }
                     loaded.put(locale, values);
                 }
