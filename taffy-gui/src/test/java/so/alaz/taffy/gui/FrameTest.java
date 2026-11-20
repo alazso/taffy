@@ -124,12 +124,62 @@ final class FrameTest {
     }
 
     @Test
+    void listByIndexAsksOnlyForTheEntriesOfThePageShown() {
+        MenuHarness harness = new MenuHarness(folder);
+        List<Integer> asked = new ArrayList<>();
+        List<Pager.Page> pages = new ArrayList<>();
+        TestMenu menu = new TestMenu(MenuHarness.LIST);
+        menu.render = frame -> pages.add(frame.list(100, frame.state(), index -> {
+            asked.add(index);
+            return Frame.Entry.click(new Icon.Button(Material.PAPER, 1, Component.text("Row " + index), List.of(),
+                false), click -> {
+                });
+        }));
+        harness.menus.register(menu);
+        MenuHarness.Viewer viewer = harness.viewer("Alex");
+
+        harness.menus.open(viewer.player, new Route(MenuHarness.LIST.id(), 1, null));
+
+        assertThat(pages).containsExactly(new Pager.Page(1, 3, 36, 72));
+        assertThat(asked).containsExactlyElementsOf(IntStream.range(36, 72).boxed().toList());
+        assertThat(viewer.name(9)).isEqualTo("Row 36");
+        assertThat(viewer.name(44)).isEqualTo("Row 71");
+        assertThat(viewer.session().buttons().get(9).key()).isEqualTo("row:9");
+    }
+
+    @Test
+    void listByIndexAsksForNothingOnAnEmptyListAndRefusesANullEntryAndANegativeCount() {
+        MenuHarness harness = new MenuHarness(folder);
+        List<Pager.Page> pages = new ArrayList<>();
+        List<Runnable> calls = new ArrayList<>();
+        TestMenu menu = new TestMenu(MenuHarness.LIST);
+        menu.render = frame -> {
+            pages.add(frame.list(0, 4, index -> {
+                throw new AssertionError("asked for " + index);
+            }));
+            calls.add(() -> frame.list(1, 0, index -> null));
+            calls.add(() -> frame.list(-1, 0, index -> Frame.Entry.display(ROW)));
+            calls.add(() -> frame.list(1, 0, null));
+        };
+        harness.menus.register(menu);
+
+        harness.open(harness.viewer("Alex"), MenuHarness.LIST.id());
+
+        assertThat(pages).containsExactly(new Pager.Page(0, 1, 0, 0));
+        assertThatThrownBy(calls.get(0)::run).isInstanceOf(NullPointerException.class).hasMessage("entry 0");
+        assertThatThrownBy(calls.get(1)::run).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("a list holds at least zero entries, not -1");
+        assertThatThrownBy(calls.get(2)::run).isInstanceOf(NullPointerException.class).hasMessage("entryAt");
+    }
+
+    @Test
     void aMenuWithoutAListRefusesEveryListCall() {
         MenuHarness harness = new MenuHarness(folder);
         List<Runnable> calls = new ArrayList<>();
         TestMenu menu = new TestMenu(MenuHarness.MAIN);
         menu.render = frame -> {
             calls.add(() -> frame.list(List.of(), 0));
+            calls.add(() -> frame.list(0, 0, index -> Frame.Entry.display(ROW)));
             calls.add(frame::capacity);
             calls.add(frame::loading);
             calls.add(frame::empty);
@@ -137,7 +187,7 @@ final class FrameTest {
         harness.menus.register(menu);
         harness.open(harness.viewer("Alex"), MenuHarness.MAIN.id());
 
-        assertThat(calls).hasSize(4).allSatisfy(call -> assertThatThrownBy(call::run)
+        assertThat(calls).hasSize(5).allSatisfy(call -> assertThatThrownBy(call::run)
             .isInstanceOf(IllegalStateException.class)
             .hasMessage("the main menu has no list"));
     }

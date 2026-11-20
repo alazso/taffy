@@ -16,6 +16,10 @@ All notable changes to Taffy are documented here. This project follows
   that fails or completes with `null` is logged, reported under `gui.prompt`, tells the player `gui.error` and
   opens the origin, as an answer function that throws does; a cancelled future opens the origin with no message.
   A plugin's own `switch` over the sealed `Answer` needs a case for `Later` to compile.
+- `Frame.list(int count, int requestedPage, IntFunction<Frame.Entry> entryAt)` fills the list from the number
+  of entries and a function that gives the entry at an index. It works out the page first and asks for the
+  entries on that page only, each once and in order, so a menu over a long list no longer builds an icon for
+  every row of every page on each render. `Frame.list(List, int)` is unchanged and runs on top of it.
 - `Menu.stateType()` names a type every state of the menu is an instance of. `Menus.open(Player, Route)` and
   `Menus.openLater(Player, Route)` throw an `IllegalArgumentException` that names the menu, that type and the
   type given for a route whose state is no instance of it, before anything opens or is scheduled. The default is

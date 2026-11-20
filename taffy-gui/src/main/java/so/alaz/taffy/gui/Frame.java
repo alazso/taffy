@@ -151,7 +151,8 @@ public final class Frame<S> {
 
     /**
      * Fills the first {@link #capacity()} list slots with the page of entries nearest {@code requestedPage}. A row's
-     * button key is {@code row:<slot>}.
+     * button key is {@code row:<slot>}. Every entry of the list exists before the call;
+     * {@link #list(int, int, IntFunction)} builds only the entries of the page shown.
      *
      * @param entries every entry of the list, in order
      * @param requestedPage the index of the page asked for, counting from 0
@@ -159,11 +160,29 @@ public final class Frame<S> {
      * @throws IllegalStateException if the layout has no list
      */
     public Pager.Page list(List<Entry> entries, int requestedPage) {
+        return list(entries.size(), requestedPage, entries::get);
+    }
+
+    /**
+     * Fills the first {@link #capacity()} list slots with the page nearest {@code requestedPage} of a list of
+     * {@code count} entries, and asks {@code entryAt} only for the entries on that page, each once, in order. A row's
+     * button key is {@code row:<slot>}.
+     *
+     * @param count the number of entries in the list
+     * @param requestedPage the index of the page asked for, counting from 0
+     * @param entryAt gives the entry at an index of the list, from 0 to {@code count - 1}; never {@code null}
+     * @return the page shown
+     * @throws IllegalStateException if the layout has no list
+     * @throws IllegalArgumentException if {@code count} is negative
+     * @throws NullPointerException if {@code entryAt} is {@code null} or gives {@code null}
+     */
+    public Pager.Page list(int count, int requestedPage, IntFunction<Entry> entryAt) {
+        Objects.requireNonNull(entryAt, "entryAt");
         PagerLayout pager = pager();
-        Pager.Page page = Pager.page(entries.size(), capacity(pager), requestedPage);
+        Pager.Page page = Pager.page(count, capacity(pager), requestedPage);
         for (int index = page.from(); index < page.to(); index++) {
             int slot = pager.slots().get(index - page.from());
-            Entry entry = entries.get(index);
+            Entry entry = Objects.requireNonNull(entryAt.apply(index), "entry " + index);
             place(slot, entry.icon(), entry.handler() == null ? null
                 : new Button(entry.icon(), entry.clicks(), "row:" + slot, entry.exclusive(), entry.handler()));
         }
