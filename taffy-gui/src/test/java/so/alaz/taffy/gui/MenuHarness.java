@@ -46,8 +46,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 // Menus over the layouts built here and the English text below, or the lang files given, with fake inventories,
-// next-tick tasks that run on drain(), an inline entity thread and a time source the test moves. Every material is an item
-// but those in notItems, since Material.isItem needs a running server. Extra layouts are added by
+// next-tick tasks that run on drain(), an inline entity thread and a time source the test moves. Every material is an
+// item but those in notItems, since Material.isItem needs a running server. Extra layouts are added by
 // menu id. Each viewer is a mocked player whose open and close go through the listener as on a server: an open closes
 // the previous view with OPEN_NEW first. Clicks and drags are real events passed to the listener. With listening false the close event
 // reaches no listener, as on a server while the plugin is disabled.
