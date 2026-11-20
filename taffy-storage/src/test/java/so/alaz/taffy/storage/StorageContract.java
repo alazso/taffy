@@ -169,9 +169,11 @@ abstract class StorageContract {
     void aDecimalBeyondTheMoneyCapRoundTrips() {
         String sql = "INSERT INTO " + probe() + " (id, state, wide) VALUES (?, ?, ?)";
         List<String> values = List.of("123456789012345678901234567890.1234", "-1000000000000000.5", "0");
-        for (String value : values) {
+        for (int index = 0; index < values.size(); index++) {
+            String label = Integer.toString(index);
+            BigDecimal value = new BigDecimal(values.get(index));
             storage().async(tx -> tx.update(sql,
-                params -> params.uuid(UUID.randomUUID()).text(value).decimal(new BigDecimal(value)))).join();
+                params -> params.uuid(UUID.randomUUID()).text(label).decimal(value))).join();
         }
         UUID empty = UUID.randomUUID();
         storage().async(tx -> tx.update(sql, params -> params.uuid(empty).text("A").decimal(null))).join();
@@ -183,7 +185,8 @@ abstract class StorageContract {
             params -> params.uuid(empty), row -> row.decimal("wide"))).join();
 
         assertThat(stored).hasSize(3)
-            .allSatisfy(row -> assertThat((BigDecimal) row[1]).isEqualByComparingTo((String) row[0]));
+            .allSatisfy(row -> assertThat((BigDecimal) row[1])
+                .isEqualByComparingTo(values.get(Integer.parseInt((String) row[0]))));
         assertThat(missing).containsExactly((BigDecimal) null);
     }
 
