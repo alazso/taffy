@@ -9,6 +9,7 @@ import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
@@ -38,6 +39,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -99,7 +101,7 @@ final class PromptsTest {
         if (real != null) {
             real.install(alex);
         }
-        chat = (PaperPromptListener) prompts.listener();
+        chat = prompts.promptListener();
         sample.menu.sessions.getLast().state(2);
     }
 
@@ -1433,7 +1435,7 @@ final class PromptsTest {
 
         assertThat(anvil.anvil()).isNotNull();
         assertThat(anvil.anvil().marker()).isSameAs(menus.marker());
-        assertThat(anvil.listener()).isInstanceOf(PaperPromptListener.class);
+        assertThat(anvil.promptListener()).isNotNull();
     }
 
     @Test
@@ -1447,11 +1449,41 @@ final class PromptsTest {
     }
 
     @Test
-    void theListenerIsTheSameOnEveryCall() {
+    void buildingThePromptsRegistersTheirListenerOnceAfterTheMenusOwn() {
         start(PromptMode.ANVIL);
 
-        assertThat(prompts.listener()).isSameAs(prompts.listener()).isSameAs(chat).isInstanceOf(
-            PaperPromptListener.class);
+        assertThat(harness.registered).containsExactly(harness.listener, chat);
+    }
+
+    @Test
+    void theDeprecatedListenerHasNoHandlerSoRegisteringItCannotRegisterThePromptsTwice() {
+        start(PromptMode.ANVIL);
+
+        @SuppressWarnings("deprecation")
+        Listener given = prompts.listener();
+
+        assertThat(given).isNotInstanceOf(PaperPromptListener.class).isNotSameAs(chat);
+        assertThat(Arrays.stream(given.getClass().getMethods())
+            .filter(method -> method.isAnnotationPresent(EventHandler.class))).isEmpty();
+        assertThat(Arrays.stream(given.getClass().getDeclaredMethods())
+            .filter(method -> method.isAnnotationPresent(EventHandler.class))).isEmpty();
+    }
+
+    @Test
+    void promptsWhoseListenerTheServerRefusesAreNotLinkedToTheMenus() {
+        MenuHarness refusing = new MenuHarness(folder);
+        Menus menus = new Menus(Menus.Parts.of(refusing.plugin, refusing.messages, refusing.tasks, refusing.entity,
+            refusing.errors), marker -> refusing.inventories, player -> true, material -> true, refusing.clock,
+            listener -> {
+                if (listener instanceof PaperPromptListener) {
+                    throw new IllegalStateException("refused");
+                }
+            });
+
+        assertThatIllegalStateException().isThrownBy(() -> new Prompts(menus, PromptMode.CHAT, BedrockPlayers.NONE,
+            timer)).withMessage("refused");
+
+        assertThat(menus.prompts()).isSameAs(MenuPrompts.NONE);
     }
 
     @Test
@@ -1463,6 +1495,7 @@ final class PromptsTest {
             BedrockPlayers.NONE, timer)).withMessage("the menus already have prompts");
 
         assertThat(harness.menus.prompts()).isSameAs(linked);
+        assertThat(harness.registered).containsExactly(harness.listener, chat);
         ask();
         harness.open(alex, Sample.KIND.id());
         assertThat(prompts.pending(alex.id)).isNull();
@@ -1600,7 +1633,7 @@ final class PromptsTest {
         }
 
         void install(MenuHarness.Viewer viewer) {
-            listener = (PaperPromptListener) prompts.listener();
+            listener = prompts.promptListener();
             Inventory crafting = mock(Inventory.class);
             when(crafting.getHolder(false)).thenReturn(viewer.player);
             FakeView own = new FakeView(crafting, viewer.inventory, viewer.player);

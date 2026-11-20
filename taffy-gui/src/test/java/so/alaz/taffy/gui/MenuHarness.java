@@ -5,9 +5,9 @@ import net.kyori.adventure.sound.Sound;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Material;
-import org.bukkit.NamespacedKey;
 import org.bukkit.Server;
 import org.bukkit.entity.Player;
+import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
@@ -17,6 +17,7 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.platform.Messages;
@@ -36,6 +37,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
+import java.util.logging.Logger;
 import java.util.stream.IntStream;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -50,7 +52,8 @@ import static org.mockito.Mockito.when;
 // item but those in notItems, since Material.isItem needs a running server. Extra layouts are added by
 // menu id. Each viewer is a mocked player whose open and close go through the listener as on a server: an open closes
 // the previous view with OPEN_NEW first. Clicks and drags are real events passed to the listener. With listening false the close event
-// reaches no listener, as on a server while the plugin is disabled.
+// reaches no listener, as on a server while the plugin is disabled. registered holds the listeners the menus and
+// their prompts registered, in order.
 final class MenuHarness {
 
     static final MenuKind MAIN = MenuKind.of("main", false, MenuKind.BACK, MenuKind.CLOSE);
@@ -109,6 +112,8 @@ final class MenuHarness {
     final List<Report> reports = new ArrayList<>();
     final Map<String, MenuLayout> layouts;
     final Messages messages;
+    final Plugin plugin;
+    final List<Listener> registered = new ArrayList<>();
     final Menus menus;
     final PreviewMarker marker;
     final MenuListener listener;
@@ -143,16 +148,26 @@ final class MenuHarness {
         all.putAll(extra);
         layouts = Map.copyOf(all);
         errors.install((source, error) -> reports.add(new Report(source, error)));
-        Server server = mock(Server.class);
-        NamespacedKey preview = new NamespacedKey("taffytest", "preview");
+        plugin = plugin(mock(Server.class), log.logger);
         Menus.Parts parts = text == null
-            ? Menus.Parts.of(server, preview, log.logger, this.messages, tasks, entity, errors)
-            : Menus.Parts.of(server, preview, log.logger, text, tasks, entity, errors);
+            ? Menus.Parts.of(plugin, this.messages, tasks, entity, errors)
+            : Menus.Parts.of(plugin, text, tasks, entity, errors);
         menus = new Menus(parts.layouts(layouts).settings(settings).sounds(() -> SOUNDS).home(home),
-            marker -> inventories, player -> owned.test(player), material -> !notItems.contains(material), clock);
+            marker -> inventories, player -> owned.test(player), material -> !notItems.contains(material), clock,
+            registered::add);
         marker = menus.marker();
         menus.prompts(prompts);
-        listener = (MenuListener) menus.listener();
+        listener = menus.menuListener();
+    }
+
+    // A mocked plugin named TaffyTest, so its preview key is taffytest:preview.
+    static Plugin plugin(Server server, Logger logger) {
+        Plugin plugin = mock(Plugin.class);
+        when(plugin.getName()).thenReturn("TaffyTest");
+        when(plugin.namespace()).thenReturn("taffytest");
+        when(plugin.getServer()).thenReturn(server);
+        when(plugin.getLogger()).thenReturn(logger);
+        return plugin;
     }
 
     // A six-row layout with no filler and no title of its own, holding the items in the order given.

@@ -52,20 +52,35 @@ All notable changes to Taffy are documented here. This project follows
   is built through a static factory that takes what has no default, and a method named after each other value
   gives a copy with that value replaced: `MenuSettings.DEFAULTS.pageSize(28)`, `ItemLayout.of(id, slots,
   material).action("buy")`, `PagerLayout.of(slots).emptySlot(22).emptyMaterial(Material.BARRIER)`,
-  `MenuLayout.of(menu, rows).filler(material).pager(pager).items(items).title(title)` and `Menus.Parts.of(server,
-  preview, logger, messages, tasks, entity,
+  `MenuLayout.of(menu, rows).filler(material).pager(pager).items(items).title(title)` and `Menus.Parts.of(plugin,
+  messages, tasks, entity,
   errors).layouts(layouts).settings(settings).locales(locales).sounds(sounds).home(home)`. The methods that read a
   value keep their names, `MenuSettings`, `ItemLayout`, `MenuLayout` and `PagerLayout` still compare by value, and
   every check a constructor made is made by the factory or the method that takes the value. `Menus.Parts` compares
   by identity, and a record pattern or `getRecordComponents()` over one of the five no longer works. Replace each
   `new` of these types with its factory and the methods for the values that differ from the defaults: no action,
   permission, name or lore and shown for an item, no empty state for a list, no filler, list, items or title for a
-  layout, and no layouts, `MenuSettings.DEFAULTS`, `Player::locale`, no sounds and no home menu for the parts.
+  layout, and no layouts, `MenuSettings.DEFAULTS`, `Player::locale`, no sounds, no home menu and the plugin's own
+  server, logger and `new NamespacedKey(plugin, "preview")` for the parts.
 - Breaking: `MenuLayout.items(Collection<ItemLayout>)` takes the items themselves, in the order
   `MenuLayout.items()` keeps, and keys each by its own id, where the constructor took a map and refused a key that
   differed from its item's id. Two items with one id are refused with an `IllegalArgumentException` such as "item
   buy is in the shop menu twice". `MenuLayout.item(ItemLayout)` adds one item, or replaces the item of the same id
   in its place. `MenuLayout.items()` still returns the map. Pass `map.values()` where the plugin built a map.
+- Breaking: `Menus` and `Prompts` register their own listeners, so a menu can no longer open with nothing to
+  cancel its clicks. `Menus.Parts.of` takes the owning `Plugin` first, `new Menus(parts)` registers the menu
+  listener with the plugin manager of `Parts.server()` as a listener of `Parts.plugin()`, and `new Prompts(menus,
+  ...)` registers the prompt listener the same way before it links to the menus. Before, a plugin that forgot
+  `registerEvents(menus.listener(), plugin)` opened menus whose icons players could take. Build the menus while
+  the plugin is enabled, such as in `onEnable`: for a plugin that is not, the server throws an
+  `IllegalPluginAccessException` and no menus exist. The server, the logger and the preview key are no longer
+  arguments: they default to `plugin.getServer()`, `plugin.getLogger()` and `new NamespacedKey(plugin,
+  "preview")`, and `Parts.server(Server)`, `Parts.logger(Logger)` and `Parts.preview(NamespacedKey)` replace them.
+  Pass the plugin to `Menus.Parts.of`, add `.preview(key)` when the plugin's preview key is not `new
+  NamespacedKey(plugin, "preview")`, and delete both `registerEvents` calls.
+- Breaking: `Menus.listener()` and `Prompts.listener()` are deprecated, a later release removes them, and each now
+  returns a listener with no event handler, so a `registerEvents` call left in a plugin registers nothing and
+  cannot register the menus or the prompts twice. Delete the calls that pass them to `registerEvents`.
 
 ### Fixed
 - A chat line that answers a `Prompts` ask is judged once. Paper posts the legacy `AsyncPlayerChatEvent` and then

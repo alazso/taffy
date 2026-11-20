@@ -50,7 +50,7 @@ final class PaperRegistrationTest {
         Method onQuit = MenuListener.class.getDeclaredMethod("onQuit", PlayerQuitEvent.class);
         EventExecutor executor = EventExecutor.create(onQuit, PlayerQuitEvent.class);
 
-        executor.execute(sample.harness.menus.listener(), new PlayerQuitEvent(sample.viewer.player, Component.empty(),
+        executor.execute(sample.harness.listener, new PlayerQuitEvent(sample.viewer.player, Component.empty(),
             PlayerQuitEvent.QuitReason.DISCONNECTED));
 
         assertThat(sample.harness.menus.memory().get(sample.viewer.id, "sample", String.class)).isNull();

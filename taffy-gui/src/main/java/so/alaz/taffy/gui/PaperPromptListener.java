@@ -21,8 +21,8 @@ import java.util.UUID;
 
 /**
  * The prompts' events: the chat line answering a pending chat prompt, and the anvil prompt's events for the
- * {@link AnvilInput} the prompts built. The prompts build it, and the plugin registers the one
- * {@link Prompts#listener()} gives at enable. Over prompts without an anvil the anvil handlers do nothing.
+ * {@link AnvilInput} the prompts built. The prompts build it and register it as a listener of the menus' plugin
+ * when they are built. Over prompts without an anvil the anvil handlers do nothing.
  *
  * <p>Both chat handlers run at {@link EventPriority#LOWEST} with {@code ignoreCancelled = false}, so the line is taken
  * before any other plugin sees it and a mute plugin cannot leave the prompt waiting. The line is cancelled and its

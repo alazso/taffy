@@ -9,6 +9,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.inventory.InventoryView;
+import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.EntityThread;
 import so.alaz.taffy.platform.EntityUnavailableException;
@@ -31,6 +32,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
@@ -51,9 +53,10 @@ import java.util.logging.Logger;
  * leaving, so its {@link Menu#closed(MenuSession, boolean)} gets {@code left = false}. Once {@link #shutdown()} ran the
  * menus are stopping and nothing opens again.
  *
- * <p>The plugin registers {@link #listener()} at enable. At disable the plugin calls {@link #shutdown()}, which ends
- * the prompts first, before {@code Scheduler.close}, in the order the {@code so.alaz.taffy.platform} package states,
- * so no click starts work while the plugin stops.
+ * <p>The menus register their own listener as a listener of {@link Parts#plugin()} when they are built, so a menu
+ * never opens without it, and the plugin registers nothing. At disable the plugin calls {@link #shutdown()}, which
+ * ends the prompts first, before {@code Scheduler.close}, in the order the {@code so.alaz.taffy.platform} package
+ * states, so no click starts work while the plugin stops.
  *
  * <p>A load that fails, a menu that fails to draw in a task {@code openLater} or {@link #rerenderLater(MenuSession)}
  * scheduled, or a {@link Menu#closed(MenuSession, boolean)} that throws is logged with its stack through the plugin's
@@ -66,14 +69,18 @@ public final class Menus {
     /** The lang key of the message a viewer is told when a menu's load fails. */
     public static final String ERROR = "gui.error";
 
+    /** A listener with no event handler. */
+    static final Listener INERT = new Listener() {
+    };
+
     /**
      * What the menus are built from. Build the parts with
-     * {@link #of(Server, NamespacedKey, Logger, TextSource, BiConsumer, EntityThread, ErrorReports)} and the methods
-     * that take a value, such as {@code Parts.of(...).layouts(layouts).home("main")}; each gives a copy and leaves
-     * these parts unchanged.
+     * {@link #of(Plugin, TextSource, BiConsumer, EntityThread, ErrorReports)} and the methods that take a value, such
+     * as {@code Parts.of(...).layouts(layouts).home("main")}; each gives a copy and leaves these parts unchanged.
      */
     public static final class Parts {
 
+        private final Plugin plugin;
         private final Map<String, MenuLayout> layouts;
         private final MenuSettings settings;
         private final TextSource text;
@@ -87,10 +94,11 @@ public final class Menus {
         private final Logger logger;
         private final ErrorReports errors;
 
-        private Parts(Map<String, MenuLayout> layouts, MenuSettings settings, TextSource text,
+        private Parts(Plugin plugin, Map<String, MenuLayout> layouts, MenuSettings settings, TextSource text,
                       Function<Player, Locale> locales, Server server, NamespacedKey preview,
                       BiConsumer<Player, Runnable> tasks, EntityThread entity, Supplier<Map<Cue, Sound>> sounds,
                       @Nullable String home, Logger logger, ErrorReports errors) {
+            this.plugin = plugin;
             this.layouts = layouts;
             this.settings = Objects.requireNonNull(settings, "settings");
             this.text = Objects.requireNonNull(text, "text");
@@ -107,14 +115,11 @@ public final class Menus {
 
         /**
          * Gives the parts of menus with no layouts, {@link MenuSettings#DEFAULTS}, each player's own client locale
-         * ({@code Player::locale}), no sounds and no home menu.
+         * ({@code Player::locale}), no sounds and no home menu, on the plugin's server, with the plugin's logger and
+         * the preview key {@code new NamespacedKey(plugin, "preview")}.
          *
-         * @param server the server, which creates each menu inventory and tells whether the calling thread owns a
-         *     player
-         * @param preview the key every stack a menu or prompt anvil shows carries, such as
-         *     {@code new NamespacedKey(plugin, "preview")}; a plugin that must recognise a menu copy in its own
-         *     checks keeps it
-         * @param logger the plugin's logger
+         * @param plugin the plugin that owns the menus: the menus and their prompts register their listeners
+         *     as its listeners
          * @param text gives the text of each lang key the menus and prompts read
          * @param tasks runs work on a player's entity thread on the next tick, and nothing once the player is gone
          *     or the plugin is disabling, such as {@code scheduler::entity}
@@ -124,19 +129,18 @@ public final class Menus {
          * @return the parts
          * @throws NullPointerException if an argument is {@code null}
          */
-        public static Parts of(Server server, NamespacedKey preview, Logger logger, TextSource text,
-                               BiConsumer<Player, Runnable> tasks, EntityThread entity, ErrorReports errors) {
-            return new Parts(Map.of(), MenuSettings.DEFAULTS, text, Player::locale, server, preview, tasks, entity,
-                Map::of, null, logger, errors);
+        public static Parts of(Plugin plugin, TextSource text, BiConsumer<Player, Runnable> tasks,
+                               EntityThread entity, ErrorReports errors) {
+            Objects.requireNonNull(plugin, "plugin");
+            return new Parts(plugin, Map.of(), MenuSettings.DEFAULTS, text, Player::locale, plugin.getServer(),
+                new NamespacedKey(plugin, "preview"), tasks, entity, Map::of, null, plugin.getLogger(), errors);
         }
 
         /**
-         * Gives the parts as {@link #of(Server, NamespacedKey, Logger, TextSource, BiConsumer, EntityThread,
-         * ErrorReports)} does, with the text read from Taffy's lang files through {@link TextSource#of(Messages)}.
+         * Gives the parts as {@link #of(Plugin, TextSource, BiConsumer, EntityThread, ErrorReports)} does, with the
+         * text read from Taffy's lang files through {@link TextSource#of(Messages)}.
          *
-         * @param server the server
-         * @param preview the key every stack a menu or prompt anvil shows carries
-         * @param logger the plugin's logger
+         * @param plugin the plugin that owns the menus
          * @param messages the plugin's lang files
          * @param tasks runs work on a player's entity thread on the next tick
          * @param entity runs a load's result, and a prompt's answer, cancel and timeout, on the player's entity
@@ -145,9 +149,18 @@ public final class Menus {
          * @return the parts
          * @throws NullPointerException if an argument is {@code null}
          */
-        public static Parts of(Server server, NamespacedKey preview, Logger logger, Messages messages,
-                               BiConsumer<Player, Runnable> tasks, EntityThread entity, ErrorReports errors) {
-            return of(server, preview, logger, TextSource.of(messages), tasks, entity, errors);
+        public static Parts of(Plugin plugin, Messages messages, BiConsumer<Player, Runnable> tasks,
+                               EntityThread entity, ErrorReports errors) {
+            return of(plugin, TextSource.of(messages), tasks, entity, errors);
+        }
+
+        /**
+         * Gives the plugin that owns the menus, whose listeners the menus and their prompts register.
+         *
+         * @return the plugin
+         */
+        public Plugin plugin() {
+            return plugin;
         }
 
         /**
@@ -187,7 +200,8 @@ public final class Menus {
         }
 
         /**
-         * Gives the server, which creates each menu inventory and tells whether the calling thread owns a player.
+         * Gives the server, which creates each menu inventory, tells whether the calling thread owns a player and
+         * registers the listeners.
          *
          * @return the server
          */
@@ -241,7 +255,7 @@ public final class Menus {
         }
 
         /**
-         * Gives the plugin's logger.
+         * Gives the logger handled failures are logged through.
          *
          * @return the logger
          */
@@ -268,7 +282,7 @@ public final class Menus {
          * @throws IllegalArgumentException if a key differs from its layout's {@link MenuLayout#menu()}
          */
         public Parts layouts(Map<String, MenuLayout> layouts) {
-            return new Parts(checked(layouts), settings, text, locales, server, preview, tasks, entity, sounds,
+            return new Parts(plugin, checked(layouts), settings, text, locales, server, preview, tasks, entity, sounds,
                 home, logger, errors);
         }
 
@@ -280,7 +294,7 @@ public final class Menus {
          * @throws NullPointerException if {@code settings} is {@code null}
          */
         public Parts settings(MenuSettings settings) {
-            return new Parts(layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
+            return new Parts(plugin, layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
                 logger, errors);
         }
 
@@ -292,7 +306,7 @@ public final class Menus {
          * @throws NullPointerException if {@code locales} is {@code null}
          */
         public Parts locales(Function<Player, Locale> locales) {
-            return new Parts(layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
+            return new Parts(plugin, layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
                 logger, errors);
         }
 
@@ -304,7 +318,45 @@ public final class Menus {
          * @throws NullPointerException if {@code sounds} is {@code null}
          */
         public Parts sounds(Supplier<Map<Cue, Sound>> sounds) {
-            return new Parts(layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
+            return new Parts(plugin, layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
+                logger, errors);
+        }
+
+        /**
+         * Gives these parts on another server.
+         *
+         * @param server the server, which creates each menu inventory, tells whether the calling thread owns a
+         *     player and registers the listeners
+         * @return a copy of these parts with {@code server} replaced
+         * @throws NullPointerException if {@code server} is {@code null}
+         */
+        public Parts server(Server server) {
+            return new Parts(plugin, layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
+                logger, errors);
+        }
+
+        /**
+         * Gives these parts with another preview key.
+         *
+         * @param preview the key every stack a menu or prompt anvil shows carries; a plugin that must recognise a
+         *     menu copy in its own checks keeps it
+         * @return a copy of these parts with {@code preview} replaced
+         * @throws NullPointerException if {@code preview} is {@code null}
+         */
+        public Parts preview(NamespacedKey preview) {
+            return new Parts(plugin, layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
+                logger, errors);
+        }
+
+        /**
+         * Gives these parts with another logger.
+         *
+         * @param logger the logger handled failures are logged through
+         * @return a copy of these parts with {@code logger} replaced
+         * @throws NullPointerException if {@code logger} is {@code null}
+         */
+        public Parts logger(Logger logger) {
+            return new Parts(plugin, layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
                 logger, errors);
         }
 
@@ -316,7 +368,7 @@ public final class Menus {
          * @return a copy of these parts with {@code home} replaced
          */
         public Parts home(@Nullable String home) {
-            return new Parts(layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
+            return new Parts(plugin, layouts, settings, text, locales, server, preview, tasks, entity, sounds, home,
                 logger, errors);
         }
     }
@@ -337,22 +389,30 @@ public final class Menus {
     private volatile MenuPrompts prompts = MenuPrompts.NONE;
     private volatile boolean stopping;
     private final MenuListener listener;
+    private final Consumer<Listener> registrar;
 
     /**
-     * Creates the menus with no menu registered. Each menu inventory comes from the server, and every stack drawn
-     * into it carries {@link Parts#preview()}.
+     * Creates the menus with no menu registered and registers their listener with the plugin manager of
+     * {@link Parts#server()} as a listener of {@link Parts#plugin()}. The listener keeps menu views safe, dispatches
+     * button clicks, ends the session of a closed menu and forgets what the menus and prompts keep for a player who
+     * quit. Each menu inventory comes from the server, and every stack drawn into it carries
+     * {@link Parts#preview()}. Call while the plugin is enabled, such as in {@code onEnable}.
      *
      * @param parts what the menus are built from
      * @throws NullPointerException if {@code parts} is {@code null}
+     * @throws org.bukkit.plugin.IllegalPluginAccessException if the plugin is not enabled, as the server refuses a
+     *     listener of such a plugin; no menus exist then
      */
     public Menus(Parts parts) {
         this(parts, marker -> new PaperInventories(parts.server(), marker),
-            player -> parts.server().isOwnedByCurrentRegion(player), Menus::showable, System::nanoTime);
+            player -> parts.server().isOwnedByCurrentRegion(player), Menus::showable, System::nanoTime,
+            listener -> parts.server().getPluginManager().registerEvents(listener, parts.plugin()));
     }
 
     Menus(Parts parts, Function<PreviewMarker, Inventories> inventories, Predicate<Player> ownedHere,
-          Predicate<Material> item, LongSupplier nanos) {
+          Predicate<Material> item, LongSupplier nanos, Consumer<Listener> registrar) {
         this.parts = Objects.requireNonNull(parts, "parts");
+        this.registrar = registrar;
         this.item = item;
         this.nanos = nanos;
         this.marker = new PreviewMarker(parts.preview());
@@ -363,6 +423,7 @@ public final class Menus {
         this.text = new MenuText(parts.text());
         this.debounce = new Debounce(() -> parts.settings().clickDebounce(), nanos);
         this.listener = new MenuListener(this);
+        registrar.accept(listener);
     }
 
     /**
@@ -618,12 +679,23 @@ public final class Menus {
     }
 
     /**
-     * Gives the listener that keeps menu views safe, dispatches button clicks, ends the session of a closed menu and
-     * forgets what the menus and prompts keep for a player who quit. The plugin registers it once at enable.
+     * Gives a listener with no event handler, so that registering it does nothing.
      *
      * @return the same listener on every call
+     * @deprecated the menus register their own listener when they are built, see {@link #Menus(Parts)}; remove the
+     *     {@code registerEvents} call that took this listener
      */
+    @Deprecated
     public Listener listener() {
+        return INERT;
+    }
+
+    /** Registers a listener of the prompts built over these menus as a listener of the menus' plugin. */
+    void register(Listener listener) {
+        registrar.accept(listener);
+    }
+
+    MenuListener menuListener() {
         return listener;
     }
 

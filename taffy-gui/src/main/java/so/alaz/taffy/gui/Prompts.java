@@ -65,7 +65,8 @@ import java.util.logging.Level;
  * <p>The prompts read the text source, the locale function, the entity-thread seams, the thread-ownership check, the
  * logger and the {@link ErrorReports} of the menus they are built over. Building the prompts makes them the prompts
  * of those menus, so opening a menu ends a pending ask; a second {@code Prompts} over the same menus, or prompts over
- * menus that were shut down, are refused. The plugin registers {@link #listener()} at enable.
+ * menus that were shut down, are refused. Building the prompts also registers their listener, which reads the chat
+ * answers and guards the prompt anvil, as a listener of the menus' plugin, so the plugin registers nothing.
  *
  * <p>At disable, {@link Menus#shutdown()} ends every ask, in the order the {@code so.alaz.taffy.platform} package
  * states.
@@ -114,8 +115,9 @@ public final class Prompts {
     private final PaperPromptListener listener;
 
     /**
-     * Creates the prompts with no ask pending and makes them the prompts that opening one of {@code menus} ends. For
-     * {@link PromptMode#ANVIL} the prompts build their anvil, whose paper carries the menus' preview key.
+     * Creates the prompts with no ask pending, registers their listener as a listener of the menus' plugin and makes
+     * them the prompts that opening one of {@code menus} ends. For {@link PromptMode#ANVIL} the prompts build their
+     * anvil, whose paper carries the menus' preview key.
      *
      * @param menus the plugin's menus, whose text source, locale function, entity-thread seams, thread-ownership
      *     check, logger and error reports the prompts use
@@ -154,8 +156,9 @@ public final class Prompts {
         this.cancelLink = cancelLink;
         this.ownScreen = ownScreen;
         this.nanos = nanos;
-        menus.prompts(new Link());
         this.listener = new PaperPromptListener(this);
+        menus.register(listener);
+        menus.prompts(new Link());
     }
 
     private static @Nullable AnvilInput anvilFor(Menus menus, PromptMode mode) {
@@ -171,12 +174,18 @@ public final class Prompts {
     }
 
     /**
-     * Gives the listener that reads the chat answers and guards the prompt anvil. The plugin registers it once at
-     * enable.
+     * Gives a listener with no event handler, so that registering it does nothing.
      *
      * @return the same listener on every call
+     * @deprecated the prompts register their own listener when they are built; remove the {@code registerEvents}
+     *     call that took this listener
      */
+    @Deprecated
     public Listener listener() {
+        return Menus.INERT;
+    }
+
+    PaperPromptListener promptListener() {
         return listener;
     }
 

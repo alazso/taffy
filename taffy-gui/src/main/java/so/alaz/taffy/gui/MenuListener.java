@@ -20,8 +20,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * The listener that keeps menu views safe and dispatches button clicks. The menus build it over their marker, and
- * the plugin registers the one {@link Menus#listener()} gives at enable.
+ * The listener that keeps menu views safe and dispatches button clicks. The menus build it over their marker and
+ * register it as a listener of their plugin when they are built.
  *
  * <p>Every click and drag in a menu view is cancelled first, at {@link EventPriority#LOWEST}, and again at
  * {@link EventPriority#HIGHEST} in case another plugin cancelled it back. Closes and quits are watched at

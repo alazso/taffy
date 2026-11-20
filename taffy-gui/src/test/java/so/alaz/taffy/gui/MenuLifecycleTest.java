@@ -6,10 +6,15 @@ import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.Server;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.InventoryView;
+import org.bukkit.plugin.IllegalPluginAccessException;
+import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.PluginManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -21,6 +26,7 @@ import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.platform.Messages;
 
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -36,9 +42,11 @@ import java.util.logging.Logger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 final class MenuLifecycleTest {
@@ -369,35 +377,32 @@ final class MenuLifecycleTest {
 
     @Test
     void everyPartButHomeIsRequired() {
-        Server server = mock(Server.class);
-        NamespacedKey preview = new NamespacedKey("taffytest", "preview");
-        Logger logger = Logger.getAnonymousLogger();
+        Plugin plugin = MenuHarness.plugin(mock(Server.class), Logger.getAnonymousLogger());
         Messages messages = mock(Messages.class);
         GuiFakes.FakeTasks tasks = new GuiFakes.FakeTasks();
         EntityThread entity = mock(EntityThread.class);
         ErrorReports errors = new ErrorReports();
-        Menus.Parts parts = Menus.Parts.of(server, preview, logger, messages, tasks, entity, errors);
+        Menus.Parts parts = Menus.Parts.of(plugin, messages, tasks, entity, errors);
 
-        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(null, preview, logger, messages, tasks,
-            entity, errors)).withMessage("server");
-        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, null, logger, messages, tasks,
-            entity, errors)).withMessage("preview");
-        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, null, messages, tasks,
-            entity, errors)).withMessage("logger");
-        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, (Messages) null,
-            tasks, entity, errors)).withMessage("messages");
-        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, (TextSource) null,
-            tasks, entity, errors)).withMessage("text");
-        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, messages, null,
-            entity, errors)).withMessage("tasks");
-        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, messages, tasks,
-            null, errors)).withMessage("entity");
-        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(server, preview, logger, messages, tasks,
-            entity, null)).withMessage("errors");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(null, messages, tasks, entity, errors))
+            .withMessage("plugin");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(plugin, (Messages) null, tasks, entity,
+            errors)).withMessage("messages");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(plugin, (TextSource) null, tasks, entity,
+            errors)).withMessage("text");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(plugin, messages, null, entity, errors))
+            .withMessage("tasks");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(plugin, messages, tasks, null, errors))
+            .withMessage("entity");
+        assertThatNullPointerException().isThrownBy(() -> Menus.Parts.of(plugin, messages, tasks, entity, null))
+            .withMessage("errors");
         assertThatNullPointerException().isThrownBy(() -> parts.layouts(null));
         assertThatNullPointerException().isThrownBy(() -> parts.settings(null)).withMessage("settings");
         assertThatNullPointerException().isThrownBy(() -> parts.locales(null)).withMessage("locales");
         assertThatNullPointerException().isThrownBy(() -> parts.sounds(null)).withMessage("sounds");
+        assertThatNullPointerException().isThrownBy(() -> parts.server(null)).withMessage("server");
+        assertThatNullPointerException().isThrownBy(() -> parts.preview(null)).withMessage("preview");
+        assertThatNullPointerException().isThrownBy(() -> parts.logger(null)).withMessage("logger");
         assertThat(parts.home("main").home(null).home()).isNull();
     }
 
@@ -424,6 +429,7 @@ final class MenuLifecycleTest {
         assertThat(changed.locales()).isSameAs(locales);
         assertThat(changed.sounds()).isSameAs(sounds);
         assertThat(changed.home()).isEqualTo("main");
+        assertThat(changed.plugin()).isSameAs(parts.plugin());
         assertThat(changed.server()).isSameAs(server);
         assertThat(changed.preview()).isEqualTo(parts.preview());
         assertThat(changed.logger()).isSameAs(parts.logger());
@@ -434,13 +440,75 @@ final class MenuLifecycleTest {
     }
 
     @Test
-    void thePublicConstructorAsksTheServerNothingWhileBuilding() {
+    void theServerThePreviewKeyAndTheLoggerAreThePluginsOwnUnlessReplaced() {
         Server server = mock(Server.class);
+        Logger logger = Logger.getAnonymousLogger();
+        Plugin plugin = MenuHarness.plugin(server, logger);
+        Menus.Parts parts = Menus.Parts.of(plugin, mock(Messages.class), new GuiFakes.FakeTasks(),
+            mock(EntityThread.class), new ErrorReports());
+        Server other = mock(Server.class);
+        Logger quiet = Logger.getAnonymousLogger();
+        NamespacedKey key = new NamespacedKey("taffytest", "copy");
 
-        Menus menus = new Menus(parts(server));
+        assertThat(parts.plugin()).isSameAs(plugin);
+        assertThat(parts.server()).isSameAs(server);
+        assertThat(parts.logger()).isSameAs(logger);
+        assertThat(parts.preview()).isEqualTo(new NamespacedKey("taffytest", "preview"));
+        assertThat(parts.server(other).server()).isSameAs(other);
+        assertThat(parts.server(other).logger()).isSameAs(logger);
+        assertThat(parts.logger(quiet).logger()).isSameAs(quiet);
+        assertThat(parts.logger(quiet).preview()).isEqualTo(parts.preview());
+        assertThat(parts.preview(key).preview()).isEqualTo(key);
+        assertThat(parts.preview(key).server()).isSameAs(server);
+        assertThat(parts.preview(key).plugin()).isSameAs(plugin);
+    }
 
-        verifyNoInteractions(server);
+    @Test
+    void thePublicConstructorRegistersTheMenusListenerOnceAsAListenerOfThePlugin() {
+        Server server = mock(Server.class);
+        PluginManager manager = mock(PluginManager.class);
+        when(server.getPluginManager()).thenReturn(manager);
+        Menus.Parts parts = parts(server);
+
+        Menus menus = new Menus(parts);
+
+        verify(manager).registerEvents(menus.menuListener(), parts.plugin());
+        verifyNoMoreInteractions(manager);
         assertThat(menus.marker().key()).isEqualTo(new NamespacedKey("taffytest", "preview"));
+    }
+
+    @Test
+    void noMenusExistWhenTheServerRefusesTheListenerSoAMenuCannotOpenUnregistered() {
+        Server server = mock(Server.class);
+        PluginManager manager = mock(PluginManager.class);
+        when(server.getPluginManager()).thenReturn(manager);
+        doThrow(new IllegalPluginAccessException("Plugin attempted to register a listener while not enabled"))
+            .when(manager).registerEvents(any(Listener.class), any(Plugin.class));
+
+        assertThatThrownBy(() -> new Menus(parts(server))).isInstanceOf(IllegalPluginAccessException.class);
+    }
+
+    @Test
+    void everyMenusIsRegisteredBeforeItCanOpenAMenu() {
+        Sample sample = new Sample(folder);
+
+        assertThat(sample.harness.registered).containsExactly(sample.harness.listener);
+        assertThat(sample.viewer.session()).isNotNull();
+    }
+
+    @Test
+    void theDeprecatedListenerHasNoHandlerSoRegisteringItCannotRegisterTheMenusTwice() {
+        MenuHarness harness = new MenuHarness(folder);
+
+        @SuppressWarnings("deprecation")
+        Listener given = harness.menus.listener();
+
+        assertThat(given).isNotInstanceOf(MenuListener.class).isNotSameAs(harness.listener);
+        assertThat(Arrays.stream(given.getClass().getMethods())
+            .filter(method -> method.isAnnotationPresent(EventHandler.class))).isEmpty();
+        assertThat(Arrays.stream(given.getClass().getDeclaredMethods())
+            .filter(method -> method.isAnnotationPresent(EventHandler.class))).isEmpty();
+        assertThat(harness.registered).containsExactly(harness.listener);
     }
 
     @Test
@@ -451,6 +519,7 @@ final class MenuLifecycleTest {
     @Test
     void theOwnershipCheckOfThePublicConstructorAsksTheServer() {
         Server server = mock(Server.class);
+        when(server.getPluginManager()).thenReturn(mock(PluginManager.class));
         Player player = mock(Player.class);
         when(server.isOwnedByCurrentRegion(player)).thenReturn(true);
 
@@ -460,21 +529,14 @@ final class MenuLifecycleTest {
     }
 
     @Test
-    void theListenerIsTheMenusOwnOnEveryCall() {
-        MenuHarness harness = new MenuHarness(folder);
-
-        assertThat(harness.menus.listener()).isSameAs(harness.menus.listener()).isSameAs(harness.listener);
-    }
-
-    @Test
     void playPlaysTheMappedSoundAndNothingForAnUnmappedCue() {
         Map<Cue, Sound> sounds = new EnumMap<>(Cue.class);
         sounds.put(Cue.SUCCESS, MenuHarness.SOUNDS.get(Cue.SUCCESS));
         MenuHarness harness = new MenuHarness(folder);
-        Menus menus = new Menus(Menus.Parts.of(mock(Server.class), new NamespacedKey("taffytest", "preview"),
-            harness.log.logger, harness.messages, harness.tasks, harness.entity, harness.errors)
-            .layouts(harness.layouts).sounds(() -> sounds), marker -> harness.inventories, player -> true,
-            material -> true, harness.clock);
+        Menus menus = new Menus(Menus.Parts.of(harness.plugin, harness.messages, harness.tasks, harness.entity,
+            harness.errors).layouts(harness.layouts).sounds(() -> sounds), marker -> harness.inventories,
+            player -> true, material -> true, harness.clock, listener -> {
+            });
         MenuHarness.Viewer viewer = harness.viewer("Alex");
 
         menus.play(viewer.player, Cue.SUCCESS);
@@ -530,8 +592,8 @@ final class MenuLifecycleTest {
     }
 
     private static Menus.Parts parts(Server server) {
-        return Menus.Parts.of(server, new NamespacedKey("taffytest", "preview"), Logger.getAnonymousLogger(),
-            mock(Messages.class), new GuiFakes.FakeTasks(), mock(EntityThread.class), new ErrorReports()).home("main");
+        return Menus.Parts.of(MenuHarness.plugin(server, Logger.getAnonymousLogger()), mock(Messages.class),
+            new GuiFakes.FakeTasks(), mock(EntityThread.class), new ErrorReports()).home("main");
     }
 
     @Test
