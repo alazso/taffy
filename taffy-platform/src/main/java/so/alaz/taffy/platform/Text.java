@@ -8,11 +8,15 @@ import net.kyori.adventure.text.minimessage.ParsingException;
 import net.kyori.adventure.text.minimessage.tag.PreProcess;
 import net.kyori.adventure.text.minimessage.tag.Tag;
 import net.kyori.adventure.text.minimessage.tag.resolver.ArgumentQueue;
+import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
+import net.kyori.adventure.text.minimessage.tag.standard.StandardTags;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
@@ -23,17 +27,23 @@ import java.util.regex.Pattern;
  * Renders MiniMessage strings (RGB, gradients, PlaceholderAPI, MiniPlaceholders) into
  * Adventure {@link Component}s.
  *
- * <p>PlaceholderAPI placeholders are resolved first, then the result is parsed as MiniMessage, with
- * MiniPlaceholders' component-safe tags added as resolvers. Both integrations are optional: when a
- * plugin is absent, its pass is skipped.
+ * <p>The input is parsed as MiniMessage, with MiniPlaceholders' component-safe tags added as resolvers. Both
+ * integrations are optional: when a plugin is absent, its pass is skipped.
  *
- * <p>MiniMessage refuses a section sign followed by a legacy code character, which is what many
- * PlaceholderAPI expansions return. Every render therefore converts such a code to its tag, as
- * {@link LegacyText#sectionToMiniMessage} does: in the input, in what PlaceholderAPI put into it, and in
- * each value supplied as {@code Placeholder.parsed}. A converted code such as {@code <red>} in a parsed
- * value is an open tag, so it colours the rest of the template after the value, as the legacy code would.
- * A value supplied as {@code Placeholder.unparsed} or {@code Placeholder.component} is inserted as it is,
- * section sign included.
+ * <p>A render with a viewer resolves each PlaceholderAPI placeholder of the input on its own: every run of text
+ * between two {@code %} signs is given to PlaceholderAPI, and a run PlaceholderAPI returns unchanged stays as
+ * written. What a placeholder returns is inserted as text and is never parsed as MiniMessage, so a tag in it, such
+ * as {@code <click:run_command:'/pay Ann 100'>} or the {@code <name>} of a supplied value, is shown as written.
+ * Section-sign colour and format codes in it still apply, to that output only: they do not colour the template
+ * after the placeholder. A placeholder inside a tag argument that MiniMessage does not parse, such as a click
+ * value, is not filled in. {@link #withPlaceholderFormatting()} gives a {@code Text} that also reads formatting
+ * tags in what a placeholder returns.
+ *
+ * <p>MiniMessage refuses a section sign followed by a legacy code character. Every render therefore converts such
+ * a code to its tag, as {@link LegacyText#sectionToMiniMessage} does: in the input and in each value supplied as
+ * {@code Placeholder.parsed}. A converted code such as {@code <red>} in a parsed value is an open tag, so it
+ * colours the rest of the template after the value, as the legacy code would. A value supplied as
+ * {@code Placeholder.unparsed} or {@code Placeholder.component} is inserted as it is, section sign included.
  *
  * <p>An instance is thread-safe and may be shared. A PlaceholderAPI pass that throws, and a
  * MiniPlaceholders resolver that cannot be built or that throws while the text is parsed, is skipped and
@@ -53,10 +63,20 @@ public final class Text {
     private static final String MINI_PLACEHOLDERS_FAILED =
         "MiniPlaceholders failed, so the text is shown without its placeholders.";
 
+    private static final String OUTPUT_TAG = "taffy_papi_";
+    private static final LegacyComponentSerializer LEGACY =
+        LegacyComponentSerializer.builder().character(LegacyComponentSerializer.SECTION_CHAR).hexColors().build();
+    private static final MiniMessage FORMATTING = MiniMessage.builder()
+        .tags(TagResolver.resolver(
+            StandardTags.color(), StandardTags.decorations(), StandardTags.gradient(), StandardTags.rainbow(),
+            StandardTags.reset()))
+        .build();
+
     private final MiniMessage mm = MiniMessage.miniMessage();
     private final @Nullable BiFunction<Player, String, String> placeholderApi;
     private final @Nullable Supplier<@Nullable TagResolver> miniPlaceholders;
     private final ThrowLog failures;
+    private final boolean placeholderFormatting;
 
     /**
      * Detects PlaceholderAPI and MiniPlaceholders once, by class presence. A lookup that fails is
@@ -70,6 +90,7 @@ public final class Text {
         this.miniPlaceholders = Classes.present("io.github.miniplaceholders.api.MiniPlaceholders", getClass(), logger)
             ? () -> MiniPlaceholders.audienceGlobalPlaceholders()
             : null;
+        this.placeholderFormatting = false;
     }
 
     /** Takes each integration's pass directly. {@code null} means the plugin is absent. */
@@ -81,19 +102,40 @@ public final class Text {
         this.failures = new ThrowLog(logger);
         this.placeholderApi = placeholderApi;
         this.miniPlaceholders = miniPlaceholders;
+        this.placeholderFormatting = false;
+    }
+
+    private Text(Text source, boolean placeholderFormatting) {
+        this.failures = source.failures;
+        this.placeholderApi = source.placeholderApi;
+        this.miniPlaceholders = source.miniPlaceholders;
+        this.placeholderFormatting = placeholderFormatting;
+    }
+
+    /**
+     * Returns a {@code Text} that renders as this one does and also reads formatting tags in what a PlaceholderAPI
+     * placeholder returns: the colour tags, the decoration tags, {@code <gradient>}, {@code <rainbow>} and
+     * {@code <reset>}. Every other tag in it, such as {@code <click>}, {@code <hover>} or the {@code <name>} of a
+     * supplied value, is shown as written. The formatting applies to that output only, as its section-sign codes
+     * do. This instance is left as it is, and the returned one shares its integrations and its log, so one plugin
+     * can render chat through this instance and owner-written text through the returned one.
+     */
+    public Text withPlaceholderFormatting() {
+        return placeholderFormatting ? this : new Text(this, true);
     }
 
     /** Parses the input as MiniMessage, without PlaceholderAPI resolution. */
     public Component render(String input) {
-        return deserialize(applyPlaceholders(input, null), null, TagResolver.empty());
+        return deserialize(input, null, TagResolver.empty());
     }
 
     /**
-     * Resolves PlaceholderAPI placeholders against the viewer (when non-null and PlaceholderAPI is
-     * present), then parses the result as MiniMessage.
+     * Parses the input as MiniMessage and fills in its PlaceholderAPI placeholders against the viewer (when
+     * non-null and PlaceholderAPI is present). What a placeholder returns is inserted as text, as the class
+     * description states.
      */
     public Component render(String input, @Nullable Player viewer) {
-        return deserialize(applyPlaceholders(input, viewer), viewer, TagResolver.empty());
+        return renderFilled(input, null, viewer, TagResolver.empty());
     }
 
     /**
@@ -109,7 +151,8 @@ public final class Text {
      * the values afterwards, so PlaceholderAPI never sees them. A supplied {@code {name}} inside a
      * {@code %...%} placeholder is rewritten to {@code <name>} as well, so that placeholder does not
      * receive the value. A value that carries PlaceholderAPI placeholders of its own is passed
-     * through {@link #resolve(String, Player)} by the caller before it is supplied.
+     * through {@link #resolve(String, Player)} by the caller before it is supplied, as
+     * {@code Placeholder.unparsed} unless every tag in what those placeholders return is meant to be parsed.
      *
      * <p>The caller picks how each value goes in: {@code Placeholder.component} or
      * {@code Placeholder.unparsed} for player-typed text, which is then inserted as it is, and
@@ -121,8 +164,42 @@ public final class Text {
      *     character in the template
      */
     public Component render(String template, @Nullable Player viewer, TagResolver... values) {
-        TagResolver supplied = TagResolver.resolver(values);
-        return deserialize(applyPlaceholders(aliasBraces(template, supplied), viewer), viewer, supplied);
+        return renderFilled(template, null, viewer, TagResolver.resolver(values));
+    }
+
+    /**
+     * Renders {@code template} with {@code values} and with {@code prefix}, a MiniMessage template of its own,
+     * supplied under the name {@code prefix}. The PlaceholderAPI placeholders of the prefix are filled in before
+     * those of the template, and both as the class description states. A value named {@code prefix} in
+     * {@code values} takes the place of {@code prefix}.
+     */
+    Component renderWithPrefix(String template, String prefix, @Nullable Player viewer, TagResolver values) {
+        return renderFilled(template, prefix, viewer, values);
+    }
+
+    private Component renderFilled(
+        String template,
+        @Nullable String prefix,
+        @Nullable Player viewer,
+        TagResolver values
+    ) {
+        List<Component> outputs = new ArrayList<>();
+        TagResolver supplied = values;
+        if (prefix != null) {
+            String filled = LegacyText.sectionToMiniMessage(
+                insertPlaceholders(aliasBraces(prefix, values), viewer, outputs));
+            // The later resolver answers first, so a supplied value named prefix wins.
+            supplied = TagResolver.resolver(Placeholder.parsed("prefix", filled), values);
+        }
+        String filled = insertPlaceholders(aliasBraces(template, supplied), viewer, outputs);
+        if (outputs.isEmpty()) {
+            return deserialize(filled, viewer, supplied);
+        }
+        TagResolver.Builder tags = TagResolver.builder().resolver(supplied);
+        for (int i = 0; i < outputs.size(); i++) {
+            tags.resolver(Placeholder.component(OUTPUT_TAG + i, outputs.get(i)));
+        }
+        return deserialize(filled, viewer, tags.build());
     }
 
     /** Renders each line as {@link #render(String, Player)} does, in order. */
@@ -142,13 +219,14 @@ public final class Text {
      * Resolves PlaceholderAPI placeholders in the input against the viewer, without MiniMessage
      * parsing. Returns the input unchanged when PlaceholderAPI is absent or throws, and logs the
      * failure, or the viewer is null. The result is what PlaceholderAPI returned, with any
-     * section-sign code still in it.
+     * section-sign code and any MiniMessage tag still in it, so a render that parses it reads the tags a
+     * placeholder returned.
      */
     public String resolve(String input, @Nullable Player viewer) {
         return applyPlaceholders(input, viewer);
     }
 
-    /** Renders the input (PlaceholderAPI, then MiniMessage) and flattens it to plain text. */
+    /** Renders the input as {@link #render(String, Player)} does and flattens it to plain text. */
     public String plain(String input, @Nullable Player viewer) {
         return PlainTextComponentSerializer.plainText().serialize(render(input, viewer));
     }
@@ -185,12 +263,12 @@ public final class Text {
     }
 
     /**
-     * Parses already-resolved text as MiniMessage with MiniPlaceholders' resolvers when installed,
+     * Parses {@code input} as MiniMessage with MiniPlaceholders' resolvers when installed,
      * falling back to parsing without them if an expansion throws. The failure is logged only when
      * the fallback parse succeeds; when it throws as well, its exception propagates.
      */
-    private Component deserialize(String placeholdersApplied, @Nullable Player viewer, TagResolver values) {
-        String resolved = LegacyText.sectionToMiniMessage(placeholdersApplied);
+    private Component deserialize(String input, @Nullable Player viewer, TagResolver values) {
+        String resolved = LegacyText.sectionToMiniMessage(input);
         TagResolver expansions = miniPlaceholderResolver();
         if (expansions == null) {
             return parse(resolved, viewer, values);
@@ -226,6 +304,52 @@ public final class Text {
             failures.warn(MINI_PLACEHOLDERS, MINI_PLACEHOLDERS_FAILED, ex);
             return null;
         }
+    }
+
+    /**
+     * Replaces each run between two {@code %} signs that PlaceholderAPI resolves for {@code viewer} with a
+     * generated tag, and adds what the placeholder returned to {@code outputs} at the index the tag names. A run
+     * PlaceholderAPI returns unchanged stays as written, and its closing {@code %} may open the next run. When
+     * PlaceholderAPI is absent or throws, which is logged, or the viewer is null, the input is returned unchanged
+     * and {@code outputs} is left as it was.
+     */
+    private String insertPlaceholders(String input, @Nullable Player viewer, List<Component> outputs) {
+        int open = input.indexOf('%');
+        if (viewer == null || placeholderApi == null || open < 0) {
+            return input;
+        }
+        int before = outputs.size();
+        StringBuilder out = new StringBuilder(input.length());
+        int copied = 0;
+        try {
+            for (int close = input.indexOf('%', open + 1); close >= 0; close = input.indexOf('%', open + 1)) {
+                String token = input.substring(open, close + 1);
+                String result = close == open + 1 ? token : placeholderApi.apply(viewer, token);
+                if (token.equals(result)) {
+                    open = close;
+                    continue;
+                }
+                out.append(input, copied, open).append('<').append(OUTPUT_TAG).append(outputs.size()).append('>');
+                outputs.add(output(result));
+                copied = close + 1;
+                open = input.indexOf('%', copied);
+                if (open < 0) {
+                    break;
+                }
+            }
+        } catch (LinkageError | RuntimeException ex) {
+            outputs.subList(before, outputs.size()).clear();
+            failures.warn(PLACEHOLDER_API,
+                "PlaceholderAPI failed while resolving placeholders, so the text is shown without them.", ex);
+            return input;
+        }
+        return out.append(input, copied, input.length()).toString();
+    }
+
+    private Component output(String result) {
+        return placeholderFormatting
+            ? FORMATTING.deserialize(LegacyText.sectionToMiniMessage(result))
+            : LEGACY.deserialize(result);
     }
 
     private String applyPlaceholders(String input, @Nullable Player viewer) {

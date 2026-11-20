@@ -284,7 +284,8 @@ public final class Messages {
     /**
      * Renders the message for {@code key} in the viewer's language through {@code text}, so PlaceholderAPI and
      * MiniPlaceholders apply as {@link Text#render(String, Player, TagResolver...)} describes. PlaceholderAPI runs
-     * on the template and on the prefix, never on {@code values}.
+     * on the template and on the prefix, never on {@code values}. What a placeholder returns is inserted as text
+     * in both, as {@link Text} describes, unless {@code text} came from {@link Text#withPlaceholderFormatting()}.
      *
      * <p>The prefix is supplied under the name {@code prefix}. A value of that name in {@code values} takes its
      * place.
@@ -316,9 +317,7 @@ public final class Messages {
         String template,
         TagResolver... values
     ) {
-        TagResolver supplied = TagResolver.resolver(values);
-        String prefix = text.resolve(Text.aliasBraces(prefix(chain), supplied), viewer);
-        return text.render(template, viewer, withPrefix(prefix, supplied));
+        return text.renderWithPrefix(template, prefix(chain), viewer, TagResolver.resolver(values));
     }
 
     private static TagResolver withPrefix(String prefix, TagResolver supplied) {

@@ -483,7 +483,7 @@ final class MessagesTest {
         Component withViewer = messages.render(text, viewer(Locale.ENGLISH), "hi", Placeholder.unparsed("name", "Ann"));
 
         assertThat(withoutViewer).isEqualTo(MINI.deserialize("<gold>[%tag%] <green>Hi Ann"));
-        assertThat(withViewer).isEqualTo(MINI.deserialize("<gold>[<aqua>T] <green>Hi Ann"));
+        assertThat(withViewer).isEqualTo(MINI.deserialize("<gold>[<aqua>T</aqua>] <green>Hi Ann"));
         assertThat(messages.template(Locale.ENGLISH, "hi")).isEqualTo("<prefix>§aHi <name>");
     }
 
@@ -544,7 +544,7 @@ final class MessagesTest {
         Component rendered = messages.render(text, german, "greet", Placeholder.unparsed("name", "%rank%"));
 
         assertThat(plain(rendered)).isEqualTo("[DE] Hallo %rank%, Rang VIP");
-        assertThat(passInputs).containsExactly("[%tag%] ", "<prefix>Hallo <name>, Rang %rank%");
+        assertThat(passInputs).containsExactly("%tag%", "%rank%");
 
         passInputs.clear();
         assertThat(plain(messages.render(text, viewer(Locale.JAPAN), "greet", Placeholder.unparsed("name", "Ann"))))
@@ -557,6 +557,28 @@ final class MessagesTest {
         assertThat(plain(messages.render(text, null, "greet", Placeholder.unparsed("name", "Ann"))))
             .isEqualTo("[EN] Hello Ann, rank %rank%");
         assertThat(passInputs).isEmpty();
+    }
+
+    @Test
+    void aTagInPlaceholderOutputIsShownAsWrittenInThePrefixAndInTheTemplate() {
+        Messages messages = Messages.load(folder, supplier("""
+            prefix: "<gold>[%tag%] "
+            greet: "<prefix>Hello <name> %rank%"
+            """), log.logger);
+        String injected = "<click:run_command:'/op Mallory'><hover:show_text:'x'><name>";
+        Text text = new Text(log.logger,
+            (player, input) -> input.replace("%tag%", injected).replace("%rank%", "<green>VIP"), null);
+        Player english = viewer(Locale.ENGLISH);
+
+        Component inert = messages.render(text, english, "greet", Placeholder.unparsed("name", "Ann"));
+        Component formatted = messages.render(
+            text.withPlaceholderFormatting(), english, "greet", Placeholder.unparsed("name", "Ann"));
+        Component template = messages.renderTemplate(text, english, "{prefix}%rank%");
+
+        assertThat(inert).isEqualTo(Component.text("[" + injected + "] Hello Ann <green>VIP", NamedTextColor.GOLD));
+        assertThat(formatted).isEqualTo(Component.text("[" + injected + "] Hello Ann ", NamedTextColor.GOLD)
+            .append(Component.text("VIP", NamedTextColor.GREEN)));
+        assertThat(template).isEqualTo(Component.text("[" + injected + "] <green>VIP", NamedTextColor.GOLD));
     }
 
     @Test
@@ -583,7 +605,7 @@ final class MessagesTest {
 
         assertThat(plain(rendered)).isEqualTo("[DE] You got 3 keys, VIP");
         assertThat(MINI.serialize(rendered)).contains("<red>keys");
-        assertThat(passInputs).containsExactly("[%tag%] ", "<prefix>You got <amount> <item>, %rank%");
+        assertThat(passInputs).containsExactly("%tag%", "%rank%");
         assertThat(plain(messages.renderTemplate(text, german, "parcel.held"))).isEqualTo("parcel.held");
         assertThat(plain(messages.renderTemplate(text, null, "<prefix>console %rank%")))
             .isEqualTo("[P] console %rank%");

@@ -1,7 +1,10 @@
 package so.alaz.taffy.platform;
 
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.Style;
+import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.minimessage.Context;
 import net.kyori.adventure.text.minimessage.MiniMessage;
@@ -19,6 +22,7 @@ import so.alaz.taffy.test.CapturedLog;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 import java.util.logging.Level;
@@ -65,6 +69,50 @@ class TextTest {
         return PlainTextComponentSerializer.plainText().serialize(component);
     }
 
+    private static final String INJECTED =
+        "<click:run_command:'/pay Mallory 100000'><hover:show_text:'Free reward'>Click me";
+
+    // Stands in for PlaceholderAPI with one expansion per map key.
+    private static BiFunction<Player, String, String> expansions(Map<String, String> outputs) {
+        return (player, input) -> {
+            String result = input;
+            for (Map.Entry<String, String> output : outputs.entrySet()) {
+                result = result.replace(output.getKey(), output.getValue());
+            }
+            return result;
+        };
+    }
+
+    /** The style each piece of text is shown in, parent styles applied, in reading order. */
+    private static List<Map.Entry<String, Style>> runs(Component component) {
+        List<Map.Entry<String, Style>> runs = new ArrayList<>();
+        collectRuns(component, Style.empty(), runs);
+        return runs;
+    }
+
+    private static void collectRuns(Component component, Style inherited, List<Map.Entry<String, Style>> runs) {
+        Style style = component.style().merge(inherited, Style.Merge.Strategy.IF_ABSENT_ON_TARGET);
+        if (component instanceof TextComponent text && !text.content().isEmpty()) {
+            runs.add(Map.entry(text.content(), style));
+        }
+        component.children().forEach(child -> collectRuns(child, style, runs));
+    }
+
+    private static Style styleOf(Component component, String content) {
+        return runs(component).stream()
+            .filter(run -> run.getKey().equals(content))
+            .findFirst().orElseThrow(() -> new AssertionError(content + " not in " + runs(component)))
+            .getValue();
+    }
+
+    private static void assertNoEvents(Component component) {
+        assertThat(runs(component)).isNotEmpty().allSatisfy(run -> {
+            assertThat(run.getValue().clickEvent()).isNull();
+            assertThat(run.getValue().hoverEvent()).isNull();
+            assertThat(run.getValue().insertion()).isNull();
+        });
+    }
+
     private void assertOneWarning(String line, Class<? extends Throwable> thrown) {
         assertThat(log.lines()).containsExactly(line);
         LogRecord record = log.records.get(0);
@@ -94,14 +142,135 @@ class TextTest {
     }
 
     @Test
-    void placeholderApiRunsForTheViewerBeforeMiniMessageParsing() {
+    void eachPlaceholderIsResolvedOnItsOwnForTheViewer() {
         Text text = new Text(log.logger, pass, null);
 
-        Component rendered = text.render("%rank% joined", viewer);
+        Component rendered = text.render("<red>%x% joined %x%", viewer);
 
-        assertThat(rendered).isEqualTo(Component.text("VIP joined", NamedTextColor.GREEN));
-        assertThat(passViewers).containsExactly(viewer);
-        assertThat(passInputs).containsExactly("%rank% joined");
+        assertThat(rendered).isEqualTo(Component.text("1 joined 1", NamedTextColor.RED));
+        assertThat(passViewers).containsExactly(viewer, viewer);
+        assertThat(passInputs).containsExactly("%x%", "%x%");
+    }
+
+    @Test
+    void aRunPlaceholderApiReturnsUnchangedStaysAsWrittenAndItsClosingSignOpensTheNextRun() {
+        Text text = new Text(log.logger, pass, null);
+
+        assertThat(plain(text.render("50% off %x% and 20%% more %nope%", viewer)))
+            .isEqualTo("50% off 1 and 20%% more %nope%");
+        assertThat(passInputs).containsExactly("% off %", "%x%", "% more %", "%nope%");
+    }
+
+    @Test
+    void aTagInPlaceholderOutputIsShownAsWritten() {
+        Text text = new Text(log.logger, expansions(Map.of("%nick%", INJECTED, "%clan%", "<name><red>X")), null);
+
+        Component injected = text.render("<gray>Hi %nick%", viewer);
+        Component named = text.render("%clan% {name}", viewer, Placeholder.unparsed("name", "Ann"));
+
+        assertThat(plain(injected)).isEqualTo("Hi " + INJECTED);
+        assertNoEvents(injected);
+        assertThat(injected).isEqualTo(Component.text("Hi " + INJECTED, NamedTextColor.GRAY));
+        assertThat(named).isEqualTo(Component.text("<name><red>X Ann"));
+        assertThat(plain(text.render(List.of("%nick%"), viewer).get(0))).isEqualTo(INJECTED);
+        assertThat(text.plain("%clan%", viewer)).isEqualTo("<name><red>X");
+    }
+
+    @Test
+    void aTagInPlaceholderOutputIsShownAsWrittenInThePrefix() {
+        Text text = new Text(log.logger, expansions(Map.of("%nick%", INJECTED, "%clan%", "<name>")), null);
+
+        Component rendered = text.renderWithPrefix(
+            "{prefix}Hi <name>", "<gold>[%nick%|%clan%|{name}] ", viewer, Placeholder.unparsed("name", "Ann"));
+
+        assertThat(rendered)
+            .isEqualTo(Component.text("[" + INJECTED + "|<name>|Ann] Hi Ann", NamedTextColor.GOLD));
+    }
+
+    @Test
+    void legacyColoursInPlaceholderOutputApplyToThatOutputOnly() {
+        Text text = new Text(log.logger, expansions(Map.of(
+            "%nick%", "§cAnn", "%hex%", "§x§F§F§8§8§0§0Bo", "%short%", "§#00ff00Cy", "%rank%", "§c§lADMIN §7Steve")),
+            null);
+
+        Component rendered = text.render("<gray>Hello %nick% and %hex% and %short%", viewer);
+        Component ranked = text.render("%rank%: hi", viewer);
+        Component prefixed = text.renderWithPrefix("<prefix>: hi", "%rank%", viewer, TagResolver.empty());
+
+        assertThat(plain(rendered)).isEqualTo("Hello Ann and Bo and Cy");
+        assertThat(styleOf(rendered, "Ann").color()).isEqualTo(NamedTextColor.RED);
+        assertThat(styleOf(rendered, " and ").color()).isEqualTo(NamedTextColor.GRAY);
+        assertThat(styleOf(rendered, "Bo").color()).isEqualTo(TextColor.color(0xFF8800));
+        assertThat(styleOf(rendered, "Cy").color()).isEqualTo(TextColor.color(0x00FF00));
+        for (Component component : List.of(ranked, prefixed)) {
+            assertThat(styleOf(component, "ADMIN ").color()).isEqualTo(NamedTextColor.RED);
+            assertThat(styleOf(component, "ADMIN ").hasDecoration(TextDecoration.BOLD)).isTrue();
+            assertThat(styleOf(component, "Steve").color()).isEqualTo(NamedTextColor.GRAY);
+            assertThat(styleOf(component, "Steve").hasDecoration(TextDecoration.BOLD)).isFalse();
+            assertThat(styleOf(component, ": hi")).isEqualTo(Style.empty());
+        }
+    }
+
+    @Test
+    void placeholderFormattingParsesOnlyColoursDecorationsGradientRainbowAndReset() {
+        Text text = new Text(log.logger, expansions(Map.of(
+            "%rank%", "<green><bold>VIP</bold> <#ff8800>a<color:blue>b<reset>c",
+            "%fade%", "<gradient:red:blue>xy</gradient><rainbow>zw</rainbow>",
+            "%nick%", INJECTED + "<name><insert:x><newline><lang:block.minecraft.stone><key:key.jump><font:alt>",
+            "%legacy%", "§c§lADMIN §7Steve")), null).withPlaceholderFormatting();
+
+        Component rank = text.render("%rank%: hi", viewer);
+        Component fade = text.render("%fade%", viewer);
+        Component nick = text.render("<gray>%nick% {name}", viewer, Placeholder.unparsed("name", "Ann"));
+        Component prefixed = text.renderWithPrefix(
+            "<prefix>hi", "%rank%%nick% ", viewer, Placeholder.unparsed("name", "Ann"));
+        Component legacy = text.render("%legacy%!", viewer);
+
+        assertThat(plain(rank)).isEqualTo("VIP abc: hi");
+        assertThat(styleOf(rank, "VIP").color()).isEqualTo(NamedTextColor.GREEN);
+        assertThat(styleOf(rank, "VIP").hasDecoration(TextDecoration.BOLD)).isTrue();
+        assertThat(styleOf(rank, "a").color()).isEqualTo(TextColor.color(0xFF8800));
+        assertThat(styleOf(rank, "b").color()).isEqualTo(NamedTextColor.BLUE);
+        assertThat(styleOf(rank, "c: hi")).isEqualTo(Style.empty());
+        assertThat(plain(fade)).isEqualTo("xyzw");
+        assertThat(runs(fade)).hasSize(4).allSatisfy(run -> assertThat(run.getValue().color()).isNotNull());
+        assertThat(styleOf(fade, "x").color()).isNotEqualTo(styleOf(fade, "y").color());
+        assertThat(styleOf(fade, "z").color()).isNotEqualTo(styleOf(fade, "w").color());
+        String shown = INJECTED + "<name><insert:x><newline><lang:block.minecraft.stone><key:key.jump><font:alt>";
+        assertThat(plain(nick)).isEqualTo(shown + " Ann");
+        assertNoEvents(nick);
+        assertThat(runs(nick)).allSatisfy(run -> {
+            assertThat(run.getValue().color()).isEqualTo(NamedTextColor.GRAY);
+            assertThat(run.getValue().font()).isNull();
+        });
+        assertThat(plain(prefixed)).isEqualTo("VIP abc" + shown + " hi");
+        assertNoEvents(prefixed);
+        assertThat(styleOf(prefixed, "VIP").color()).isEqualTo(NamedTextColor.GREEN);
+        assertThat(styleOf(legacy, "Steve").color()).isEqualTo(NamedTextColor.GRAY);
+        assertThat(styleOf(legacy, "Steve").hasDecoration(TextDecoration.BOLD)).isFalse();
+        assertThat(styleOf(legacy, "!")).isEqualTo(Style.empty());
+    }
+
+    @Test
+    void placeholderFormattingLeavesTheSourceInstanceInert() {
+        Text inert = new Text(log.logger, expansions(Map.of("%rank%", "<green>VIP")), null);
+        Text formatting = inert.withPlaceholderFormatting();
+
+        assertThat(formatting.withPlaceholderFormatting()).isSameAs(formatting);
+        assertThat(plain(inert.render("%rank%", viewer))).isEqualTo("<green>VIP");
+        assertThat(formatting.render("%rank%", viewer)).isEqualTo(Component.text("VIP", NamedTextColor.GREEN));
+        assertThat(formatting.resolve("%rank%", viewer)).isEqualTo("<green>VIP");
+    }
+
+    @Test
+    void aPlaceholderInsideAClickValueIsNotFilledInAndOneInsideHoverTextIs() {
+        Text text = new Text(log.logger, pass, null);
+
+        Component click = text.render("<click:run_command:'/pay %x%'>x</click>", viewer);
+        Component hover = text.render("<hover:show_text:'%x%'>x</hover>", viewer);
+
+        assertThat(MINI.serialize(click)).isEqualTo("<click:run_command:'/pay <taffy_papi_0>'>x");
+        assertThat(MINI.serialize(hover)).isEqualTo("<hover:show_text:'1'>x");
     }
 
     @Test
@@ -146,6 +315,7 @@ class TextTest {
         assertThat(text.render("{who} met %nick%", viewer, Placeholder.unparsed("who", "Bo")))
             .isEqualTo(MINI.deserialize("Bo met <red>Ann"));
         assertThat(text.render(List.of("%nick%"), viewer)).containsExactly(Component.text("Ann", NamedTextColor.RED));
+        assertThat(log.records).isEmpty();
     }
 
     @Test
@@ -339,7 +509,7 @@ class TextTest {
         assertThat(plain(unparsed)).isEqualTo("Hello <red>%x%<server>");
         assertThat(plain(component)).isEqualTo("Hello <red>%x%<server>");
         assertThat(MINI.serialize(unparsed)).isEqualTo("Hello \\<red>%x%\\<server>");
-        assertThat(passInputs).containsExactly("Hello <name>", "Hello <name>");
+        assertThat(passInputs).isEmpty();
     }
 
     @Test
@@ -362,7 +532,7 @@ class TextTest {
             Placeholder.unparsed("count", "3"));
 
         assertThat(plain(rendered)).isEqualTo("<red>Ann has 3 of {max} on {server} 1");
-        assertThat(passInputs).containsExactly("<player> has <count> of {max} on {server} %x%");
+        assertThat(passInputs).containsExactly("%x%");
     }
 
     @Test
@@ -372,7 +542,7 @@ class TextTest {
         Component rendered = text.render("%math_{count}*2% %x%", viewer, Placeholder.unparsed("count", "3"));
 
         assertThat(plain(rendered)).isEqualTo("%math_3*2% 1");
-        assertThat(passInputs).containsExactly("%math_<count>*2% %x%");
+        assertThat(passInputs).containsExactly("%math_<count>*2%", "% %", "%x%");
     }
 
     @Test
@@ -438,8 +608,8 @@ class TextTest {
         List<Component> lines = text.render(List.of("<red>a", "%rank%", ""), viewer);
 
         assertThat(lines).containsExactly(
-            Component.text("a", NamedTextColor.RED), Component.text("VIP", NamedTextColor.GREEN), Component.empty());
-        assertThat(passViewers).containsExactly(viewer, viewer, viewer);
+            Component.text("a", NamedTextColor.RED), Component.text("<green>VIP"), Component.empty());
+        assertThat(passViewers).containsExactly(viewer);
     }
 
     @Test

@@ -11,6 +11,10 @@ All notable changes to Taffy are documented here. This project follows
   task. Every other dependency resolves as on `compileClasspath`. No task depends on it: run it by name, or add
   `tasks.check { dependsOn("compileAgainstPaperFloor") }` to make it part of `check`. It compiles only, so a
   method that exists on that build with other behaviour is not caught.
+- `Text.withPlaceholderFormatting()` returns a `Text` that shares the integrations and the log of the one it is
+  called on and parses colour tags, decoration tags, `<gradient>`, `<rainbow>` and `<reset>` in what a
+  PlaceholderAPI placeholder returns. The instance it is called on is left as it is, so a plugin can keep one
+  `Text` for chat and one for owner-written item text.
 
 ### Changed
 - Breaking: Taffy compiles against paper-api 26.3 and supports Paper 26.2 build 135 or newer and Folia 26.3 build 8
@@ -20,6 +24,19 @@ All notable changes to Taffy are documented here. This project follows
   or newer or Folia 26.3 build 8 or newer, and recompile it against paper-api 26.3. Adventure 5 makes
   `ClickEvent` generic, so a raw `ClickEvent` compiles with a rawtypes warning until it is written
   `ClickEvent<?>`.
+- Breaking: `Text` and `Messages` insert what a PlaceholderAPI placeholder returns as text and no longer parse it
+  as MiniMessage. In 0.1 a player-set value such as a nickname could carry
+  `<click:run_command:'/pay Mallory 100000'>` or the `<name>` of a supplied value into a message. Now every tag in
+  placeholder output is shown as written, on `Text.render`, `Text.send`, `Text.plain` and on the template and the
+  prefix of `Messages.render(Text, ...)` and `Messages.renderTemplate`. Section-sign colour and format codes in the
+  output still apply, to that output only: a colour a placeholder returns no longer colours the template after it.
+  Each run between two `%` signs is given to PlaceholderAPI on its own, so a placeholder inside a tag argument
+  that MiniMessage does not parse, such as a click value, is no longer filled in. `Text.resolve` is unchanged and
+  returns what PlaceholderAPI gave, tags included. Migration: where an expansion returns MiniMessage formatting
+  on purpose, such as a rank prefix with a gradient, render through `text.withPlaceholderFormatting()`, a `Text`
+  that parses colour tags, decoration tags, `<gradient>`, `<rainbow>` and `<reset>` in placeholder output and
+  shows every other tag as written. No option brings back click, hover or any other tag from placeholder output:
+  write those in the template, around the placeholder.
 - `taffy-gui`: the package-private `CancelLink.link` returns `ClickEvent<?>`, the generic type Adventure 5 gives
   `ClickEvent`. Its erasure is the same, and no public signature changes.
 
