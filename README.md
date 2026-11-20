@@ -75,9 +75,18 @@ Gradle itself must run on Java 25, because the plugins are Java 25 class files l
 `gradle/gradle-daemon-jvm.properties` holding `toolchainVersion=25` so Gradle picks a Java 25 JVM whatever
 `JAVA_HOME` is.
 
-To try an unpublished build, run `./gradlew publishToMavenLocal` here and add `mavenLocal()` to both
-`pluginManagement.repositories` and `dependencyResolutionManagement.repositories` in the plugin's
-`settings.gradle.kts`.
+To try an unpublished build, run `./gradlew publishToMavenLocal` here. In the plugin's `settings.gradle.kts`, add
+`mavenLocal()` to `pluginManagement.repositories` and set the URL of the `alazsoSnapshots` repository to the local
+Maven repository. `so.alaz.taffy.repositories` resolves the `so.alaz` groups from its two `repo.alaz.so`
+repositories only, so a `mavenLocal()` in `dependencyResolutionManagement.repositories` is not asked for them.
+
+```kotlin
+dependencyResolutionManagement {
+    repositories.named<MavenArtifactRepository>("alazsoSnapshots") {
+        url = uri(File(System.getProperty("user.home"), ".m2/repository"))
+    }
+}
+```
 
 <br>
 
@@ -105,7 +114,7 @@ come.
 | Plugin | Applied in | What it does |
 |---|---|---|
 | `so.alaz.taffy.settings` | `settings.gradle.kts` | `so.alaz.taffy.repositories` plus the `alaz` catalog at the same version as the plugin. |
-| `so.alaz.taffy.repositories` | `settings.gradle.kts` | The foojay toolchain resolver and the Paper, repo.alaz.so and integration repositories. |
+| `so.alaz.taffy.repositories` | `settings.gradle.kts` | The foojay toolchain resolver and the Paper, repo.alaz.so and integration repositories, each asked only for its own groups. |
 | `so.alaz.taffy.paper-plugin` | a plugin module | `so.alaz.taffy.coverage` plus the shaded plugin jar. |
 | `so.alaz.taffy.paper-api` | a published API module | `so.alaz.taffy.java` plus sources and javadoc jars and the `library` publication. |
 | `so.alaz.taffy.library` | a tested library module | `so.alaz.taffy.paper-api` plus `so.alaz.taffy.coverage`, with a per-class floor of 0.50. |

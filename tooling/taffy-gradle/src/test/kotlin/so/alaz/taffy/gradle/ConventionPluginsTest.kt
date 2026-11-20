@@ -1,6 +1,7 @@
 package so.alaz.taffy.gradle
 
 import java.io.File
+import java.net.URI
 import java.util.zip.ZipFile
 import org.assertj.core.api.Assertions.assertThat
 import org.gradle.testkit.runner.BuildResult
@@ -17,6 +18,20 @@ class ConventionPluginsTest {
     lateinit var projectDirectory: File
 
     private val testRepository: String = System.getProperty("taffy.testRepository")
+
+    private val repositoryNames = listOf(
+        "MavenRepo", "papermc", "alazso", "alazsoSnapshots", "placeholderapi", "faststats", "vaultunlocked",
+        "playerpoints", "oraxen", "nexo", "enginehub", "fancyinnovations", "thenextlvl", "packetevents", "jitpack",
+    )
+
+    /** Every group a filter of so.alaz.taffy.repositories names, and one that none names. */
+    private val filterGroups = listOf(
+        "io.papermc", "com.mojang", "net.md-5", "so.alaz", "me.clip", "dev.faststats.metrics", "net.milkbowl.vault",
+        "org.black_ixx", "io.th0rgal", "md.thomas.hopper", "com.nexomc", "com.tcoded", "me.gabytm.util",
+        "team.unnamed", "com.sk89q", "org.enginehub", "de.oliver", "net.thenextlvl", "com.github.retrooper",
+        "com.github.MilkBowl", "com.github.Arcaniax-Development", "com.github.decentsoftware-eu",
+        "com.github.HologramLib", "com.github.maximjsx.EntityLib", "org.example",
+    )
 
     private val centralOnly = """
         dependencyResolutionManagement {
@@ -161,6 +176,7 @@ class ConventionPluginsTest {
         val library = projectDirectory.resolve("taffy")
         val modules = projectDirectory.resolve("modules")
         val modulesUri = modules.toURI().toString()
+        File(URI(testRepository)).copyRecursively(modules)
         for (module in listOf("taffy-platform", "taffy-metrics")) {
             sourceRoot.resolve("$module/build.gradle.kts").copyTo(library.resolve("$module/build.gradle.kts"))
             sourceRoot.resolve("$module/src/main").copyRecursively(library.resolve("$module/src/main"))
@@ -218,17 +234,8 @@ class ConventionPluginsTest {
             }
             rootProject.name = "demo"
             dependencyResolutionManagement {
-                repositories {
-                    exclusiveContent {
-                        forRepositories(
-                            maven("$testRepository") { name = "test" },
-                            maven("$modulesUri") { name = "modules" },
-                        )
-                        filter {
-                            includeGroup("so.alaz.taffy")
-                        }
-                    }
-                }
+                repositories.withType<MavenArtifactRepository>().matching { it.name.startsWith("alazso") }
+                    .configureEach { url = uri("$modulesUri") }
             }
             """,
         )
@@ -300,6 +307,7 @@ class ConventionPluginsTest {
         val library = projectDirectory.resolve("taffy")
         val modules = projectDirectory.resolve("modules")
         val modulesUri = modules.toURI().toString()
+        File(URI(testRepository)).copyRecursively(modules)
         for (module in listOf("taffy-platform", "taffy-config", "taffy-comficonf")) {
             sourceRoot.resolve("$module/build.gradle.kts").copyTo(library.resolve("$module/build.gradle.kts"))
             sourceRoot.resolve("$module/src/main").copyRecursively(library.resolve("$module/src/main"))
@@ -364,17 +372,8 @@ class ConventionPluginsTest {
             }
             rootProject.name = "demo"
             dependencyResolutionManagement {
-                repositories {
-                    exclusiveContent {
-                        forRepositories(
-                            maven("$testRepository") { name = "test" },
-                            maven("$modulesUri") { name = "modules" },
-                        )
-                        filter {
-                            includeGroup("so.alaz.taffy")
-                        }
-                    }
-                }
+                repositories.withType<MavenArtifactRepository>().matching { it.name.startsWith("alazso") }
+                    .configureEach { url = uri("$modulesUri") }
             }
             """,
         )
@@ -452,16 +451,8 @@ class ConventionPluginsTest {
             }
             rootProject.name = "demo"
             dependencyResolutionManagement {
-                repositories {
-                    exclusiveContent {
-                        forRepository {
-                            maven("$testRepository") { name = "test" }
-                        }
-                        filter {
-                            includeGroup("so.alaz.taffy")
-                        }
-                    }
-                }
+                repositories.withType<MavenArtifactRepository>().matching { it.name.startsWith("alazso") }
+                    .configureEach { url = uri("$testRepository") }
             }
             """,
         )
@@ -865,16 +856,8 @@ class ConventionPluginsTest {
             }
             rootProject.name = "demo"
             dependencyResolutionManagement {
-                repositories {
-                    exclusiveContent {
-                        forRepository {
-                            maven("$testRepository") { name = "test" }
-                        }
-                        filter {
-                            includeGroup("so.alaz.taffy")
-                        }
-                    }
-                }
+                repositories.withType<MavenArtifactRepository>().matching { it.name.startsWith("alazso") }
+                    .configureEach { url = uri("$testRepository") }
             }
             include(":demo-api")
             """,
@@ -943,16 +926,8 @@ class ConventionPluginsTest {
             }
             rootProject.name = "demo"
             dependencyResolutionManagement {
-                repositories {
-                    exclusiveContent {
-                        forRepository {
-                            maven("$testRepository") { name = "test" }
-                        }
-                        filter {
-                            includeGroup("so.alaz.taffy")
-                        }
-                    }
-                }
+                repositories.withType<MavenArtifactRepository>().matching { it.name.startsWith("alazso") }
+                    .configureEach { url = uri("$testRepository") }
             }
             """,
         )
@@ -986,7 +961,7 @@ class ConventionPluginsTest {
     }
 
     @Test
-    fun repositoriesPluginDeclaresRepositoriesWithoutACatalog() {
+    fun repositoriesPluginDeclaresTheOrderedRepositoriesWithTheirContentFiltersAndNoCatalog() {
         project()
         // Gradle exposes a repository's content filter only through its internal API.
         write(
@@ -1002,17 +977,16 @@ class ConventionPluginsTest {
             }
             rootProject.name = "demo"
             println("catalogs=" + dependencyResolutionManagement.versionCatalogs.names)
-            println("repositories=" + dependencyResolutionManagement.repositories.joinToString(",") { it.name })
-            val groups = listOf("de.oliver", "net.thenextlvl", "com.github.retrooper")
-            for (name in listOf("fancyinnovations", "thenextlvl", "packetevents")) {
-                val repository = dependencyResolutionManagement.repositories.getByName(name)
+            println("mode=" + dependencyResolutionManagement.repositoriesMode.get())
+            val groups = listOf(${filterGroups.joinToString { "\"$it\"" }}).flatMap { listOf(it, it + ".sub") }
+            fun accepted(repository: ArtifactRepository, version: String): List<String> {
                 val filter = (repository as ContentFilteringRepository).contentFilter
-                val accepted = groups.filter { group ->
+                return groups.filter { group ->
                     val module = DefaultModuleIdentifier.newId(group, "probe")
                     var found = true
                     filter.execute(object : ArtifactResolutionDetails {
                         override fun getModuleId() = module
-                        override fun getComponentId() = DefaultModuleComponentIdentifier.newId(module, "1.0")
+                        override fun getComponentId() = DefaultModuleComponentIdentifier.newId(module, version)
                         override fun isVersionListing() = false
                         override fun notFound() {
                             found = false
@@ -1020,22 +994,168 @@ class ConventionPluginsTest {
                     })
                     found
                 }
-                println("filter " + name + "=" + accepted)
+            }
+            for (repository in dependencyResolutionManagement.repositories) {
+                val releases = accepted(repository, "1.0")
+                val snapshots = accepted(repository, "1.0-SNAPSHOT")
+                val versions = when {
+                    releases == snapshots -> "any"
+                    snapshots.isEmpty() -> "releases"
+                    releases.isEmpty() -> "snapshots"
+                    else -> "mixed"
+                }
+                val served = releases.ifEmpty { snapshots }
+                val content = if ("org.example" in served) "all but " + (groups - served) else served.toString()
+                val url = (repository as MavenArtifactRepository).url
+                println("repository " + repository.name + " " + url + " versions=" + versions + " groups=" + content)
             }
             """,
         )
 
         val result = run("help")
 
-        assertThat(result.output).contains("catalogs=[]")
-        assertThat(result.output.lines()).contains(
-            "repositories=MavenRepo,papermc,alazso,alazsoSnapshots,placeholderapi,faststats,jitpack," +
-                "vaultunlocked,playerpoints,oraxen,nexo,enginehub,fancyinnovations,thenextlvl,packetevents",
+        assertThat(result.output.lines()).contains("catalogs=[]", "mode=PREFER_SETTINGS")
+        assertThat(result.output.lines().filter { it.startsWith("repository ") }).containsExactly(
+            "repository MavenRepo https://repo.maven.apache.org/maven2/ versions=releases " +
+                "groups=all but [so.alaz, so.alaz.sub]",
+            "repository papermc https://repo.papermc.io/repository/maven-public/ versions=any " +
+                "groups=[io.papermc, io.papermc.sub, com.mojang, net.md-5]",
+            "repository alazso https://repo.alaz.so/releases versions=releases groups=[so.alaz, so.alaz.sub]",
+            "repository alazsoSnapshots https://repo.alaz.so/snapshots versions=snapshots " +
+                "groups=[so.alaz, so.alaz.sub]",
+            "repository placeholderapi https://repo.extendedclip.com/releases/ versions=any groups=[me.clip]",
+            "repository faststats https://repo.faststats.dev/releases versions=any groups=[dev.faststats.metrics]",
+            "repository vaultunlocked https://repo.codemc.io/repository/creatorfromhell/ versions=any " +
+                "groups=[net.milkbowl.vault]",
+            "repository playerpoints https://repo.rosewooddev.io/repository/public/ versions=any " +
+                "groups=[org.black_ixx]",
+            "repository oraxen https://repo.oraxen.com/releases versions=any groups=[io.th0rgal, md.thomas.hopper]",
+            "repository nexo https://repo.nexomc.com/releases versions=any " +
+                "groups=[com.nexomc, com.tcoded, me.gabytm.util, team.unnamed]",
+            "repository enginehub https://maven.enginehub.org/repo/ versions=any " +
+                "groups=[com.sk89q, com.sk89q.sub, org.enginehub, org.enginehub.sub]",
+            "repository fancyinnovations https://maven.fancyspaces.net/fancyinnovations/releases versions=any " +
+                "groups=[de.oliver]",
+            "repository thenextlvl https://repo.thenextlvl.net/releases versions=any groups=[net.thenextlvl]",
+            "repository packetevents https://repo.codemc.io/repository/maven-releases/ versions=any " +
+                "groups=[com.github.retrooper]",
+            "repository jitpack https://jitpack.io versions=any " +
+                "groups=[com.github.MilkBowl, com.github.Arcaniax-Development, com.github.decentsoftware-eu, " +
+                "com.github.HologramLib, com.github.maximjsx.EntityLib]",
+        )
+    }
+
+    @Test
+    fun aRepositoryIsAskedOnlyForTheGroupsOfItsFilter() {
+        project()
+        write(
+            "settings.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.repositories")
+            }
+            rootProject.name = "demo"
+            val directory = rootDir.resolve("repositories")
+            dependencyResolutionManagement {
+                repositories.withType<MavenArtifactRepository>().configureEach {
+                    url = uri(directory.resolve(name))
+                }
+            }
+            """,
+        )
+        for (repository in repositoryNames) {
+            if (repository != "MavenRepo") {
+                module(repository, "org.example", "outside", "1.0")
+            }
+            module(repository, "so.alaz.demo", "inside", "1.0")
+            module(repository, "so.alaz.demo", "inside", "1.0-SNAPSHOT")
+        }
+        write(
+            "build.gradle.kts",
+            """
+            import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+
+            val missing = listOf(
+                "org.example:outside:1.0",
+                "com.github.example:missing:1.0",
+                "so.alaz.demo:missing:1.0",
+                "so.alaz.demo:missing:1.0-SNAPSHOT",
+                "io.papermc.paper:missing:1.0",
+                "com.mojang:missing:1.0",
+                "net.md-5:missing:1.0",
+                "me.clip:missing:1.0",
+                "dev.faststats.metrics:missing:1.0",
+                "net.milkbowl.vault:missing:1.0",
+                "org.black_ixx:missing:1.0",
+                "io.th0rgal:missing:1.0",
+                "md.thomas.hopper:missing:1.0",
+                "com.nexomc:missing:1.0",
+                "com.tcoded:missing:1.0",
+                "me.gabytm.util:missing:1.0",
+                "team.unnamed:missing:1.0",
+                "com.sk89q.worldguard:missing:1.0",
+                "org.enginehub.lin-bus:missing:1.0",
+                "de.oliver:missing:1.0",
+                "net.thenextlvl:missing:1.0",
+                "com.github.retrooper:missing:1.0",
+                "com.github.MilkBowl:missing:1.0",
+                "com.github.Arcaniax-Development:missing:1.0",
+                "com.github.decentsoftware-eu:missing:1.0",
+                "com.github.HologramLib:missing:1.0",
+                "com.github.maximjsx.EntityLib:missing:1.0",
+            )
+            for (notation in missing) {
+                val configuration = configurations.detachedConfiguration(dependencies.create(notation))
+                val failure = configuration.incoming.resolutionResult.allDependencies
+                    .filterIsInstance<UnresolvedDependencyResult>().single().failure
+                val asked = generateSequence<Throwable>(failure) { it.cause }.mapNotNull { it.message }
+                    .flatMap { it.lines() }.filter { it.trim().startsWith("- file:") }
+                    .map { it.substringAfter("/repositories/").substringBefore('/') }.distinct().toList()
+                println("asked " + notation + "=" + asked)
+            }
+            for (version in listOf("1.0", "1.0-SNAPSHOT")) {
+                val inside = dependencies.create("so.alaz.demo:inside:" + version)
+                val jar = configurations.detachedConfiguration(inside).singleFile
+                println("resolved inside " + version + "=" + jar.relativeTo(rootDir).invariantSeparatorsPath)
+            }
+            """,
+        )
+
+        val result = run("help")
+
+        assertThat(result.output.lines().filter { it.startsWith("asked ") }).containsExactly(
+            "asked org.example:outside:1.0=[MavenRepo]",
+            "asked com.github.example:missing:1.0=[MavenRepo]",
+            "asked so.alaz.demo:missing:1.0=[alazso]",
+            "asked so.alaz.demo:missing:1.0-SNAPSHOT=[alazsoSnapshots]",
+            "asked io.papermc.paper:missing:1.0=[MavenRepo, papermc]",
+            "asked com.mojang:missing:1.0=[MavenRepo, papermc]",
+            "asked net.md-5:missing:1.0=[MavenRepo, papermc]",
+            "asked me.clip:missing:1.0=[MavenRepo, placeholderapi]",
+            "asked dev.faststats.metrics:missing:1.0=[MavenRepo, faststats]",
+            "asked net.milkbowl.vault:missing:1.0=[MavenRepo, vaultunlocked]",
+            "asked org.black_ixx:missing:1.0=[MavenRepo, playerpoints]",
+            "asked io.th0rgal:missing:1.0=[MavenRepo, oraxen]",
+            "asked md.thomas.hopper:missing:1.0=[MavenRepo, oraxen]",
+            "asked com.nexomc:missing:1.0=[MavenRepo, nexo]",
+            "asked com.tcoded:missing:1.0=[MavenRepo, nexo]",
+            "asked me.gabytm.util:missing:1.0=[MavenRepo, nexo]",
+            "asked team.unnamed:missing:1.0=[MavenRepo, nexo]",
+            "asked com.sk89q.worldguard:missing:1.0=[MavenRepo, enginehub]",
+            "asked org.enginehub.lin-bus:missing:1.0=[MavenRepo, enginehub]",
+            "asked de.oliver:missing:1.0=[MavenRepo, fancyinnovations]",
+            "asked net.thenextlvl:missing:1.0=[MavenRepo, thenextlvl]",
+            "asked com.github.retrooper:missing:1.0=[MavenRepo, packetevents]",
+            "asked com.github.MilkBowl:missing:1.0=[MavenRepo, jitpack]",
+            "asked com.github.Arcaniax-Development:missing:1.0=[MavenRepo, jitpack]",
+            "asked com.github.decentsoftware-eu:missing:1.0=[MavenRepo, jitpack]",
+            "asked com.github.HologramLib:missing:1.0=[MavenRepo, jitpack]",
+            "asked com.github.maximjsx.EntityLib:missing:1.0=[MavenRepo, jitpack]",
         )
         assertThat(result.output.lines()).contains(
-            "filter fancyinnovations=[de.oliver]",
-            "filter thenextlvl=[net.thenextlvl]",
-            "filter packetevents=[com.github.retrooper]",
+            "resolved inside 1.0=repositories/alazso/so/alaz/demo/inside/1.0/inside-1.0.jar",
+            "resolved inside 1.0-SNAPSHOT=" +
+                "repositories/alazsoSnapshots/so/alaz/demo/inside/1.0-SNAPSHOT/inside-1.0-SNAPSHOT.jar",
         )
     }
 
@@ -1323,6 +1443,23 @@ class ConventionPluginsTest {
             }
         }
     """
+
+    /** Stores the POM and an empty jar of a module in the local directory that stands in for [repository]. */
+    private fun module(repository: String, group: String, name: String, version: String) {
+        val directory = "repositories/$repository/${group.replace('.', '/')}/$name/$version"
+        write(
+            "$directory/$name-$version.pom",
+            """
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>$group</groupId>
+              <artifactId>$name</artifactId>
+              <version>$version</version>
+            </project>
+            """,
+        )
+        projectDirectory.resolve("$directory/$name-$version.jar").writeBytes(ByteArray(0))
+    }
 
     private fun paperFloor(): String =
         File(System.getProperty("taffy.sourceRoot"), "gradle.properties").readLines()

@@ -93,6 +93,25 @@ All notable changes to Taffy are documented here. This project follows
   plugin that called `fromName` or `fromUuid` again right after a blank head to retry gets the same blank head
   for 2 minutes; show the blank head and ask again later, or use a new `SkullBuilder`, which starts with an
   empty cache.
+- Breaking: `so.alaz.taffy.repositories` asks each repository it declares, Maven Central apart, only for the
+  groups the `alaz` catalog takes from it, declares `alazso` and `alazsoSnapshots` through `exclusiveContent`,
+  and moves `jitpack` to the end of the list. In 0.1 only the two `repo.alaz.so` repositories and the three
+  hologram repositories had a filter, and `jitpack` stood ahead of eight other hosts, so a module an earlier
+  repository lacked was looked up on JitPack and on every other host: `net.thenextlvl:holograms` came from the
+  `faststats` repository. Now `papermc` serves `io.papermc` and its subgroups, `com.mojang` and `net.md-5`;
+  `placeholderapi` serves `me.clip`; `faststats` serves `dev.faststats.metrics`; `vaultunlocked` serves
+  `net.milkbowl.vault`; `playerpoints` serves `org.black_ixx`; `oraxen` serves `io.th0rgal` and
+  `md.thomas.hopper`; `nexo` serves `com.nexomc`, `com.tcoded`, `me.gabytm.util` and `team.unnamed`; `enginehub`
+  serves `com.sk89q`, `org.enginehub` and their subgroups; and `jitpack` serves `com.github.MilkBowl`,
+  `com.github.Arcaniax-Development`, `com.github.decentsoftware-eu`, `com.github.HologramLib` and
+  `com.github.maximjsx.EntityLib`. `fancyinnovations`, `thenextlvl` and `packetevents` keep their filters.
+  `so.alaz` and its subgroups resolve from `alazso` and `alazsoSnapshots` and from no other repository, Maven
+  Central and a repository the build adds included. Every entry of the `alaz` catalog resolves to the same
+  modules as before. Migration: a build that took a module of another group from one of these repositories
+  declares that repository itself in `dependencyResolutionManagement.repositories` of `settings.gradle.kts`. A
+  build that added `mavenLocal()` there to use a locally published Taffy sets the URL of `alazsoSnapshots` to the
+  local repository instead: `repositories.named<MavenArtifactRepository>("alazsoSnapshots") { url =
+  uri(File(System.getProperty("user.home"), ".m2/repository")) }`.
 - `taffy-gui`: the package-private `CancelLink.link` returns `ClickEvent<?>`, the generic type Adventure 5 gives
   `ClickEvent`. Its erasure is the same, and no public signature changes.
 
