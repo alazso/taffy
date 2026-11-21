@@ -9,7 +9,10 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
     repositories {
         mavenCentral()
-        gradlePluginPortal()
+        exclusiveContent {
+            forRepository { gradlePluginPortal() }
+            filter { includeGroup("org.gradle.toolchains") }
+        }
     }
     versionCatalogs {
         create("alaz") {

@@ -1407,6 +1407,47 @@ class ConventionPluginsTest {
         assertThat(projectDirectory.resolve("build/libs")).doesNotExist()
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = ["so.alaz.taffy", "so.alaz.taffy.shop"])
+    fun shadowJarFailsOnAGroupThatIsTaffysPackageOrInsideIt(group: String) {
+        write("gradle.properties", "group=$group\nversion=1.2.3\n")
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.taffy.paper-plugin\")\n}")
+        write("src/main/java/so/alaz/demo/Covered.java", covered)
+
+        val help = run("help")
+
+        assertThat(help.task(":help")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+
+        val result = runner("shadowJar").buildAndFail()
+
+        assertThat(result.output).contains(
+            "so.alaz.taffy.paper-plugin relocates Taffy under <group>.libs, and the project group \"$group\" is " +
+                "so.alaz.taffy or inside it, so the relocated copy would still be inside so.alaz.taffy and Taffy " +
+                "refuses it when the plugin enables. Set group in gradle.properties to a package outside " +
+                "so.alaz.taffy, for example group=com.example.myplugin.",
+        )
+        assertThat(projectDirectory.resolve("build/libs")).doesNotExist()
+    }
+
+    @Test
+    fun shadowJarBuildsOnAGroupThatOnlyStartsWithTaffysPackageName() {
+        write("gradle.properties", "group=so.alaz.taffyshop\nversion=1.2.3\n")
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.taffy.paper-plugin\")\n}")
+        val shop = "package so.alaz.taffyshop;\n\npublic interface Shop {\n}\n"
+        write("src/main/java/so/alaz/taffyshop/Shop.java", shop)
+        write("src/main/java/so/alaz/taffy/Fake.java", "package so.alaz.taffy;\n\npublic interface Fake {\n}\n")
+
+        val result = run("shadowJar")
+
+        assertThat(result.task(":shadowJar")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            assertThat(jar.entries().asSequence().map { it.name }.toList())
+                .contains("so/alaz/taffyshop/Shop.class", "so/alaz/taffyshop/libs/taffy/Fake.class")
+        }
+    }
+
     @Test
     fun generateRuntimeLibrariesFailsOnABlankGroup() {
         write("gradle.properties", "version=1.2.3\n")

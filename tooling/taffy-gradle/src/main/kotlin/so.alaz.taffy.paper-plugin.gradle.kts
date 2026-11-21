@@ -108,7 +108,8 @@ tasks.named<ShadowJar>("shadowJar") {
     }
     eachFile(CollectDependencyLicenses.DropShadedCopies(layout.buildDirectory.dir("tmp/.cache/expanded")))
     from(collectDependencyLicenses)
-    val libraries = PluginGroup.requireSegments(project.group.toString()) + ".libs"
+    val pluginGroup = PluginGroup.requireOutsideTaffy(PluginGroup.requireSegments(project.group.toString()))
+    val libraries = "$pluginGroup.libs"
     relocate("org.bstats", "$libraries.bstats") {
         include("org.bstats.**")
     }

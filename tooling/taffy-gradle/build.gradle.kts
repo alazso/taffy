@@ -101,6 +101,11 @@ tasks.withType<Test>().configureEach {
     // A test applies this script of Taffy's own build to a build in its own directory.
     inputs.file(taffyRoot.file("gradle/skip-published-releases.gradle.kts"))
         .withPropertyName("skipPublishedReleases").withPathSensitivity(PathSensitivity.NONE)
+    // A test runs this script and reads the workflow that calls it.
+    inputs.file(taffyRoot.file(".github/scripts/resolve-release-version.sh"))
+        .withPropertyName("resolveReleaseVersion").withPathSensitivity(PathSensitivity.NONE)
+    inputs.file(taffyRoot.file(".github/workflows/release.yml"))
+        .withPropertyName("releaseWorkflow").withPathSensitivity(PathSensitivity.NONE)
     val taffyRootPath = taffyRoot.asFile.canonicalPath
     jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dtaffy.sourceRoot=$taffyRootPath") })
 }

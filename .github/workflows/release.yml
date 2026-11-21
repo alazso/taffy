@@ -38,39 +38,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
-        run: |
-          set -euo pipefail
-          GRADLE_VERSION="$(sed -n 's/^version=//p' gradle.properties | tr -d '[:space:]')"
-          if [ -z "$GRADLE_VERSION" ]; then
-            echo "Could not read version from gradle.properties" >&2
-            exit 1
-          fi
-          if [[ "$GRADLE_VERSION" == *-SNAPSHOT ]] && [ "$DRY_RUN" != "true" ]; then
-            echo "gradle.properties has the snapshot version ${GRADLE_VERSION}; the CI workflow publishes snapshots." >&2
-            exit 1
-          fi
-          if [ "$EVENT_NAME" = "push" ]; then
-            TAG="${GITHUB_REF_NAME}"
-            TAG_VERSION="${TAG#v}"
-            if [ "$TAG_VERSION" != "$GRADLE_VERSION" ]; then
-              echo "Tag $TAG (${TAG_VERSION}) does not match gradle.properties (${GRADLE_VERSION})" >&2
-              exit 1
-            fi
-          else
-            TAG="v${GRADLE_VERSION}"
-            if [ "$DRY_RUN" != "true" ]; then
-              if ! TAG_COMMIT="$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}")"; then
-                echo "Tag $TAG does not exist; push it before publishing ${GRADLE_VERSION}." >&2
-                exit 1
-              fi
-              if [ "$TAG_COMMIT" != "$(git rev-parse HEAD)" ]; then
-                echo "Tag $TAG is at ${TAG_COMMIT}, not at the commit being built; run the workflow on the tag." >&2
-                exit 1
-              fi
-            fi
-          fi
-          echo "version=${GRADLE_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+        run: bash .github/scripts/resolve-release-version.sh
 
       - name: Skip if release already published
         id: published

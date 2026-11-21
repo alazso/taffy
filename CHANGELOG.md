@@ -60,6 +60,14 @@ All notable changes to Taffy are documented here. This project follows
   an ask waiting once another `Prompts` of the plugin asked the player. Opening a menu still ends only an ask
   of the `Prompts` built over its `Menus`, and `Menus.shutdown()` only the asks of that `Prompts`. The plugin is
   `Menus.Parts.plugin()`.
+- `shadowJar` of `so.alaz.taffy.paper-plugin` fails when the project group is `so.alaz.taffy` or a package inside
+  it, such as `so.alaz.taffy.shop`, with `so.alaz.taffy.paper-plugin relocates Taffy under <group>.libs, and the
+  project group "so.alaz.taffy.shop" is so.alaz.taffy or inside it, so the relocated copy would still be inside
+  so.alaz.taffy and Taffy refuses it when the plugin enables. Set group in gradle.properties to a package outside
+  so.alaz.taffy, for example group=com.example.myplugin.` Before, such a build passed and its jar held Taffy
+  under `so/alaz/taffy/shop/libs/taffy/`, which `Relocation.check()` counts as not relocated, so the plugin
+  threw `IllegalStateException` when it enabled. A group that only starts with the name, such as
+  `so.alaz.taffyshop`, builds as before.
 
 ## [0.4.1] - 2026-11-21
 

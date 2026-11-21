@@ -6,6 +6,8 @@ import org.gradle.api.GradleException
 /** Checks of the project group `so.alaz.taffy.paper-plugin` relocates under and generates `RuntimeLibraries` in. */
 internal object PluginGroup {
 
+    private const val TAFFY = "so.alaz.taffy"
+
     /**
      * Returns [group] when it has at least one segment and none of its dot-separated segments is blank.
      *
@@ -17,6 +19,23 @@ internal object PluginGroup {
                 "so.alaz.taffy.paper-plugin relocates Taffy under <group>.libs, and the project group \"$group\" " +
                     "is blank or has an empty segment. Set group in gradle.properties, for example " +
                     "group=com.example.myplugin."
+            )
+        }
+        return group
+    }
+
+    /**
+     * Returns [group] when it is neither `so.alaz.taffy` nor a package inside it.
+     *
+     * @throws GradleException for any other group, with a message that names the group and `gradle.properties`
+     */
+    fun requireOutsideTaffy(group: String): String {
+        if (group == TAFFY || group.startsWith("$TAFFY.")) {
+            throw GradleException(
+                "so.alaz.taffy.paper-plugin relocates Taffy under <group>.libs, and the project group \"$group\" " +
+                    "is so.alaz.taffy or inside it, so the relocated copy would still be inside so.alaz.taffy and " +
+                    "Taffy refuses it when the plugin enables. Set group in gradle.properties to a package " +
+                    "outside so.alaz.taffy, for example group=com.example.myplugin."
             )
         }
         return group
