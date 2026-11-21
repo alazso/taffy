@@ -365,6 +365,20 @@ class AnonymizersTest {
             .isEqualTo("[Shop] secrets: [redacted] and [Shop]\t  Secret: [redacted]");
     }
 
+    @Test
+    void thePlainWordSecretOrTokenAfterAWordIsAKeyWhenItsValueHoldsADigitInSixOrMoreCharacters()
+        throws ReflectiveOperationException {
+        assertThat(apply(SECRET_KEY, "Bot token: abc123")).isEqualTo("Bot token: [redacted]");
+        assertThat(apply(SECRET_KEY, "Invalid bot token: MTIzNDU2.abc.def given"))
+            .isEqualTo("Invalid bot token: [redacted] given");
+        assertThat(apply(SECRET_KEY, "the secret: \"s3cr3t-value\" was refused"))
+            .isEqualTo("the secret: [redacted] was refused");
+        assertThat(apply(SECRET_KEY, "Wrong tokens:   abcdef7")).isEqualTo("Wrong tokens:   [redacted]");
+        assertThat(apply(SECRET_KEY, "Bot token: abc12")).isEqualTo("Bot token: abc12");
+        assertThat(apply(SECRET_KEY, "Bot token: abcdefgh")).isEqualTo("Bot token: abcdefgh");
+        assertThat(sent("Bot token: MTIzNDU2")).doesNotContain("MTIzNDU2");
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
         "[Shop] Discord login failed, token: MTIzNDU2.abc.def",

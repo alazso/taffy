@@ -39,8 +39,9 @@ import java.util.regex.Pattern;
  *       {@code token}, {@code tokens}, {@code secret} or {@code secrets} before a {@code :} is no key when a
  *       letter, a digit or a {@code _} and whitespace come before it, so {@code Invalid token: expected ;}
  *       stays. It is a key when it is quoted, when it starts its line, also after the {@code -} of a list item,
- *       and after any other character and up to 8 spaces or tabs, as in {@code Loaded {token: abc}},
- *       {@code login failed, token: abc} or {@code discord: token: abc}. Such a word is a key before a
+ *       after any other character and up to 8 spaces or tabs, as in {@code Loaded {token: abc}},
+ *       {@code login failed, token: abc} or {@code discord: token: abc}, and when its value has 6 or more
+ *       characters with a digit among the first 65, as in {@code Bot token: abc123}. Such a word is a key before a
  *       {@code =}, and so is a longer name around it before either sign, such as {@code bot-token},
  *       {@code discord.token}, {@code tokenValue} or {@code secretKey};</li>
  *   <li>an SQL statement that starts with {@code SELECT ... FROM}, {@code INSERT INTO} (also with
@@ -160,7 +161,8 @@ final class Anonymizers {
             + "|(?:" + SECRET_WORDS + ")(?!s?(?![\\w-]))[\\w-]{1,20}[\"']?\\s*:"
             + "|[\"'](?:" + SECRET_WORDS + ")s?[\"']\\s*:"
             + "|^[ \\t]*(?:-[ \\t]+)?(?:" + SECRET_WORDS + ")s?\\s*:"
-            + "|(?<=[^\\w\\s][ \\t]{0,8})(?:" + SECRET_WORDS + ")s?\\s*:)\\s*)"
+            + "|(?<=[^\\w\\s][ \\t]{0,8})(?:" + SECRET_WORDS + ")s?\\s*:"
+            + "|(?:" + SECRET_WORDS + ")s?:(?=[ \\t]{0,8}[\"']?(?=[^\\s\"'&,;)]{6})[^\\s\"'&,;)\\d]{0,64}\\d))\\s*)"
             + "(?!(?:yes|no)\\b)(?:\"[^\"\\n]*\"|'[^'\\n]*'|[^\\s\"'&,;)]+)", "$1[redacted]"},
         {"(?i)\\b(?:SELECT\\s[^\\n]{0,200}?\\sFROM\\s|INSERT\\s+(?:OR\\s+\\w+\\s+|IGNORE\\s+)?INTO\\s"
             + "|UPDATE\\s+\\S+\\s+SET\\s|DELETE\\s+FROM\\s|REPLACE\\s+INTO\\s|MERGE\\s+INTO\\s"

@@ -71,8 +71,9 @@ All notable changes to Taffy are documented here. This project follows
   `Bad settings (token: abc)`, `login failed, token: abc`, `discord: token: abc` and `[INFO]: token: abc`. A
   longer name around it is a key before either sign, such as `bot-token:`, `discord.token:`, `tokenValue:` and
   `secretKey=`, and so is every `password`, `passwd`, `pwd`, `api_key`, `access_key` and `private_key` key, as
-  before. Only a token or secret that a message writes after another word and a space, as in `the token: abc`
-  or `Bot token: abc`, is therefore sent, where it was redacted.
+  before. After another word and a space, the value is still sent as `[redacted]` when it has 6 or more
+  characters with a digit among the first 65, as in `Bot token: abc123`. Only a shorter value or one without a
+  digit there, as in `the token: abc`, is therefore sent, where it was redacted.
 - The host name rule of the `taffy-metrics` error reports leaves package names and two-letter pairs as written:
   `Caused by java.io` was sent as `Caused by [host hidden]`, `Unknown language pt.br in config` as
   `Unknown language [host hidden] in config` and `Could not load class com.example.Me` as
