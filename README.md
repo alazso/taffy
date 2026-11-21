@@ -28,7 +28,7 @@ pluginManagement {
 }
 
 plugins {
-    id("so.alaz.taffy.settings") version "0.3.2"
+    id("so.alaz.taffy.settings") version "0.4.0"
 }
 
 rootProject.name = "myplugin"
