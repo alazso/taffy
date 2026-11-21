@@ -5,6 +5,53 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Fixed
+- The error reports of `taffy-metrics` hide more of a message. Each of these was sent before:
+  - a Windows path with a space in a folder name: `Cannot read C:\Users\John Smith\Desktop\x.yml` was sent as
+    `Cannot read [path hidden] Smith\Desktop\x.yml` and is now `Cannot read [path hidden]`. Each of the first 64
+    folder names holds up to three single spaces, and a space in the last name still ends the path;
+  - a Windows path written with forward slashes, such as `C:/Users/John/Desktop/x.yml`, and a `file:` URL, such
+    as `file:///C:/Users/John/x.yml`, `file:///home/john/x.yml` or `jar:file:/C:/srv/Shop.jar!/plugin.yml`, which
+    were sent whole and are now `[path hidden]` (`jar:[path hidden]` for the last);
+  - an email address whose last label is longer than 4 characters: `john.smith@example.online` was sent as
+    `[email hidden]ne` and is now `[email hidden]`;
+  - a URI password that holds a `/`: `redis://default:hun/ter2@cache:6379` was sent whole and is now
+    `redis://[credentials hidden]@[host hidden]:6379`. The password runs to the last `@` before the next
+    whitespace when that `@` is at most 128 characters in, and otherwise to the last `@` before the next `/`, as
+    before. What follows the `:` is read as a port and a path when it starts with 1 to 5 digits and a `/`, as in
+    `http://localhost:8080/users/a@b`, so a password of that shape is still sent;
+  - the database name in PostgreSQL's `no pg_hba.conf entry for host "10.0.0.5", user "mc_prod", database
+    "survival_prod"`, now `database [database hidden]`. The rule hides the double-quoted name of 1 to 64
+    characters after the word `database`;
+  - the host of a URI, with any ending and also of one label: `redis://cache:6379` is now
+    `redis://[host hidden]:6379` and `https://db.myserver.host/v1` is `https://[host hidden]/v1`, together with
+    a user name before an `@`. `localhost` stays, so `http://localhost:8080/users` is sent as written;
+  - a host name whose ending is not on the list of the host name rule, when it follows
+    `UnknownHostException:`, `connect to`, `connecting to`, `connection to`, `connected to`, `route to`, `host`
+    or `host is known` and one space, also behind an opening quote or parenthesis:
+    `Connection to db.myserver.host refused` is now `Connection to [host hidden] refused`. Such a name anywhere
+    else in a message is still sent.
+
+  Reports whose messages differ only in a value these rules hide now merge into one kind. The SQL rule is
+  unchanged, so `Please select a kit from the list` is still sent as `Please [sql hidden]`.
+- The secret key rule of the `taffy-metrics` error reports leaves the plain word `token`, `tokens`, `secret` or
+  `secrets` before a `:` as written inside a sentence: `Invalid token: expected ;` was sent as
+  `Invalid token: [redacted]` and `Not enough tokens: 5 required` as `Not enough tokens: [redacted] required`,
+  and both are now sent as written. Such a word is still a key, with its value sent as `[redacted]`, before a
+  `=`, when it is quoted as in `"token": "abc"`, and when it starts its line, also after the `-` of a list item,
+  as in a YAML line `token: abc`. A longer name around it is a key before either sign, such as `bot-token:`,
+  `discord.token:`, `tokenValue:` and `secretKey=`, and so is every `password`, `passwd`, `pwd`, `api_key`,
+  `access_key` and `private_key` key, as before. A token or secret that a message writes as
+  `the token: abc` in the middle of a line is therefore sent, where it was redacted.
+- The host name rule of the `taffy-metrics` error reports leaves package names and two-letter pairs as written:
+  `Caused by java.io` was sent as `Caused by [host hidden]`, `Unknown language pt.br in config` as
+  `Unknown language [host hidden] in config` and `Could not load class com.example.Me` as
+  `Could not load class [host hidden]`, and all three are now sent as written. A dotted name stays when its
+  first label is `java`, `javax`, `jdk`, `sun`, `kotlin`, `com`, `org` or `net`, or when it has two labels of two
+  letters each. A host name of that shape, such as `mc.gg`, is therefore sent outside a URI and the words above,
+  where it was hidden. Any other dotted name whose last label is on the rule's list is still hidden, a file name
+  such as `messages.de` included.
+
 ## [0.4.1] - 2026-11-21
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

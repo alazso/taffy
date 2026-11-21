@@ -29,13 +29,16 @@ class AnonymizersTest {
     private static final int UNIX_PATH = 12;
     private static final int DISCORD_WEBHOOK = 13;
     private static final int HOST = 14;
+    private static final int DATABASE = 15;
+    private static final int URI_HOST = 16;
+    private static final int NAMED_HOST = 17;
 
     private static final String WEBHOOK_ID = "123456789012345678";
     private static final String WEBHOOK_TOKEN = "abcDEF-ghi_JKL";
 
     @Test
-    void thereAreFifteenRulesOfAPatternAndAReplacement() {
-        assertThat(Anonymizers.RULES).hasDimensions(15, 2);
+    void thereAreEighteenRulesOfAPatternAndAReplacement() {
+        assertThat(Anonymizers.RULES).hasDimensions(18, 2);
     }
 
     @Test
@@ -74,9 +77,31 @@ class AnonymizersTest {
     }
 
     @Test
-    void aPasswordThatHoldsASlashIsLeftAsWritten() {
+    void aPasswordThatHoldsASlashIsHiddenWhole() {
+        assertThat(apply(URI_CREDENTIALS, "redis://default:hun/ter2@cache:6379 failed"))
+            .isEqualTo("redis://[credentials hidden]@cache:6379 failed");
         assertThat(apply(URI_CREDENTIALS, "redis://user:pa/ss@cache:6379 refused"))
-            .isEqualTo("redis://user:pa/ss@cache:6379 refused");
+            .isEqualTo("redis://[credentials hidden]@cache:6379 refused");
+        assertThat(apply(URI_CREDENTIALS, "redis://user:/p@/ss/@cache:6379/0 refused"))
+            .isEqualTo("redis://[credentials hidden]@cache:6379/0 refused");
+        assertThat(Anonymizers.anonymize("redis://default:hun/ter2@cache:6379 failed"))
+            .isEqualTo("redis://[credentials hidden]@[host hidden]:6379 failed");
+    }
+
+    @Test
+    void aPasswordWithoutASlashIsHiddenAtAnyLength() {
+        assertThat(apply(URI_CREDENTIALS, "redis://user:" + "p".repeat(300) + "@cache:6379 refused"))
+            .isEqualTo("redis://[credentials hidden]@cache:6379 refused");
+    }
+
+    @Test
+    void aPortAndAPathBeforeAnAtSignAreLeftAsWritten() {
+        assertThat(apply(URI_CREDENTIALS, "GET http://localhost:8080/users/a@b failed"))
+            .isEqualTo("GET http://localhost:8080/users/a@b failed");
+        assertThat(apply(URI_CREDENTIALS, "redis://user:123/ab@cache:6379 refused"))
+            .isEqualTo("redis://user:123/ab@cache:6379 refused");
+        assertThat(apply(URI_CREDENTIALS, "redis://user:123456/ab@cache:6379 refused"))
+            .isEqualTo("redis://[credentials hidden]@cache:6379 refused");
     }
 
     @Test
@@ -92,6 +117,16 @@ class AnonymizersTest {
         assertThat(apply(EMAIL, "mail admin@example.org failed")).isEqualTo("mail [email hidden] failed");
         assertThat(apply(EMAIL, "mail first.last@mail.example.co.uk.")).isEqualTo("mail [email hidden].");
         assertThat(apply(EMAIL, "a@b@c.com")).isEqualTo("a@[email hidden]");
+    }
+
+    @Test
+    void anEmailAddressWithALongLastLabelIsHiddenWhole() {
+        assertThat(apply(EMAIL, "mail to john.smith@example.online failed"))
+            .isEqualTo("mail to [email hidden] failed");
+        assertThat(apply(EMAIL, "mail to john.smith@mail.example.museum failed"))
+            .isEqualTo("mail to [email hidden] failed");
+        assertThat(Anonymizers.anonymize("mail to john.smith@example.online failed"))
+            .isEqualTo("mail to [email hidden] failed");
     }
 
     @Test
@@ -231,6 +266,56 @@ class AnonymizersTest {
     }
 
     @Test
+    void aLongerNameAroundSecretOrTokenIsAKeyBeforeEitherSign() {
+        assertThat(apply(SECRET_KEY, "secretKey=abc123 rejected")).isEqualTo("secretKey=[redacted] rejected");
+        assertThat(apply(SECRET_KEY, "tokenValue: abc123 rejected")).isEqualTo("tokenValue: [redacted] rejected");
+        assertThat(apply(SECRET_KEY, "secretKey: abc123 and tokenValue=abc123"))
+            .isEqualTo("secretKey: [redacted] and tokenValue=[redacted]");
+        assertThat(apply(SECRET_KEY, "Invalid discord.token: abc123")).isEqualTo("Invalid discord.token: [redacted]");
+        assertThat(apply(SECRET_KEY, "Invalid tokens_file: abc123")).isEqualTo("Invalid tokens_file: [redacted]");
+        assertThat(apply(SECRET_KEY, "Invalid clientSecret: abc123")).isEqualTo("Invalid clientSecret: [redacted]");
+    }
+
+    @Test
+    void thePlainWordSecretOrTokenIsAKeyBeforeAnEqualsSign() {
+        assertThat(apply(SECRET_KEY, "Invalid token=abc123 given")).isEqualTo("Invalid token=[redacted] given");
+        assertThat(apply(SECRET_KEY, "with secret = abc123")).isEqualTo("with secret = [redacted]");
+    }
+
+    @Test
+    void thePlainWordSecretOrTokenBeforeAColonIsAKeyWhenQuotedOrAtTheStartOfALine() {
+        assertThat(apply(SECRET_KEY, "body {\"token\": \"abc123\", \"page\": 2}"))
+            .isEqualTo("body {\"token\": [redacted], \"page\": 2}");
+        assertThat(apply(SECRET_KEY, "body {'secrets': 'abc123'}")).isEqualTo("body {'secrets': [redacted]}");
+        assertThat(apply(SECRET_KEY, "token: abc123")).isEqualTo("token: [redacted]");
+        assertThat(apply(SECRET_KEY, "while parsing a block mapping\n  secret: abc123\n  port: 25565"))
+            .isEqualTo("while parsing a block mapping\n  secret: [redacted]\n  port: 25565");
+        assertThat(apply(SECRET_KEY, "bots:\n\t- token: abc123")).isEqualTo("bots:\n\t- token: [redacted]");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Invalid token: expected ;",
+        "Not enough tokens: 5 required",
+        "Unexpected token: } at line 3",
+        "Could not read the secret: file missing",
+        "Known secrets: none",
+    })
+    void thePlainWordSecretOrTokenBeforeAColonInASentenceIsLeftAsWritten(String line) throws Exception {
+        assertThat(apply(SECRET_KEY, line)).isEqualTo(line);
+        assertThat(Anonymizers.anonymize(line)).isEqualTo(line);
+        assertThat(sent(line)).isEqualTo(line);
+    }
+
+    @Test
+    void aPasswordBeforeAColonInASentenceIsRedacted() {
+        assertThat(apply(SECRET_KEY, "Login failed with password: hunter2"))
+            .isEqualTo("Login failed with password: [redacted]");
+        assertThat(apply(SECRET_KEY, "Wrong pwd: hunter2 or api-key: k-1"))
+            .isEqualTo("Wrong pwd: [redacted] or api-key: [redacted]");
+    }
+
+    @Test
     void aSecretWordWithoutAValueIsLeftAsWritten() {
         assertThat(apply(SECRET_KEY, "Access denied for user (using password: YES)"))
             .isEqualTo("Access denied for user (using password: YES)");
@@ -304,6 +389,57 @@ class AnonymizersTest {
         assertThat(apply(WINDOWS_PATH, "cannot read C:\\Server\\plugins\\data.db now"))
             .isEqualTo("cannot read [path hidden] now");
         assertThat(apply(WINDOWS_PATH, "ratio C:3 and a\\b")).isEqualTo("ratio C:3 and a\\b");
+    }
+
+    @Test
+    void aWindowsPathWithASpaceInAFolderNameIsHiddenWhole() {
+        assertThat(apply(WINDOWS_PATH, "Cannot read C:\\Users\\John Smith\\Desktop\\x.yml"))
+            .isEqualTo("Cannot read [path hidden]");
+        assertThat(apply(WINDOWS_PATH, "Cannot read C:\\Program Files (x86)\\My Mc Server\\x.yml now"))
+            .isEqualTo("Cannot read [path hidden] now");
+        assertThat(Anonymizers.anonymize("Cannot read C:\\Users\\John Smith\\Desktop\\x.yml"))
+            .isEqualTo("Cannot read [path hidden]");
+    }
+
+    @Test
+    void aSpaceInTheLastNameOfAWindowsPathEndsIt() {
+        assertThat(apply(WINDOWS_PATH, "copy C:\\a\\b to D:\\c\\d failed"))
+            .isEqualTo("copy [path hidden] to [path hidden] failed");
+        assertThat(apply(WINDOWS_PATH, "Cannot read C:\\Users\\John\\My File.yml"))
+            .isEqualTo("Cannot read [path hidden] File.yml");
+    }
+
+    @Test
+    void aWindowsPathWrittenWithForwardSlashesIsHidden() {
+        assertThat(apply(WINDOWS_PATH, "Cannot read C:/Users/John/Desktop/x.yml"))
+            .isEqualTo("Cannot read [path hidden]");
+        assertThat(apply(WINDOWS_PATH, "Cannot read d:/Users/John Smith/Desktop\\x.yml now"))
+            .isEqualTo("Cannot read [path hidden] now");
+        assertThat(Anonymizers.anonymize("Cannot read C:/Users/John/Desktop/x.yml"))
+            .isEqualTo("Cannot read [path hidden]");
+    }
+
+    @Test
+    void aColonAndASlashThatStartNoWindowsPathAreLeftAsWritten() {
+        assertThat(apply(WINDOWS_PATH, "GET https://example.org/a/b and redis://cache:6379/0"))
+            .isEqualTo("GET https://example.org/a/b and redis://cache:6379/0");
+        assertThat(apply(WINDOWS_PATH, "x://a/b and key minecraft:/stone and 1:/2"))
+            .isEqualTo("x://a/b and key minecraft:/stone and 1:/2");
+        assertThat(apply(WINDOWS_PATH, "Could not delete file: missing")).isEqualTo("Could not delete file: missing");
+    }
+
+    @Test
+    void aFileUrlIsHidden() {
+        assertThat(apply(WINDOWS_PATH, "Cannot read file:///C:/Users/John/x.yml"))
+            .isEqualTo("Cannot read [path hidden]");
+        assertThat(apply(WINDOWS_PATH, "Cannot read file:///home/john/x.yml now"))
+            .isEqualTo("Cannot read [path hidden] now");
+        assertThat(apply(WINDOWS_PATH, "in jar:FILE:/C:/srv/plugins/Shop.jar!/plugin.yml and 'file:/home/john/x'"))
+            .isEqualTo("in jar:[path hidden] and '[path hidden]'");
+        assertThat(Anonymizers.anonymize("Cannot read file:///C:/Users/John/x.yml"))
+            .isEqualTo("Cannot read [path hidden]");
+        assertThat(Anonymizers.anonymize("Cannot read file:///home/john/x.yml"))
+            .isEqualTo("Cannot read [path hidden]");
     }
 
     @Test
@@ -391,8 +527,109 @@ class AnonymizersTest {
 
     @Test
     void aDottedNameWhoseLastLabelIsAHostEndingIsHidden() {
-        assertThat(apply(HOST, "Could not load class com.example.Me")).isEqualTo("Could not load class [host hidden]");
         assertThat(apply(HOST, "file messages.de missing")).isEqualTo("file [host hidden] missing");
+        assertThat(apply(HOST, "ping example.io, mc.example.gg and javadoc.io"))
+            .isEqualTo("ping [host hidden], [host hidden] and [host hidden]");
+        assertThat(apply(HOST, "ping abc.br and ab.internal")).isEqualTo("ping [host hidden] and [host hidden]");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Caused by java.io",
+        "Unknown language pt.br in config",
+        "Could not load class com.example.Me",
+        "package javax.net does not exist",
+        "module jdk.net, sun.net, kotlin.io, org.example.internal and net.example.local.",
+        "locales EN.US, fr.ca. and de.de",
+    })
+    void aPackageRootOrATwoLetterPairIsLeftAsWritten(String line) throws Exception {
+        assertThat(apply(HOST, line)).isEqualTo(line);
+        assertThat(Anonymizers.anonymize(line)).isEqualTo(line);
+        assertThat(sent(line)).isEqualTo(line);
+    }
+
+    @Test
+    void theQuotedNameAfterDatabaseIsHidden() {
+        assertThat(apply(DATABASE, "FATAL: no pg_hba.conf entry for host \"10.0.0.5\", user \"mc_prod\","
+            + " database \"survival_prod\", no encryption"))
+            .isEqualTo("FATAL: no pg_hba.conf entry for host \"10.0.0.5\", user \"mc_prod\","
+                + " database [database hidden], no encryption");
+        assertThat(apply(DATABASE, "FATAL: DATABASE \"survival_prod\" does not exist"))
+            .isEqualTo("FATAL: DATABASE [database hidden] does not exist");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "the database is locked",
+        "database \"\" is empty",
+        "the database \"went away\" again",
+        "databases \"a\"",
+    })
+    void theWordDatabaseWithoutAQuotedNameIsLeftAsWritten(String line) {
+        assertThat(apply(DATABASE, line)).isEqualTo(line);
+    }
+
+    @Test
+    void thePgHbaMessageKeepsItsWordsUnderEveryRule() throws ReflectiveOperationException {
+        String entry = "FATAL: no pg_hba.conf entry for host \"db.myserver.host\", user \"mc_prod\","
+            + " database \"survival_prod\", no encryption";
+        String hidden = "FATAL: no pg_hba.conf entry for host \"[host hidden]\", user [user hidden],"
+            + " database [database hidden], no encryption";
+
+        assertThat(Anonymizers.anonymize(entry)).isEqualTo(hidden);
+        assertThat(sent(entry)).isEqualTo(hidden);
+    }
+
+    @Test
+    void theHostOfAUriIsHiddenWithAnyEndingAndAsOneLabel() {
+        assertThat(apply(URI_HOST, "redis://cache:6379 refused")).isEqualTo("redis://[host hidden]:6379 refused");
+        assertThat(apply(URI_HOST, "GET HTTPS://db.myserver.host/v1/items failed"))
+            .isEqualTo("GET HTTPS://[host hidden]/v1/items failed");
+        assertThat(apply(URI_HOST, "redis://[credentials hidden]@cache:6379 refused"))
+            .isEqualTo("redis://[credentials hidden]@[host hidden]:6379 refused");
+        assertThat(apply(URI_HOST, "mongodb://app@db-1.myserver.host/game"))
+            .isEqualTo("mongodb://[host hidden]/game");
+    }
+
+    @Test
+    void localhostAndAUriWithoutAHostAreLeftAsWrittenByTheUriHostRule() {
+        assertThat(apply(URI_HOST, "GET http://localhost:8080/users failed and http://LOCALHOST/"))
+            .isEqualTo("GET http://localhost:8080/users failed and http://LOCALHOST/");
+        assertThat(apply(URI_HOST, "GET http://localhost.myserver.host/ failed"))
+            .isEqualTo("GET http://[host hidden]/ failed");
+        assertThat(apply(URI_HOST, "http://[host hidden]/a and http://[::1]:80 and a://"))
+            .isEqualTo("http://[host hidden]/a and http://[::1]:80 and a://");
+    }
+
+    @Test
+    void aDottedNameAfterAConnectionWordIsHiddenWithAnyEnding() {
+        assertThat(apply(NAMED_HOST, "Connection to db.myserver.host refused"))
+            .isEqualTo("Connection to [host hidden] refused");
+        assertThat(apply(NAMED_HOST, "Connection to db.myserver.host:5432 refused."))
+            .isEqualTo("Connection to [host hidden]:5432 refused.");
+        assertThat(apply(NAMED_HOST, "java.net.UnknownHostException: db.myserver.host: Name or service not known"))
+            .isEqualTo("java.net.UnknownHostException: [host hidden]: Name or service not known");
+        assertThat(apply(NAMED_HOST, "java.net.UnknownHostException: No such host is known (db.myserver.host)"))
+            .isEqualTo("java.net.UnknownHostException: No such host is known ([host hidden])");
+        assertThat(apply(NAMED_HOST, "Could not connect to play.myserver.host. No route to mc-1.myserver.zone"))
+            .isEqualTo("Could not connect to [host hidden]. No route to [host hidden]");
+        assertThat(apply(NAMED_HOST, "Failed connecting to 'db.myserver.host' while connected to a.b"))
+            .isEqualTo("Failed connecting to '[host hidden]' while connected to [host hidden]");
+        assertThat(Anonymizers.anonymize("Connection to db.myserver.host refused"))
+            .isEqualTo("Connection to [host hidden] refused");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "connect to cache:6379 or localhost failed",
+        "Unknown host cache",
+        "write to data.db failed",
+        "the ghost a.b and localhost a.b",
+        "host  a.b",
+        "db.myserver.host is down",
+    })
+    void aNameThatFollowsNoConnectionWordOrHasOneLabelIsLeftAsWritten(String line) {
+        assertThat(apply(NAMED_HOST, line)).isEqualTo(line);
     }
 
     @Test
@@ -413,6 +650,25 @@ class AnonymizersTest {
             .isEqualTo("redis://[credentials hidden]@[host hidden]:6379 refused");
         assertThat(Anonymizers.anonymize("GET https://api.example.com/v1/hook?token=abc&page=2 returned 500"))
             .isEqualTo("GET https://[host hidden]/v1/hook?token=[redacted]&page=2 returned 500");
+        assertThat(Anonymizers.anonymize("redis://default:hunter2@cache:6379 refused"))
+            .isEqualTo("redis://[credentials hidden]@[host hidden]:6379 refused");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Cannot read C:\\Users\\John Smith\\Desktop\\x.yml",
+        "mail to john.smith@example.online failed",
+        "Cannot read C:/Users/John/Desktop/x.yml",
+        "Cannot read file:///C:/Users/John/x.yml",
+        "Cannot read file:///home/john/x.yml",
+        "Connection to db.myserver.host refused",
+        "GET https://db.myserver.host/v1 failed",
+        "FATAL: no pg_hba.conf entry for host \"10.0.0.5\", user \"mc_prod\", database \"survival_prod\", SSL off",
+        "redis://default:hun/ter2@cache:6379 failed",
+    })
+    void aTrackerWithTheRulesSendsNoneOfThePrivateParts(String message) throws ReflectiveOperationException {
+        assertThat(sent(message)).doesNotContain("John", "Smith", "Desktop", "john", "example", "myserver",
+            "survival_prod", "mc_prod", "ter2", "hun", "cache");
     }
 
     @ParameterizedTest
@@ -428,6 +684,13 @@ class AnonymizersTest {
         "No permission to open the menu. Ask an admin/owner.",
         "java.lang.IllegalStateException: Player Steve is offline",
         "Unknown sound minecraft:entity.villager.no in rewards.yml",
+        "Invalid token: expected ;",
+        "Not enough tokens: 5 required",
+        "Caused by java.io",
+        "Unknown language pt.br in config",
+        "Could not load class com.example.Me",
+        "GET http://localhost:8080/users failed",
+        "Error in config.yml:12, see key database.host",
     })
     void anOrdinaryMessageIsLeftAsWrittenByEveryRule(String line) {
         assertThat(Anonymizers.anonymize(line)).isEqualTo(line);
@@ -439,6 +702,9 @@ class AnonymizersTest {
         "select ", "select a from ", "update a ", "update a set", "insert  ", "insert or ", "create table ",
         "password", "password=", "password \"", "token:", " ", "user ", "user \"", "user \"a",
         "\t", "\\", "C:\\", ".com", "a.com.", "jdbc:", "Bearer ", "?token=", "\"", "-", ".",
+        "x://a:b/", "x://a:/", "x://a@", "a.b@c.", "@a.b", "token", "token ", "'token' ", "a-token", "tokens:",
+        "C:/", "C:\\a ", "C:/a a/", "a a ", "file:/", "aa.bb ", "java.", "database \"", "host ", "host a.",
+        "connect to a.", "://", "localhost",
     })
     void aLongAdversarialTextIsAnonymizedQuickly(String unit) {
         String text = unit.repeat(100_000 / unit.length() + 1);
@@ -449,6 +715,11 @@ class AnonymizersTest {
             Anonymizers.anonymize("x://" + text);
             Anonymizers.anonymize("password=" + text);
             Anonymizers.anonymize("/a/" + text);
+            Anonymizers.anonymize("x://a:" + text + "@b");
+            Anonymizers.anonymize("C:\\" + text);
+            Anonymizers.anonymize("C:/" + text);
+            Anonymizers.anonymize("host " + text);
+            Anonymizers.anonymize("token" + text + ":");
         });
     }
 
