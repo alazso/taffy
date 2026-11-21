@@ -32,13 +32,17 @@ All notable changes to Taffy are documented here. This project follows
   `Server.properties()` reads them as an unmodifiable map. A name that would replace a value storage sets itself
   throws `IllegalArgumentException`, in any letter case: `user`, `password`, `sslMode`, `ssl`, `useSSL`,
   `requireSSL`, `verifyServerCertificate`, `trustServerCertificate`, `disableSslHostnameVerification`,
-  `sslfactory`, `allowPublicKeyRetrieval`, `useAffectedRows` and `socketTimeout`. `Server.toString()` shows the
-  socket timeout and the names of the properties, never their values.
+  `sslfactory`, `allowPublicKeyRetrieval`, `useAffectedRows` and `socketTimeout`. So do `autoReconnect` and
+  `autoReconnectForPools`: with either, the MySQL driver replaces a dropped connection without an error, and the
+  new session no longer holds the migration lock. `Server.toString()` shows the socket timeout and the names of
+  the properties, never their values.
 - `ConfigLoader.baselineVersion(int)` gives a loader that reads an owner's `config.yml` without a usable
   `config-version` as that version, where it counts as version 0. A plugin whose earlier releases shipped the file
   without the key sets the baseline to the layout those releases wrote: with `baselineVersion(1)` and a shipped
-  `config-version: 1` such a file is neither rewritten nor copied, and once the shipped version is 2 it is upgraded
-  from 1 and kept as `config.yml.v1.bak`. A file that holds a version is not affected.
+  `config-version: 1` such a file is neither rewritten nor copied, and once the shipped version is 2 it is
+  upgraded from 1 and kept as `config.yml.v1.bak`. A file that holds a version is not affected. A baseline above
+  the shipped `config-version` makes `load` throw `ConfigLoadException` with `the baseline version 3 is above the
+  config-version 2 of the config.yml inside the plugin jar`, on every load.
 - `StrictYaml.readLenient(Path, String, Consumer<String>)`, `YamlFolder.lenient(Consumer<String>)` and
   `Messages.loadLenient(Path, Supplier, Logger, String, boolean)` read a file that is not saved as UTF-8, such as
   one an owner saved as Windows-1252: each byte sequence that is not UTF-8 is read as the replacement character
@@ -73,36 +77,52 @@ All notable changes to Taffy are documented here. This project follows
 - Breaking: on MySQL, MariaDB and PostgreSQL the applied migrations are recorded in
   `<prefix><plugin>_schema_version`, where `<plugin>` is the plugin's name in lowercase with every character other
   than a lowercase letter, a digit or an underscore replaced by an underscore, and no longer in
-  `<prefix>schema_version`. Two plugins that share a database and a table prefix therefore keep a migration history
-  and a migration lock each, where the second to start stopped with `set up by a newer version of the plugin` or
-  `changed after it ran on this database`. On the first start under `0.4.0`, a `<prefix>schema_version` in storage's
-  layout that records at least one migration with the checksum of one of this plugin's scripts is this plugin's
-  earlier version table: its rows are copied into the new table, one line names both tables, and the earlier table
-  stays as it was and is not read again, so a server that still runs a build on `0.3.2` against the same database
-  keeps starting. The start holds the migration lock of the earlier table too while it copies. A migration applied
-  under `0.4.0` is recorded only in the new table, so a build on `0.3.2` or earlier that holds that migration runs
-  it again: update every server that shares the database before the plugin ships a new migration. SQLite keeps
-  `schema_version`. The warning about tables under another prefix names only a version table that holds this
-  plugin's checksums. A plugin, test or query that reads `<prefix>schema_version` reads the new name, or the plugin
-  keeps the earlier name with `settings.versionTable(settings.tablePrefix() + "schema_version")`.
+  `<prefix>schema_version`. Two plugins that share a database and a table prefix therefore keep a migration
+  history and a migration lock each, where the second to start stopped with `set up by a newer version of the
+  plugin` or `changed after it ran on this database`. On the first start under `0.4.0`, a `<prefix>schema_version`
+  in storage's layout that records at least one migration with the checksum of one of this plugin's scripts is
+  this plugin's earlier version table: its rows are copied into the new table, one line names both tables, and the
+  earlier table stays as it was and is not read again, so a server that still runs a build on `0.3.2` against the
+  same database keeps starting. A start that finds no version table holds the migration lock of
+  `<prefix>schema_version` too until it ends. A `<prefix>schema_version` with none of this plugin's checksums
+  whose rows carry the version and name of one of this plugin's migrations stops the start with a
+  `StorageException` that names the table and both checksums, as `changed after it ran on this database` did,
+  unless another plugin's version table under the prefix already holds its rows. One whose rows carry neither is
+  read as another plugin's table: it is left alone, one warning names it and every migration of this plugin runs
+  under the new table. The name of the version table, and the plugin name the default is built from, must not
+  change once a release has started on a database: under another name storage finds no history and runs every
+  migration again, and when the earlier table was already copied into a table that has recorded more since, the
+  start stops with a `StorageException` that names that table. Two plugin names that differ only in replaced
+  characters (`My-Plugin` and `My_Plugin`), or only after the cut at 54 characters, give the same default name, so
+  one of the two sets `versionTable`. A migration applied under `0.4.0` is recorded only in the new table, so a
+  build on `0.3.2` or earlier that holds that migration runs it again: update every server that shares the
+  database before the plugin ships a new migration. SQLite keeps `schema_version`. The warning about tables under
+  another prefix names only a version table that holds this plugin's checksums. A plugin, test or query that reads
+  `<prefix>schema_version` reads the new name, or the plugin keeps the earlier name with
+  `settings.versionTable(settings.tablePrefix() + "schema_version")`.
 - Breaking: `Storage.start` throws `IllegalArgumentException` when `StorageSettings.asyncThreads()` is above
   `StorageSettings.Pool.maxSize()`, where it started and the threads beyond the pool's size failed with a
   connection timeout under load. Each database thread uses one connection at a time, so connections above
   `asyncThreads` are never used. Set `maxSize` to `asyncThreads` or more.
 - Breaking: a migration script that is still to run stops the start, before the backup and before any migration,
   when it holds what the statement splitter cannot read: a single-quoted string that does not end on the line it
-  starts, the start of a block comment (`/*`) or dollar quoting (`$$`) outside a quoted string, or a quote directly
-  after a backslash. The `StorageException` names the file and the line. Such a script was split wrongly or ran by
-  accident. A script that already ran is only compared by its checksum and never stops a start for this. Write
-  comments as `--`, keep each quoted string on one line, write a quote inside a string as two quotes, and create a
-  function or trigger outside the migration scripts.
+  starts, a block comment that never closes or holds another block comment, dollar quoting (`$$`) outside a quoted
+  string and outside a block comment, and on MySQL and MariaDB a quote directly after a backslash. The
+  `StorageException` names the file and the line. Such a script was split wrongly or ran by accident. A block
+  comment that closes is kept and sent with its statement, and nothing inside it is read. A script that already
+  ran is only compared by its checksum and never stops a start for this. A script that already ran on any database
+  must not be edited, since its checksum would no longer match there; put the corrected statement in a new
+  migration instead. In a script that has not shipped yet, close each block comment, keep each quoted string on
+  one line, write a quote inside a string as two quotes, and create a function or trigger outside the migration
+  scripts.
 - Breaking: a commit the database refuses because it rolled the transaction back (an
   `SQLTransactionRollbackException`, or an `SQLException` whose SQLState or that of a cause starts with `40`, such
   as the `40001` a PostgreSQL `SERIALIZABLE` transaction gets at its commit) completes the future of `async` and
   `read` with that exception and is run again by `asyncRetrying` and `readRetrying`, where it completed the future
   with a `CommitUnknownException` that was never retried. Nothing was written by such a commit. Any other failed
-  commit is a `CommitUnknownException` as before. Code that caught `CommitUnknownException` to retry a
-  serialization failure itself calls `asyncRetrying` and drops that branch.
+  commit is a `CommitUnknownException` as before, and so is one with SQLState `40003` (statement completion
+  unknown), which does not say whether the commit was written. Code that caught `CommitUnknownException` to retry
+  a serialization failure itself calls `asyncRetrying` and drops that branch.
 - Breaking: on SQLite storage from `Storage.start`, a write transaction (`async`, `asyncRetrying`) begins with
   `BEGIN IMMEDIATE`: the writer connection is opened with `transaction_mode=IMMEDIATE`. While another process holds
   the file's write lock, the work waits for it up to the busy timeout of 5 seconds and then reads what that process
@@ -121,10 +141,11 @@ All notable changes to Taffy are documented here. This project follows
   logged. Write `config-version: 1`, without quotes, into the shipped `config.yml`; a plugin whose released
   versions shipped the file without the key also calls `baselineVersion(1)`, so the files owners have are left as
   they are.
-- Breaking: the message of `StrictYaml.read` for a file that is not UTF-8 names the line: `<source> is not saved as
-  UTF-8: the first byte that is not UTF-8 is on line <n>`, where it ended after `UTF-8`. The same message is the
-  error line of `YamlFolder` for such a file and the message of `ConfigLoader.load` for such a `config.yml`. Code
-  that compares the whole message compares its start: `message.startsWith(source + " is not saved as UTF-8")`.
+- Breaking: the message of `StrictYaml.read` for a file that is not UTF-8 names the line: `<source> is not saved
+  as UTF-8: the first byte that is not UTF-8 is on line <n>`, where it ended after `UTF-8`. The same message is
+  the error line of `YamlFolder` for such a file and the message of `ConfigLoader.load` for such a `config.yml`.
+  `YamlFileProvider` keeps the message without the line for a file an editor read or save refuses. Code that
+  compares the whole message compares its start: `message.startsWith(source + " is not saved as UTF-8")`.
 - Breaking: the messages for a file or folder that cannot be read or written no longer hold its path.
   `StrictYaml.read` gives `cannot read <source>: <exception class>`, followed by a space and the reason when the
   I/O failure states one (`cannot read config.yml: NoSuchFileException`), where it gave
@@ -148,30 +169,49 @@ All notable changes to Taffy are documented here. This project follows
   branch no longer compiles, a `switch` statement runs no branch for the new constant, and a plugin that passes
   `EnumSet.allOf(CustomItemPlugin.class)` to `CustomItems.detect` detects the added plugin too. Add a `default`
   branch to each `switch` over `CustomItemPlugin`.
+- Breaking: the checksum of a migration script ignores line endings and a leading byte order mark: it is taken
+  over the text with every line ending as a line feed and without the mark, where it was the SHA-256 of the
+  script's exact bytes and a script that differed even in its line endings stopped the start. A build whose
+  scripts were checked out with CRLF (git `autocrlf` without a `.gitattributes` entry) starts on a database that
+  ran the LF scripts, where every start stopped with `migration V1__... changed after it ran on this database`. A
+  row written by `0.1.0` to `0.3.2` holds the checksum of the script's exact bytes and is accepted when the script
+  has the same text, with either line ending and with or without a byte order mark, and new rows hold the new
+  checksum. A row recorded from a script with lone carriage returns or mixed line endings is accepted only while
+  the script still has those exact bytes. A script with a byte order mark runs: the mark is no longer sent to the
+  database with the first statement. A row written under `0.4.0` for a script with CRLF line endings or a byte
+  order mark holds a checksum that is not the SHA-256 of the script's bytes, so a build on `0.3.2` or earlier that
+  reads the same version table stops with `changed after it ran on this database`. Update every server that shares
+  the database before a migration is applied, and in a test that compares the stored checksum with the SHA-256 of
+  the script's bytes, compare it with the SHA-256 of the text without the mark and with every line ending as a
+  line feed.
+- Breaking: on PostgreSQL a start waits at most a day for the migration lock, as on MySQL and MariaDB, and then
+  fails with `another start has held the migration lock of <version table> in database <schema> for a day; restart
+  once the other server has started`, where it waited with no limit for a holder that stayed connected. A plugin
+  that holds the lock longer than a day on purpose, or a test that expects a PostgreSQL start to wait without
+  limit, handles the `StorageException` and starts again.
+- Breaking: on SQLite a migration is no longer rolled back for rows that broke a foreign key before it ran, where
+  every row `PRAGMA foreign_key_check` found stopped the start. `PRAGMA foreign_key_check` runs before the
+  migration and again before it commits, the migration fails only for a row the second check finds and the first
+  did not, and one warning per start names the tables of the rows that were already broken. The rows of a `WITHOUT
+  ROWID` table have no row id in that check, so they are counted per table, parent and foreign key, and a higher
+  count in the second check fails the migration. A plugin that relied on the start stopping for such rows runs
+  `PRAGMA foreign_key_check` itself after `Storage.start` and stops when it returns a row.
+- Breaking: `ConfigReader.parsed` treats a `DateTimeException` of the parser as a rejection, as it treats an
+  `IllegalArgumentException`: `LocalTime::parse` for `25:99` and `ZoneId::of` for `Mars/Phobos` give the fallback
+  and the warning, where the `DateTimeParseException` or `ZoneRulesException` left `parsed` and failed the load.
+  Any other exception of the parser is still thrown on. A plugin that caught the `DateTimeException` around its
+  load to report the value drops that branch, and a parser that must stop the load throws another exception type,
+  such as `IllegalStateException`.
 - The warning of `Messages` for a language file that is not UTF-8 names the line:
   `lang/<name> is not saved as UTF-8 (the first byte that is not UTF-8 is on line <n>), so its messages are not
   used.` A file that is not valid YAML or cannot be read keeps `lang/<name> is not valid YAML saved as UTF-8, so
   its messages are not used.`
 
 ### Fixed
-- The checksum of a migration script ignores line endings and a leading byte order mark: it is taken over the text
-  with every line ending as a line feed and without the mark. A build whose scripts were checked out with CRLF (git
-  `autocrlf` without a `.gitattributes` entry) starts on a database that ran the LF scripts, where every start
-  stopped with `migration V1__... changed after it ran on this database`. A row written by `0.1.0` to `0.3.2` holds
-  the checksum of the script's exact bytes and is accepted while the script still has those bytes, and new rows
-  hold the new checksum. A script with a byte order mark runs: the mark is no longer sent to the database with the
-  first statement.
 - On MySQL and MariaDB each statement of a migration and its progress record commit in one transaction, so a start
   interrupted between the two no longer runs a statement that changes rows, such as
   `UPDATE accounts SET balance = balance * 10000`, a second time. A DDL statement still commits on its own before
   its record and must stay rerunnable.
-- On PostgreSQL a start waits at most a day for the migration lock, as on MySQL and MariaDB, and then fails with
-  `another start has held the migration lock of <version table> in database <schema> for a day; restart once the
-  other server has started`, where it waited with no limit for a holder that stayed connected.
-- On SQLite a migration is no longer rolled back for rows that broke a foreign key before it ran.
-  `PRAGMA foreign_key_check` runs before the migration and again before it commits, the migration fails only for a
-  row the second check finds and the first did not, and one warning per start names the tables of the rows that
-  were already broken.
 - The Javadoc of `Params.time` states its range: an instant whose milliseconds since the epoch fit a `long`. It
   throws `ArithmeticException` for `Instant.MAX`, `Instant.MIN` and any other instant outside that range, as
   before, so a plugin stores "never" as `null`.
@@ -182,10 +222,13 @@ All notable changes to Taffy are documented here. This project follows
   points back to this rule. It also states that on MySQL and MariaDB a select without `forUpdate()` that runs
   again inside one `TxWork` sees the transaction's first snapshot (`REPEATABLE READ`), so a loop that reads,
   computes and writes until its write counts a row runs one `TxWork` per attempt or reads with `forUpdate()`.
-- The save of a `ConfigLoader` upgrade writes every text on one line. A text longer than 80 columns, such as a
-  MiniMessage line, was folded over several indented lines. The class Javadoc lists what the save may still
-  change: quotes, the form of a number, a date or `true`/`false`, the place of an added key (after the keys the
-  owner has in that section), comments inside a list, line endings and a byte order mark.
+- The save of a `ConfigLoader` upgrade writes every text on one line, and so do `YamlFileProvider.apply` and every
+  other save of a document from `StrictYaml.parse`, whose line width is now `Integer.MAX_VALUE`. A text longer
+  than 80 columns, such as a MiniMessage line, was folded over several indented lines, by an editor save too when
+  another field changed. The `ConfigLoader` class Javadoc lists what the save of an upgrade may still change:
+  quotes, the form of a number, a date or `true`/`false`, the place of an added key (after the keys the owner has
+  in that section), comments inside a list, the last comment line of a file that holds no key, line endings and a
+  byte order mark.
 - A `ConfigLoader` upgrade whose text cannot be produced no longer throws out of `load`: a text with half of a
   surrogate pair (`"a\ud83db"`) made the YAML writer throw a `RuntimeException` after the `.bak` copy was written.
   The text is now produced before anything is written, parsed again and compared with the upgraded settings. When
@@ -195,10 +238,6 @@ All notable changes to Taffy are documented here. This project follows
 - The `config.yml.v<N>.bak` copy of a `ConfigLoader` upgrade is written through a temporary file that is flushed to
   the device before the upgraded file replaces the original, so a power loss cannot leave an upgraded file beside
   an empty copy. The copy holds the bytes the upgrade read and gets the POSIX permissions of `config.yml`.
-- `ConfigReader.parsed` treats a `DateTimeException` of the parser as a rejection, as it treats an
-  `IllegalArgumentException`: `LocalTime::parse` for `25:99` and `ZoneId::of` for `Mars/Phobos` give the fallback
-  and the warning, where the `DateTimeParseException` or `ZoneRulesException` left `parsed` and failed the load.
-  Any other exception of the parser is still thrown on.
 - `ConfigReader.integer` and `optionalInteger` tell an owner the range for a whole number that does not fit an
   `int`: `limit is 5000000000; expected a whole number from -2147483648 to 2147483647, so 10 is used.`, where the
   warning said `expected a whole number`. `integer(path, fallback, min, max)` names its own range

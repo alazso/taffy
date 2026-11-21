@@ -464,21 +464,77 @@ abstract class StorageContract {
 
     @Test
     void aDatabaseTheFirstReleaseRecordedFromCrlfScriptsStartsOnABuildThatShipsThoseBytes() throws Exception {
-        startsOnABuildThatShipsTheRecordedBytes(FirstRelease.Bytes.CRLF);
+        startsOn(FirstRelease.Bytes.CRLF, FirstRelease.Bytes.CRLF);
+    }
+
+    @Test
+    void aDatabaseTheFirstReleaseRecordedFromCrlfScriptsStartsOnABuildThatShipsLineFeeds() throws Exception {
+        startsOn(FirstRelease.Bytes.CRLF, FirstRelease.Bytes.LF);
+    }
+
+    @Test
+    void aDatabaseTheFirstReleaseRecordedFromCrlfScriptsIsCopiedByABuildThatShipsLineFeeds() throws Exception {
+        String prefix = dialect() == Dialect.SQLITE ? "" : "crlf_";
+        String own = defaultVersionTable(prefix);
+        Map<String, String> scripts = FirstRelease.scripts(dialect(), FirstRelease.Bytes.LF);
+        List<String> recorded = FirstRelease.rows(FirstRelease.Bytes.CRLF);
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            try {
+                FirstRelease.record(connection, dialect(), prefix, FirstRelease.Bytes.CRLF);
+
+                startingAs(name(), prefix, null, FirstRelease.CURRENT, scripts, null).join()
+                    .close(Duration.ofSeconds(5));
+
+                assertThat(ProbeSchema.rows(connection, own)).containsExactly(recorded.get(0), recorded.get(1),
+                    FirstRelease.notesRow(NOW.toEpochMilli()));
+                assertThat(ProbeSchema.rows(connection, prefix + "accounts")).containsExactly("1|seed", "2|steve");
+            } finally {
+                dropFirstRelease(statement, prefix);
+            }
+        }
+    }
+
+    @Test
+    void anEarlierVersionTableWhoseEveryScriptChangedRefusesTheStartAndRunsNothing() throws Exception {
+        String prefix = dialect() == Dialect.SQLITE ? "" : "edited_";
+        String earlier = prefix + "schema_version";
+        String own = defaultVersionTable(prefix);
+        Map<String, String> scripts = new HashMap<>(FirstRelease.scripts(dialect(), FirstRelease.Bytes.LF));
+        scripts.replaceAll((path, script) -> script + "-- reviewed\n");
+        List<String> recorded = FirstRelease.rows(FirstRelease.Bytes.LF);
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            try {
+                FirstRelease.record(connection, dialect(), prefix, FirstRelease.Bytes.LF);
+
+                CompletableFuture<Storage> start = startingAs(name(), prefix, null, FirstRelease.CURRENT, scripts,
+                    null);
+
+                assertThatThrownBy(start::join).cause().isInstanceOf(StorageException.class)
+                    .hasMessageContaining("changed after it ran on this database")
+                    .hasMessageStartingWith(own.equals(earlier) ? "migration V1__accounts changed"
+                        : "the table " + earlier + " records migration V1__accounts with another checksum");
+                assertThat(ProbeSchema.rows(connection, earlier)).containsExactlyElementsOf(recorded);
+                assertThat(ProbeSchema.rows(connection, prefix + "accounts")).containsExactly("1|seed", "2|steve");
+                assertThat(ProbeSchema.tables(connection, dialect(), prefix)).doesNotContain(prefix + "notes")
+                    .filteredOn(table -> table.endsWith("schema_version")).containsExactly(earlier);
+            } finally {
+                dropFirstRelease(statement, prefix);
+            }
+        }
     }
 
     /**
-     * Starts the next build, which names the version table as 0.1.0 did, on a database 0.1.0 recorded from scripts
-     * shipped as {@code shipped}, with its scripts shipped the same way.
+     * Starts the next build, which names the version table as 0.1.0 did and ships its scripts as {@code shipped}, on
+     * a database 0.1.0 recorded from scripts shipped as {@code from}.
      */
-    void startsOnABuildThatShipsTheRecordedBytes(FirstRelease.Bytes shipped) throws Exception {
+    void startsOn(FirstRelease.Bytes from, FirstRelease.Bytes shipped) throws Exception {
         String prefix = dialect() == Dialect.SQLITE ? "" : "kept_";
         String versionTable = prefix + "schema_version";
         Map<String, String> scripts = FirstRelease.scripts(dialect(), shipped);
-        List<String> recorded = FirstRelease.rows(shipped);
+        List<String> recorded = FirstRelease.rows(from);
         try (Connection connection = connect(); Statement statement = connection.createStatement()) {
             try {
-                FirstRelease.record(connection, dialect(), prefix, shipped);
+                FirstRelease.record(connection, dialect(), prefix, from);
 
                 starting(prefix, FirstRelease.CURRENT, scripts).join().close(Duration.ofSeconds(5));
                 starting(prefix, FirstRelease.CURRENT, scripts).join().close(Duration.ofSeconds(5));

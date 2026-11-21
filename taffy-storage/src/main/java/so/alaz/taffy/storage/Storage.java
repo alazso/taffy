@@ -143,7 +143,8 @@ public final class Storage {
      * class description states.
      *
      * @param plugin the owner plugin: {@link Plugin#getName()} names the database threads and the connection pools,
-     *     and on a server the default version table, and must not be blank, the version of
+     *     and on a server the default version table, which must not change between releases, as
+     *     {@link StorageSettings#versionTable(String)} describes, and must not be blank, the version of
      *     {@link Plugin#getPluginMeta()} is written into the file name of a SQLite backup,
      *     {@link Plugin#getDataPath()} holds the SQLite file and its backups,
      *     {@link Plugin#getLogger()} receives the lines for applied migrations and backups and the warnings, and
@@ -370,8 +371,8 @@ public final class Storage {
      * <p>The transaction commits when the work returns and rolls back when it throws. A commit the database refuses
      * because it rolled the transaction back, which is an {@link SQLTransactionRollbackException} or an
      * {@link SQLException} whose SQLState, or that of a cause, starts with {@code 40}, completes the future with that
-     * exception: nothing was written. Any other failure of the commit statement itself completes the future with a
-     * {@link CommitUnknownException}.
+     * exception: nothing was written. Any other failure of the commit statement itself, and one with SQLState
+     * {@code 40003} (statement completion unknown), completes the future with a {@link CommitUnknownException}.
      *
      * @param <T> the type of the result
      * @param work the work
@@ -415,7 +416,8 @@ public final class Storage {
      * {@code SERIALIZABLE} transaction that fails with SQLState {@code 40001}, is therefore run again. Every attempt
      * has a connection and a {@link Tx} of its own, so the {@link Tx#afterCommit} actions of an attempt that rolled
      * back never run. A {@link CommitUnknownException} is never retried, whatever its SQLState, because the
-     * transaction may have been written.
+     * transaction may have been written, and a commit that fails with SQLState {@code 40003} (statement completion
+     * unknown) is one.
      *
      * <p>The work may therefore run more than once. Each run must be safe to repeat: an effect outside the database
      * belongs in {@link Tx#afterCommit}, which runs only for the attempt that committed.
@@ -736,7 +738,8 @@ public final class Storage {
                     connection.commit();
                     committed = true;
                 } catch (SQLException refused) {
-                    SQLException outcome = rolledBack(refused) ? refused : new CommitUnknownException(refused);
+                    SQLException outcome = rolledBack(refused) && !completionUnknown(refused) ? refused
+                        : new CommitUnknownException(refused);
                     rollback(connection, outcome);
                     throw outcome;
                 }
@@ -775,6 +778,17 @@ public final class Storage {
                 if (state != null && state.startsWith("40")) {
                     return true;
                 }
+            }
+        }
+        return false;
+    }
+
+    // SQLState 40003 is "statement completion unknown": the commit may have been written.
+    private static boolean completionUnknown(SQLException ex) {
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Throwable error = ex; error != null && seen.add(error); error = error.getCause()) {
+            if (error instanceof SQLException sql && "40003".equals(sql.getSQLState())) {
+                return true;
             }
         }
         return false;

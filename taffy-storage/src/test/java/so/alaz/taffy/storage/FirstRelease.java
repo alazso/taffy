@@ -29,7 +29,7 @@ final class FirstRelease {
 
         String of(String script) {
             String ended = this == CRLF || this == MARK_CRLF ? script.replace("\n", "\r\n") : script;
-            return this == MARK || this == MARK_CRLF ? '﻿' + ended : ended;
+            return this == MARK || this == MARK_CRLF ? '\uFEFF' + ended : ended;
         }
     }
 

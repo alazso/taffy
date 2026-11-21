@@ -15,18 +15,22 @@ import java.util.Objects;
  *
  * <p>A script is read as UTF-8, and one that is not valid UTF-8 stops the start. It is split into statements by
  * the rules of a migration script: a statement ends at a semicolon that ends its line, and a line holds at most
- * one statement. A script that is still to run stops the start, before any migration runs, when it holds what
- * those rules cannot read: a single-quoted string that does not end on the line it starts, the start of a block
- * comment or dollar quoting ({@code $$}) outside a quoted string, or a quote directly after a backslash. A body of
- * statements between {@code BEGIN} and {@code END}, as in a trigger or a procedure, is not supported. Before a
- * script runs, every {@code ${prefix}} in it is replaced by the table prefix.
+ * one statement. A block comment outside a quoted string is kept and sent with its statement, and nothing inside
+ * it is read. A script that is still to run stops the start, before any migration runs, when it holds what those
+ * rules cannot read: a single-quoted string that does not end on the line it starts, a block comment that never
+ * closes or holds another block comment, dollar quoting ({@code $$}) outside a quoted string and outside a block
+ * comment, or on MySQL and MariaDB a quote directly after a backslash. A body of statements between {@code BEGIN}
+ * and {@code END}, as in a trigger or a procedure, and a PostgreSQL escape string ({@code E'...'}) that holds
+ * {@code \'} are not supported. Before a script runs, every {@code ${prefix}} in it is replaced by the table
+ * prefix.
  *
  * <p>The SHA-256 checksum of the script is taken before that replacement and stored with the version, and a
  * script that differs from the one that ran stops the start. The checksum is taken over the text without a leading
  * byte order mark and with every line ending as a line feed, so a build that checks the scripts out with other
  * line endings starts on the same databases. A row written by 0.1.0 to 0.3.2 holds the checksum of the script's
- * exact bytes: it is accepted while the script still has those bytes, and for a script that shipped with line feeds
- * and no byte order mark the two checksums are the same.
+ * exact bytes: it is accepted when the script has the same text, whatever line endings or byte order mark either
+ * build shipped it with, and for a script that shipped with line feeds and no byte order mark the two checksums are
+ * the same. A script that ran on any database is never edited: its checksum would no longer match there.
  *
  * <p>On SQLite and PostgreSQL a migration runs in one transaction. On MySQL and MariaDB DDL commits on its own,
  * so progress is recorded after each statement, in one transaction with that statement: a statement that changes
@@ -43,7 +47,9 @@ import java.util.Objects;
  * {@code ALTER TABLE} cannot make neither cascades nor deletes child rows; a {@code PRAGMA foreign_keys} line in a
  * script has no effect. {@code PRAGMA foreign_key_check} runs before the migration and again before it commits,
  * and a row that breaks a foreign key only in the second check rolls the migration back and stops the start. Rows
- * the first check already finds are named in one warning per start and do not stop the migration.
+ * the first check already finds are named in one warning per start and do not stop the migration. The check gives
+ * the rows of a {@code WITHOUT ROWID} table no row id, so those are counted per table, parent and foreign key, and
+ * a higher count in the second check rolls the migration back.
  *
  * <p>On MySQL, MariaDB and PostgreSQL, starts that share a database and a version table migrate one at a time: a
  * start holds a database lock while it reads the applied migrations and runs the pending ones, and waits for that

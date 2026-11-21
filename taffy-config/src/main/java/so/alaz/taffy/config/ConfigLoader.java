@@ -69,7 +69,7 @@ import java.util.logging.Logger;
  *   <li>A key the upgrade adds is written after the keys the owner's file has in that section, not at the place
  *       it has in the shipped file.
  *   <li>A comment inside a list is not written back, the indent of a list can change, and a comment or blank
- *       line elsewhere can move.
+ *       line elsewhere can move. The last comment line of a file that holds no key is not written back.
  *   <li>Every line ends in a line feed, and a byte order mark at the start of the file is not written back.
  * </ul>
  *
@@ -180,7 +180,10 @@ public final class ConfigLoader {
      * {@code config.yml.v<version>.bak}, once the shipped version is higher. A file that holds a version is not
      * affected. This loader is not changed.
      *
-     * @param version the version such a file counts as, 0 or more; 0 is what a loader has before this call
+     * <p>A baseline above the {@code config-version} of the shipped file makes {@link #load()} throw.
+     *
+     * @param version the version such a file counts as, 0 or more and at most the {@code config-version} of the
+     *     shipped file; 0 is what a loader has before this call
      * @throws IllegalArgumentException when {@code version} is negative
      */
     public ConfigLoader baselineVersion(int version) {
@@ -201,6 +204,8 @@ public final class ConfigLoader {
      * @throws ConfigLoadException when the shipped file is absent, unreadable, not UTF-8 or not valid YAML,
      *     when it has no whole number of 1 or more under {@code config-version} (the message is
      *     {@code the config.yml inside the plugin jar has no whole number of 1 or more under config-version}),
+     *     when the baseline version is above the shipped version (the message is
+     *     {@code the baseline version 3 is above the config-version 2 of the config.yml inside the plugin jar}),
      *     when the file in the data folder cannot be read, is not UTF-8 or is not valid YAML, or when a missing
      *     file cannot be written. A file that exists in the data folder is not changed in any of these cases.
      *     A message about a file that cannot be read or written names the file as {@code config.yml}, without
@@ -216,6 +221,10 @@ public final class ConfigLoader {
         YamlConfiguration defaults = StrictYaml.parse(shippedText, SHIPPED);
         if (!(defaults.get(VERSION_KEY) instanceof Integer shippedVersion) || shippedVersion < 1) {
             throw new ConfigLoadException(SHIPPED + " has no whole number of 1 or more under " + VERSION_KEY);
+        }
+        if (baseline > shippedVersion) {
+            throw new ConfigLoadException("the baseline version " + baseline + " is above the " + VERSION_KEY + " "
+                + shippedVersion + " of " + SHIPPED);
         }
         if (Files.notExists(file)) {
             write(shippedText);
@@ -252,7 +261,6 @@ public final class ConfigLoader {
     private static String upgradedText(YamlConfiguration current) throws ConfigLoadException {
         String text;
         try {
-            current.options().width(Integer.MAX_VALUE);
             text = current.saveToString();
         } catch (RuntimeException failure) {
             throw new ConfigLoadException("its settings cannot be written as YAML (" + StrictYaml.reason(failure)

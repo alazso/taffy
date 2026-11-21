@@ -75,7 +75,7 @@ final class BaselineTest {
                 assertThat(StorageContract.checksum(connection, "", migration.version()))
                     .isEqualTo(Migrator.checksum(script));
                 assertThat(ProbeSchema.statementsDone(connection, "", migration.version()))
-                    .isEqualTo(SqlScript.statements(script).size());
+                    .isEqualTo(SqlScript.statements(script, Dialect.SQLITE).size());
                 assertThat(ProbeSchema.appliedAt(connection, "", migration.version()))
                     .isEqualTo(StorageContract.NOW.toEpochMilli());
             }

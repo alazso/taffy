@@ -105,7 +105,13 @@ final class SqliteStorageTest extends StorageContract {
     @Test
     void aDatabaseTheFirstReleaseRecordedFromScriptsWithAByteOrderMarkStartsOnABuildThatShipsThoseBytes()
         throws Exception {
-        startsOnABuildThatShipsTheRecordedBytes(FirstRelease.Bytes.MARK);
+        startsOn(FirstRelease.Bytes.MARK, FirstRelease.Bytes.MARK);
+    }
+
+    @Test
+    void aDatabaseTheFirstReleaseRecordedFromScriptsWithAByteOrderMarkStartsOnABuildThatShipsLineFeeds()
+        throws Exception {
+        startsOn(FirstRelease.Bytes.MARK, FirstRelease.Bytes.LF);
     }
 
     @Test

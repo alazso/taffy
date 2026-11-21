@@ -900,6 +900,34 @@ final class ConfigLoaderTest {
     }
 
     @Test
+    void aBaselineAboveTheShippedVersionStopsEveryLoadAndWritesNothing() throws Exception {
+        String owner = "my-key: 7\n";
+        Files.writeString(configFile(), owner);
+
+        assertThatThrownBy(() -> loader(SHIPPED_V2).baselineVersion(3).load())
+            .isInstanceOf(ConfigLoadException.class)
+            .hasMessage("the baseline version 3 is above the config-version 2 of the config.yml inside the plugin"
+                + " jar");
+        Files.delete(configFile());
+        assertThatThrownBy(() -> loader(SHIPPED_V2).baselineVersion(3).load())
+            .isInstanceOf(ConfigLoadException.class);
+
+        assertThat(configFile()).doesNotExist();
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void anUpgradeOfAFileThatHoldsOnlyCommentsDropsItsLastCommentLine() throws Exception {
+        String owner = "# only\n# comments\n# three\n";
+        Files.writeString(configFile(), owner);
+
+        loader("config-version: 1\n").load();
+
+        assertThat(Files.readString(configFile())).isEqualTo("# only\n# comments\n\nconfig-version: 1\n");
+        assertThat(Files.readString(folder.resolve("config.yml.v0.bak"))).isEqualTo(owner);
+    }
+
+    @Test
     void aLongTextStaysOnOneLineThroughAnUpgrade() throws Exception {
         String message = "<gradient:#ff0000:#00ff00>Willkommen auf dem Server</gradient> " + "sehr lang ".repeat(14)
             + "<gray>und noch ein Satz: mit Doppelpunkt, #Raute und 'Anfuehrungszeichen'";

@@ -44,6 +44,9 @@ public final class StorageSettings {
     private static final Set<String> RESERVED_PROPERTIES = Set.of("user", "password", "sslmode", "ssl", "usessl",
         "requiressl", "verifyservercertificate", "trustservercertificate", "disablesslhostnameverification",
         "sslfactory", "allowpublickeyretrieval", "useaffectedrows", "sockettimeout");
+    // With either, the MySQL driver replaces a dropped connection without an error, and the new session holds no
+    // migration lock.
+    private static final Set<String> RECONNECT_PROPERTIES = Set.of("autoreconnect", "autoreconnectforpools");
 
     static final String LEGACY_VERSION_TABLE = "schema_version";
     static final int MAX_VERSION_TABLE_LENGTH = 54;
@@ -238,7 +241,19 @@ public final class StorageSettings {
      * plugin's name in lowercase with every character other than a lowercase letter, a digit or an underscore
      * replaced by an underscore, cut at its end where the whole name would pass 54 characters, and with an
      * underscore before it where the name would start with a digit. Two plugins that share a database and a prefix
-     * so keep a version table each.
+     * so keep a version table each. Two plugin names that differ only in characters that are replaced, such as
+     * {@code My-Plugin} and {@code My_Plugin}, or only after the cut, give the same default name, so one of the two
+     * plugins sets a name.
+     *
+     * <p>The name must stay the same for every release that starts on a database: storage finds its history only
+     * under this name, so under another name it runs every migration again. The default name follows the plugin's
+     * name, so a plugin that is renamed sets the name it had before. When the earlier table of 0.1.0 to 0.3.2 was
+     * already copied into a version table that has recorded more since, a start under another name stops with a
+     * {@link StorageException} that names that table.
+     *
+     * <p>A {@code <prefix>schema_version} that holds none of this plugin's checksums, with a row that carries the
+     * version and the name of one of this plugin's migrations, stops the start with a {@link StorageException}
+     * before anything changes, unless another version table under the prefix already holds every row of it.
      *
      * @param versionTable the full name of the version table: 1 to 54 lowercase letters, digits and underscores,
      *     starting with a letter or underscore. It is written into SQL unquoted, so it must not be a word the
@@ -499,12 +514,15 @@ public final class StorageSettings {
          * ({@code sslMode}, {@code ssl}, {@code useSSL}, {@code requireSSL}, {@code verifyServerCertificate},
          * {@code trustServerCertificate}, {@code disableSslHostnameVerification}, {@code sslfactory}); and
          * {@code allowPublicKeyRetrieval}, {@code useAffectedRows} and {@code socketTimeout}. These are set through
-         * {@link #of} and {@link #socketTimeout(Duration)}.
+         * {@link #of} and {@link #socketTimeout(Duration)}. {@code autoReconnect} and
+         * {@code autoReconnectForPools} are refused as well, in any letter case: with either, the MySQL driver
+         * replaces a dropped connection without an error, and the new session no longer holds the migration lock.
          *
          * @param properties the driver properties by name; copied, so a later change to the map changes nothing
          * @return a copy of this server with {@code properties} replaced
          * @throws NullPointerException if {@code properties}, a name or a value is {@code null}
-         * @throws IllegalArgumentException if a name is blank or names what storage sets itself
+         * @throws IllegalArgumentException if a name is blank, names what storage sets itself or is one of the two
+         *     reconnect properties
          */
         public Server properties(Map<String, String> properties) {
             Objects.requireNonNull(properties, "properties");
@@ -518,6 +536,11 @@ public final class StorageSettings {
                     throw new IllegalArgumentException("the driver property \"" + name + "\" would replace a value"
                         + " storage sets itself; set the user, the password, the SSL mode and the socket timeout"
                         + " through the server settings");
+                }
+                if (RECONNECT_PROPERTIES.contains(name.toLowerCase(Locale.ROOT))) {
+                    throw new IllegalArgumentException("the driver property \"" + name + "\" would let the driver"
+                        + " replace a dropped connection without an error, and the new session would not hold the"
+                        + " migration lock; storage does not support it");
                 }
                 copy.put(name, Objects.requireNonNull(property.getValue(), "value of driver property " + name));
             }

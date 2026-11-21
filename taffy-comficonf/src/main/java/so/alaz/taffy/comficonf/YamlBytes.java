@@ -18,7 +18,7 @@ final class YamlBytes {
     /** The largest file {@link #read(Path, String)} accepts, in bytes. */
     static final int MAX_FILE_BYTES = 16 * 1024 * 1024;
 
-    private static final String BYTE_ORDER_MARK = "﻿";
+    private static final String BYTE_ORDER_MARK = "\uFEFF";
 
     private YamlBytes() {
     }

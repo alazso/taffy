@@ -21,17 +21,19 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Brings a database to the newest schema version of a list of {@link Migration}s and records each applied one in
@@ -41,8 +43,9 @@ import java.util.regex.Pattern;
  *
  * <p>Every script is read and checked as UTF-8, and every pending one is split into statements, before the backup
  * and before the first migration runs. The checksum recorded for a script is taken over its text without a leading
- * byte order mark and with every line ending as a line feed, and a row that holds the checksum of the script's exact
- * bytes, as 0.1.0 to 0.3.2 recorded it, is accepted as well.
+ * byte order mark and with every line ending as a line feed, and a row that holds the checksum 0.1.0 to 0.3.2
+ * recorded for the same text, shipped with line feeds or with carriage return and line feed and with or without a
+ * byte order mark, is accepted as well.
  *
  * <p>On MySQL and MariaDB DDL commits on its own, so a migration's progress is recorded after each statement in
  * {@code statements_done} and a later start resumes after the last recorded statement. Each statement runs in one
@@ -60,13 +63,24 @@ import java.util.regex.Pattern;
  * that share a database and a version table migrate one at a time. A start waits up to a day for that lock. On
  * SQLite a migration runs with foreign keys off, as SQLite's table rebuild needs, when the connection enforces
  * them, and fails when {@code PRAGMA foreign_key_check} then finds a row that breaks one and that the same check
- * did not find before the migration.
+ * did not find before the migration. The rows of a {@code WITHOUT ROWID} table are counted per table, parent and
+ * foreign key, since that check gives them no row id.
  *
  * <p>When the version table does not exist and its name is not {@code <prefix>schema_version}, the name 0.1.0 to
  * 0.3.2 gave it, a table of that name in storage's layout that records at least one migration with the checksum of
  * one of these scripts is this plugin's earlier version table: its rows are copied into the new version table before
- * the first pending migration runs, and it stays as it was. On a server the start holds the lock of that earlier
- * table too while it reads and copies it.
+ * the first pending migration runs, and it stays as it was. On a server a start that finds no version table holds
+ * the lock of that earlier table too until it ends.
+ *
+ * <p>A table of that name in storage's layout whose rows hold none of these checksums is read as another plugin's
+ * version table: it is left alone, one warning names it, and every migration runs under the new version table. When
+ * one of its rows carries the version and the name of one of these migrations, the start stops with a
+ * {@link StorageException} before anything changes, unless another version table under the prefix already holds
+ * every row of it, as the copy of the plugin that owns it does.
+ *
+ * <p>A start also stops with a {@link StorageException} before anything changes when the earlier version table was
+ * already copied into another table that has recorded more since: after the earlier table is recognised, and at
+ * each start of a version table named {@code <prefix>schema_version}.
  *
  * <p>With a {@link Baseline}, no version table and no earlier version table, the database is first taken over from
  * the old version table, as {@link Baseline} describes, after every script is read and before the first pending
@@ -104,17 +118,23 @@ final class Migrator {
 
     private static final Duration LOCK_POLL = Duration.ofMillis(250);
 
-    private record Applied(String checksum, int statementsDone, boolean complete) {
+    private static final String BYTE_ORDER_MARK = "\uFEFF";
+
+    private record Applied(String name, String checksum, int statementsDone, @Nullable Long appliedAt) {
+
+        boolean complete() {
+            return appliedAt != null;
+        }
     }
 
     /**
-     * A migration script: its text without a leading byte order mark, the checksum of its exact bytes and the
-     * checksum of its text with every line ending as a line feed.
+     * A migration script: its text without a leading byte order mark, the checksum of its text with every line
+     * ending as a line feed, and the checksums 0.1.0 to 0.3.2 could have recorded for that text.
      */
-    private record Script(Migration migration, String path, String text, String raw, String checksum) {
+    private record Script(Migration migration, String path, String text, String checksum, Set<String> earlier) {
 
         boolean recordedAs(String stored) {
-            return stored.equals(checksum) || stored.equals(raw);
+            return stored.equals(checksum) || earlier.contains(stored);
         }
     }
 
@@ -209,7 +229,7 @@ final class Migrator {
             taken.add(lock(connection, lockOf(database, versionTable)));
             List<String> tables = tables(connection);
             String earlier = prefix + StorageSettings.LEGACY_VERSION_TABLE;
-            if (!earlier.equals(versionTable) && !tables.contains(versionTable) && tables.contains(earlier)) {
+            if (!earlier.equals(versionTable) && !tables.contains(versionTable)) {
                 taken.add(lock(connection, lockOf(database, earlier)));
                 tables = tables(connection);
             }
@@ -238,11 +258,20 @@ final class Migrator {
         for (Migration migration : migrations) {
             String path = migration.resource(dialect);
             String script = decode(path, read(path));
-            scripts.add(new Script(migration, path, withoutMark(script), rawChecksum(script), checksum(script)));
+            scripts.add(new Script(migration, path, withoutMark(script), checksum(script),
+                earlierChecksums(script)));
         }
         @Nullable String earlier = existing ? null : earlierVersionTable(connection, tables, scripts);
         String recorded = earlier == null ? versionTable : earlier;
         Map<Integer, Applied> applied = existing || earlier != null ? applied(connection, recorded) : Map.of();
+        String legacy = prefix + StorageSettings.LEGACY_VERSION_TABLE;
+        if (earlier != null) {
+            refuseContinuation(connection, tables, earlier, applied, scripts);
+        } else if (existing && versionTable.equals(legacy)) {
+            String tail = "_" + StorageSettings.LEGACY_VERSION_TABLE;
+            refuseContinuation(connection, tables.stream()
+                .filter(table -> table.startsWith(prefix) && table.endsWith(tail)).toList(), legacy, applied, scripts);
+        }
         @Nullable Takeover takeover = existing || earlier != null || baseline == null ? null
             : takeover(connection, tables, baseline);
         if (!existing && earlier == null) {
@@ -309,36 +338,149 @@ final class Migrator {
     /**
      * The table {@code <prefix>schema_version} when it is this plugin's version table of 0.1.0 to 0.3.2: another
      * name than the version table, storage's layout, and at least one row whose checksum is the one of the script of
-     * its version.
+     * its version. A table with no such row is another plugin's and gives {@code null}, with one warning when it
+     * holds rows and none of them carries the version and the name of one of these migrations.
+     *
+     * @throws StorageException if no row holds such a checksum, a row carries the version and the name of one of
+     *     these migrations, and no other version table under the prefix holds every row of the table
      */
     private @Nullable String earlierVersionTable(Connection connection, List<String> tables, List<Script> scripts)
-        throws SQLException {
+        throws SQLException, StorageException {
         String earlier = prefix + StorageSettings.LEGACY_VERSION_TABLE;
         if (earlier.equals(versionTable) || !tables.contains(earlier) || !layoutMatches(connection, earlier)) {
             return null;
         }
-        return match(applied(connection, earlier), scripts).same() > 0 ? earlier : null;
+        Map<Integer, Applied> rows = applied(connection, earlier);
+        Match match = match(rows, scripts);
+        if (match.same() > 0) {
+            return earlier;
+        }
+        @Nullable Script named = match.named();
+        if (named == null) {
+            if (!rows.isEmpty() && !scripts.isEmpty()) {
+                logger.warning("The table " + earlier + " records migrations, but none under the checksum of one of"
+                    + " this plugin's scripts, so it is read as another plugin's version table and this plugin starts"
+                    + " a new history in " + versionTable + ", which runs every migration. If " + earlier + " is this"
+                    + " plugin's table, a script changed after it ran: stop the server, restore the script, and"
+                    + " restore a backup of the database if a migration ran twice.");
+            }
+            return null;
+        }
+        if (claimed(connection, tables, earlier, rows)) {
+            return null;
+        }
+        throw new StorageException("the table " + earlier + " records migration " + named.migration().id()
+            + " with another checksum (stored " + rows.get(named.migration().version()).checksum() + ", now "
+            + named.checksum() + ") and no migration with a checksum of this plugin's scripts; if this plugin"
+            + " recorded it, the migration changed after it ran on this database: install the plugin version that"
+            + " applied it again, or restore a backup of the database; if another plugin that shares the table"
+            + " prefix \"" + prefix + "\" recorded it, update that plugin to a build on Taffy 0.4.0 and start it"
+            + " first, or give one of the two plugins another table prefix");
+    }
+
+    /**
+     * Whether another version table under the prefix holds every row of {@code earlier} with the same version and
+     * checksum, as the copy of the plugin that owns {@code earlier} does.
+     */
+    private boolean claimed(Connection connection, List<String> tables, String earlier, Map<Integer, Applied> rows) {
+        String tail = "_" + StorageSettings.LEGACY_VERSION_TABLE;
+        for (String table : tables) {
+            if (table.equals(earlier) || table.equals(versionTable) || !table.startsWith(prefix)
+                || !table.endsWith(tail)) {
+                continue;
+            }
+            @Nullable Map<Integer, Applied> copy = rowsOf(connection, table);
+            if (copy != null && holds(copy, rows, false)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Stops the start when one of {@code candidates} is a copy of the rows of {@code earlier} that has recorded
+     * more since: it holds every row of {@code earlier} with the same version, checksum and time, none of its rows
+     * holds another checksum than the script of its version, and it holds a version {@code earlier} lacks or a row
+     * that is further along.
+     */
+    private void refuseContinuation(Connection connection, List<String> candidates, String earlier,
+                                    Map<Integer, Applied> rows, List<Script> scripts) throws StorageException {
+        if (rows.isEmpty()) {
+            return;
+        }
+        for (String table : candidates) {
+            if (table.equals(earlier) || table.equals(versionTable)) {
+                continue;
+            }
+            @Nullable Map<Integer, Applied> copy = rowsOf(connection, table);
+            if (copy != null && holds(copy, rows, true) && match(copy, scripts).different() == 0
+                && ahead(copy, rows)) {
+                throw new StorageException("the table " + table + " continues the migrations " + earlier
+                    + " records and holds newer ones, so this database was started with " + table + " as the version"
+                    + " table; set the version table to " + table + " with StorageSettings.versionTable, or restore"
+                    + " the plugin name it was derived from");
+            }
+        }
+    }
+
+    // The rows of a table in storage's layout, or null for a table in another layout or one that cannot be read.
+    private static @Nullable Map<Integer, Applied> rowsOf(Connection connection, String table) {
+        try {
+            probe(connection, table);
+            return applied(connection, table);
+        } catch (SQLException otherLayout) {
+            return null;
+        }
+    }
+
+    private static boolean holds(Map<Integer, Applied> copy, Map<Integer, Applied> rows, boolean sameTime) {
+        for (Map.Entry<Integer, Applied> entry : rows.entrySet()) {
+            Applied row = entry.getValue();
+            Applied copied = copy.get(entry.getKey());
+            if (copied == null || !copied.checksum().equals(row.checksum())
+                || sameTime && !Objects.equals(copied.appliedAt(), row.appliedAt())) {
+                return false;
+            }
+        }
+        return !rows.isEmpty();
+    }
+
+    private static boolean ahead(Map<Integer, Applied> copy, Map<Integer, Applied> rows) {
+        for (Map.Entry<Integer, Applied> entry : copy.entrySet()) {
+            Applied row = rows.get(entry.getKey());
+            Applied copied = entry.getValue();
+            if (row == null || copied.statementsDone() > row.statementsDone()
+                || copied.complete() && !row.complete()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
      * How the rows of a version table compare with the scripts: {@code same} rows hold the checksum of the script
-     * of their version and {@code different} rows hold another one.
+     * of their version and {@code different} rows hold another one. {@code named} is the script of the lowest
+     * version whose row holds another checksum under the name of its migration, or {@code null}.
      */
-    private record Match(int same, int different) {
+    private record Match(int same, int different, @Nullable Script named) {
     }
 
     private static Match match(Map<Integer, Applied> rows, List<Script> scripts) {
         int same = 0;
         int different = 0;
+        @Nullable Script named = null;
         for (Script script : scripts) {
             Applied row = rows.get(script.migration().version());
             if (row != null && script.recordedAs(row.checksum())) {
                 same++;
             } else if (row != null) {
                 different++;
+                if (named == null && script.migration().name().equals(row.name())) {
+                    named = script;
+                }
             }
         }
-        return new Match(same, different);
+        return new Match(same, different, named);
     }
 
     // The rows reach the version table together: in one transaction where DDL is transactional, and otherwise
@@ -463,8 +605,19 @@ final class Migrator {
         return HexFormat.of().formatHex(sha256(script));
     }
 
+    /**
+     * The checksums 0.1.0 to 0.3.2 recorded for the text of a script: the SHA-256 of its exact bytes, and of the
+     * text with line feeds or with carriage return and line feed, each with and without a leading byte order mark.
+     */
+    static Set<String> earlierChecksums(String script) {
+        String lf = withoutMark(script).replace("\r\n", "\n").replace('\r', '\n');
+        String crlf = lf.replace("\n", "\r\n");
+        return Stream.of(script, lf, crlf, BYTE_ORDER_MARK + lf, BYTE_ORDER_MARK + crlf).map(Migrator::rawChecksum)
+            .collect(Collectors.toUnmodifiableSet());
+    }
+
     private static String withoutMark(String script) {
-        return script.startsWith("﻿") ? script.substring(1) : script;
+        return script.startsWith(BYTE_ORDER_MARK) ? script.substring(1) : script;
     }
 
     private String versionTableDdl(String table) {
@@ -486,7 +639,7 @@ final class Migrator {
         if (dialect.transactionalDdl()) {
             // PRAGMA foreign_keys has no effect inside a transaction, so it is switched before the transaction.
             boolean foreignKeys = dialect == Dialect.SQLITE && foreignKeysOn(connection);
-            Set<Violation> broken = foreignKeys ? brokenKeys(connection, migration) : Set.of();
+            Map<Violation, Integer> broken = foreignKeys ? brokenKeys(connection, migration) : Map.of();
             if (foreignKeys) {
                 execute(connection, "PRAGMA foreign_keys = OFF");
             }
@@ -566,13 +719,14 @@ final class Migrator {
         }
     }
 
-    // The rows that break a foreign key before the migration runs, which the check after it does not blame on it.
-    private Set<Violation> brokenKeys(Connection connection, Migration migration) throws SQLException {
-        Set<Violation> broken = violations(connection);
+    // The count of rows per broken foreign key before the migration runs, which the check after it does not blame on
+    // it.
+    private Map<Violation, Integer> brokenKeys(Connection connection, Migration migration) throws SQLException {
+        Map<Violation, Integer> broken = violations(connection);
         if (!broken.isEmpty() && !warnedOfBrokenKeys) {
             warnedOfBrokenKeys = true;
             Set<String> tables = new TreeSet<>();
-            for (Violation violation : broken) {
+            for (Violation violation : broken.keySet()) {
                 tables.add(violation.table());
             }
             logger.warning("Before migration " + migration.id() + " ran, the database already held rows whose"
@@ -582,23 +736,26 @@ final class Migrator {
         return broken;
     }
 
-    private static Set<Violation> violations(Connection connection) throws SQLException {
-        Set<Violation> violations = new HashSet<>();
+    // A WITHOUT ROWID table reports a NULL rowid, so its rows are told apart only by their count per table, parent
+    // and key.
+    private static Map<Violation, Integer> violations(Connection connection) throws SQLException {
+        Map<Violation, Integer> violations = new HashMap<>();
         try (Statement statement = connection.createStatement();
              ResultSet result = statement.executeQuery("PRAGMA foreign_key_check")) {
             while (result.next()) {
                 long rowid = result.getLong(2);
-                violations.add(new Violation(result.getString(1), result.wasNull() ? null : rowid,
-                    result.getString(3), result.getInt(4)));
+                violations.merge(new Violation(result.getString(1), result.wasNull() ? null : rowid,
+                    result.getString(3), result.getInt(4)), 1, Integer::sum);
             }
         }
         return violations;
     }
 
-    private static void checkForeignKeys(Connection connection, Migration migration, Set<Violation> before)
-        throws SQLException, StorageException {
-        for (Violation violation : violations(connection)) {
-            if (!before.contains(violation)) {
+    private static void checkForeignKeys(Connection connection, Migration migration,
+                                         Map<Violation, Integer> before) throws SQLException, StorageException {
+        for (Map.Entry<Violation, Integer> entry : violations(connection).entrySet()) {
+            Violation violation = entry.getKey();
+            if (entry.getValue() > before.getOrDefault(violation, 0)) {
                 throw new StorageException("migration " + migration.id() + " leaves a row of " + violation.table()
                     + " whose foreign key refers to a missing row of " + violation.parent()
                     + "; it was rolled back");
@@ -762,13 +919,12 @@ final class Migrator {
     private static Map<Integer, Applied> applied(Connection connection, String table) throws SQLException {
         Map<Integer, Applied> applied = new HashMap<>();
         try (Statement statement = connection.createStatement();
-             ResultSet result = statement.executeQuery(
-                 "SELECT version, checksum, statements_done, applied_at FROM " + table)) {
+             ResultSet result = statement.executeQuery("SELECT " + COLUMNS + " FROM " + table)) {
             while (result.next()) {
-                result.getLong("applied_at");
-                boolean complete = !result.wasNull();
-                applied.put(result.getInt("version"),
-                    new Applied(result.getString("checksum"), result.getInt("statements_done"), complete));
+                long appliedAt = result.getLong("applied_at");
+                @Nullable Long at = result.wasNull() ? null : appliedAt;
+                applied.put(result.getInt("version"), new Applied(result.getString("name"),
+                    result.getString("checksum"), result.getInt("statements_done"), at));
             }
         }
         return applied;
@@ -841,8 +997,7 @@ final class Migrator {
 
     private static void probe(Connection connection, String table) throws SQLException {
         try (Statement statement = connection.createStatement()) {
-            statement.executeQuery("SELECT version, checksum, statements_done, applied_at FROM " + table
-                + " WHERE 1 = 0").close();
+            statement.executeQuery("SELECT " + COLUMNS + " FROM " + table + " WHERE 1 = 0").close();
         }
     }
 
@@ -869,9 +1024,9 @@ final class Migrator {
         }
     }
 
-    private static List<String> split(Script script) throws StorageException {
+    private List<String> split(Script script) throws StorageException {
         try {
-            return SqlScript.statements(script.text());
+            return SqlScript.statements(script.text(), dialect);
         } catch (IllegalArgumentException malformed) {
             throw new StorageException(script.path() + " cannot be split into statements: "
                 + malformed.getMessage(), malformed);

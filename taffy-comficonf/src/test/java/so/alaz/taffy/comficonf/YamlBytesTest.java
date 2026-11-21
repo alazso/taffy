@@ -123,10 +123,10 @@ final class YamlBytesTest {
 
     @Test
     void encodingLikeAFileWithAByteOrderMarkWritesTheMarkOnce() {
-        byte[] original = bytes("﻿a: 0\r\n");
+        byte[] original = bytes("\uFEFFa: 0\r\n");
 
-        assertThat(YamlBytes.encodeLike("a: 1\n", original)).isEqualTo(bytes("﻿a: 1\r\n"));
-        assertThat(YamlBytes.encodeLike("﻿a: 1\n", original)).isEqualTo(bytes("﻿a: 1\r\n"));
+        assertThat(YamlBytes.encodeLike("a: 1\n", original)).isEqualTo(bytes("\uFEFFa: 1\r\n"));
+        assertThat(YamlBytes.encodeLike("\uFEFFa: 1\n", original)).isEqualTo(bytes("\uFEFFa: 1\r\n"));
     }
 
     @Test
@@ -139,7 +139,7 @@ final class YamlBytesTest {
 
     @Test
     void parsingAFileWithAByteOrderMarkReadsItsFirstKey() throws Exception {
-        YamlConfiguration yaml = YamlBytes.parse(bytes("﻿rows: 6\n"), "config.yml");
+        YamlConfiguration yaml = YamlBytes.parse(bytes("\uFEFFrows: 6\n"), "config.yml");
 
         assertThat(yaml.getKeys(false)).containsExactly("rows");
     }

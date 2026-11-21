@@ -293,6 +293,26 @@ final class RollbackRetryTest {
     }
 
     @Test
+    void aCommitWhoseCompletionIsUnknownIsNotRestarted() throws SQLException {
+        DataSource source = mock(DataSource.class);
+        Connection connection = mock(Connection.class);
+        when(source.getConnection()).thenReturn(connection);
+        doThrow(new SQLException("wrapped", "HY000", new SQLException("result is ambiguous", "40003")))
+            .when(connection).commit();
+        Storage over = Storage.over(TestPlugins.plugin("retry-ambiguous", log.logger), new ErrorReports(),
+            Dialect.POSTGRES, source, "p_", StorageContract.CLOCK);
+        AtomicInteger attempts = new AtomicInteger();
+
+        CompletableFuture<Integer> unknown = over.asyncRetrying(tx -> attempts.incrementAndGet());
+
+        assertThatThrownBy(unknown::join).cause().isInstanceOf(CommitUnknownException.class)
+            .cause().hasMessage("wrapped");
+        assertThat(attempts).hasValue(1);
+        verify(connection, times(1)).commit();
+        assertThat(over.close(Duration.ofSeconds(5))).isTrue();
+    }
+
+    @Test
     void anInterruptDuringThePauseFailsTheWorkAndKeepsTheInterruptFlag() throws Exception {
         DataSource source = mock(DataSource.class);
         Connection connection = mock(Connection.class);

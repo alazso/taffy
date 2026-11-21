@@ -84,6 +84,20 @@ final class StrictYamlTest {
     }
 
     @Test
+    void aLongTextIsSavedOnOneLine() throws Exception {
+        String message = "<gray>Welcome to the server, " + "a long word ".repeat(16) + "and: a colon, a #hash";
+        assertThat(message).hasSizeGreaterThan(200);
+        String text = "rows: 6\nmessage: \"" + message + "\"\n";
+
+        YamlConfiguration yaml = StrictYaml.parse(text, "config.yml");
+        yaml.set("rows", 3);
+        String saved = yaml.saveToString();
+
+        assertThat(saved.lines()).hasSize(2).last().asString().startsWith("message: ").endsWith("a #hash'");
+        assertThat(StrictYaml.parse(saved, "config.yml").getString("message")).isEqualTo(message);
+    }
+
+    @Test
     void everyCallGivesANewConfiguration() throws Exception {
         YamlConfiguration first = StrictYaml.parse("rows: 6\n", "config.yml");
         first.set("rows", 3);

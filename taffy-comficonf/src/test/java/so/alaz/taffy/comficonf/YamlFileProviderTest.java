@@ -234,6 +234,27 @@ class YamlFileProviderTest {
     }
 
     @Test
+    void aTextLongerThan80ColumnsStaysOnOneLineThroughAnApply() throws Exception {
+        String message = "<gray>Welcome to the server, " + "a long word ".repeat(16) + "and: a colon, a #hash";
+        assertThat(message).hasSizeGreaterThan(200);
+        Files.writeString(file, SETTINGS.replace("greeting: Hello # shown on join", "greeting: \"" + message + "\""));
+        long lines = Files.readAllLines(file).size();
+
+        ApplyResult other = provider.apply(changing(provider, "radius", 32, ApplyMode.LIVE));
+
+        assertThat(other.status()).isEqualTo(ApplyStatus.APPLIED);
+        assertThat(Files.readAllLines(file)).hasSize((int) lines)
+            .filteredOn(line -> line.startsWith("greeting:")).singleElement().asString().endsWith("a #hash'");
+        assertThat(provider.read().values().getString("greeting")).isEqualTo(message);
+
+        ApplyResult edited = provider.apply(changing(provider, "greeting", message + " again", ApplyMode.LIVE));
+
+        assertThat(edited.status()).isEqualTo(ApplyStatus.APPLIED);
+        assertThat(Files.readAllLines(file)).hasSize((int) lines);
+        assertThat(provider.read().values().getString("greeting")).isEqualTo(message + " again");
+    }
+
+    @Test
     void savesAFileWrittenWithLineFeedsWithLineFeeds() throws Exception {
         ApplyResult result = provider.apply(changing(provider, "greeting", "Hi", ApplyMode.LIVE));
 

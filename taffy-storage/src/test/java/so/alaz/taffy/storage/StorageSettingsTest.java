@@ -154,6 +154,16 @@ final class StorageSettingsTest {
                 + " user, the password, the SSL mode and the socket timeout through the server settings");
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"autoReconnect", "AUTORECONNECT", "autoReconnectForPools"})
+    void aDriverPropertyThatReconnectsADroppedConnectionIsRefusedInAnyLetterCase(String name) {
+        assertThatThrownBy(() -> server("p_").properties(Map.of(name, "true")))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the driver property \"" + name + "\" would let the driver replace a dropped connection"
+                + " without an error, and the new session would not hold the migration lock; storage does not"
+                + " support it");
+    }
+
     @Test
     void aDriverPropertyWithoutANameOrAValueIsRefused() {
         StorageSettings.Server server = server("p_");
@@ -317,6 +327,15 @@ final class StorageSettingsTest {
         assertThat(mariaDb("").versionTableFor("2Shop")).isEqualTo("_2shop_schema_version");
         assertThat(mariaDb("p_").versionTableFor("2Shop")).isEqualTo("p_2shop_schema_version");
         assertThat(mariaDb("p_").versionTableFor("Äpfel")).isEqualTo("p__pfel_schema_version");
+    }
+
+    @Test
+    void pluginNamesThatDifferOnlyInReplacedOrCutCharactersShareADefaultVersionTable() {
+        String longest = "abcdefghijklmnopqrstuvwxyz012345";
+
+        assertThat(mariaDb("p_").versionTableFor("My-Plugin")).isEqualTo(mariaDb("p_").versionTableFor("My_Plugin"));
+        assertThat(mariaDb(longest).versionTableFor("EconomyShop"))
+            .isEqualTo(mariaDb(longest).versionTableFor("EconomyBank"));
     }
 
     @Test

@@ -50,7 +50,8 @@ import java.util.function.Consumer;
  * becomes the text of that number.
  *
  * <p>The returned {@link YamlConfiguration} keeps the comments of the document, so saving it writes them back.
- * It is a new object on every call and is not thread-safe.
+ * Its line width is {@link Integer#MAX_VALUE}, so saving it writes every text without a line break on one line,
+ * whatever its length. It is a new object on every call and is not thread-safe.
  */
 public final class StrictYaml {
 
@@ -81,6 +82,7 @@ public final class StrictYaml {
         checkAliases(text, source);
         YamlConfiguration yaml = new YamlConfiguration();
         yaml.options().parseComments(true);
+        yaml.options().width(Integer.MAX_VALUE);
         // Paper's loadFromString builds sections outside its own catch, so a bad tag or key escapes as a
         // RuntimeException.
         try {
