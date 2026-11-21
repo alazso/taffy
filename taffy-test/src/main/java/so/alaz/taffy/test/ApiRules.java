@@ -101,11 +101,15 @@ public final class ApiRules {
      * {@code so.alaz.taffy}, each with its subpackages. One exception: when the anchor and the checked class are both
      * in the package {@code so.alaz.taffy.comficonf}, not a subpackage of it, {@code com.comficonf.api} and its
      * subpackages are allowed too. A class is checked when it and its enclosing classes are
-     * public or protected, together with the module superclasses it inherits members from. Its signatures are its
-     * type parameters, its supertypes, its record components, its public and protected fields, and the type
-     * parameters, parameters, exceptions and return types of its public and protected constructors and methods.
-     * A class whose members cannot be read, because one names a type that is not on the classpath, gives a line
-     * of its own.
+     * public or protected, together with the module superclasses and superinterfaces it inherits members from,
+     * whatever their visibility: its superclasses up to the first one outside the module, and every module
+     * interface that it or one of those implements or extends, directly or through another module interface.
+     *
+     * <p>The signatures of a class are its type parameters, its supertypes, its record components, its public and
+     * protected fields, and the type parameters, parameters, exceptions and return types of its public and
+     * protected constructors and methods. The static methods of an inherited interface that is not itself public
+     * or protected are left out, because a class does not inherit them. A class whose members cannot be read,
+     * because one names a type that is not on the classpath, gives a line of its own.
      *
      * @throws IllegalArgumentException if the anchor is not in a Taffy module
      * @throws IOException if the output cannot be read
@@ -120,8 +124,12 @@ public final class ApiRules {
      * thread. An empty set means the rule holds.
      *
      * <p>A field names a type when it is that type or a subtype of it, an array of it, or a generic type with it
-     * as a type argument or bound. A class whose fields cannot be read, because one names a type that is not on
-     * the classpath, gives a line of its own.
+     * as a type argument or bound. A static field that names a module class also gives one line per instance field
+     * of that class or of its module superclasses that names one of the four, and the instance fields that name a
+     * module class are followed the same way. A module class named only as a type argument, as {@code Keeper} is
+     * in {@code Class<Keeper>} or {@code Comparator<Keeper>}, is followed too, whether or not the field holds an
+     * instance of it. A class whose fields cannot be read, because one names a type that is not on the classpath,
+     * gives a line of its own.
      *
      * @throws IllegalArgumentException if the anchor is not in a Taffy module
      * @throws IOException if the output cannot be read
@@ -218,18 +226,49 @@ public final class ApiRules {
         return true;
     }
 
-    /** The signature violations of {@code type} and of the module superclasses it inherits members from, when it is exported. */
+    /**
+     * The signature violations of {@code type} and of the module superclasses and superinterfaces it inherits
+     * members from, when it is exported.
+     */
     private static Set<String> exposedSignatureViolations(Class<?> anchor, Class<?> type) {
         Set<String> violations = new LinkedHashSet<>();
-        for (Class<?> c = type; exported(type) && c != null && c.getName().startsWith(MODULE_PACKAGE); c = c.getSuperclass()) {
-            violations.addAll(signatureViolationsOf(anchor, c));
+        if (exported(type)) {
+            for (Class<?> inherited : moduleSupertypes(type)) {
+                violations.addAll(signatureViolationsOf(anchor, inherited));
+            }
         }
         return violations;
     }
 
     /**
+     * {@code type} when it is a module class, with its superclasses up to the first one outside the module and
+     * every module interface that it, one of those superclasses or one of those interfaces implements or extends.
+     */
+    private static Set<Class<?>> moduleSupertypes(Class<?> type) {
+        Set<Class<?>> supertypes = new LinkedHashSet<>();
+        for (Class<?> c = type; c != null && moduleClass(c); c = c.getSuperclass()) {
+            supertypes.add(c);
+            collectModuleInterfaces(c, supertypes);
+        }
+        return supertypes;
+    }
+
+    private static void collectModuleInterfaces(Class<?> type, Set<Class<?>> supertypes) {
+        for (Class<?> implemented : type.getInterfaces()) {
+            if (moduleClass(implemented) && supertypes.add(implemented)) {
+                collectModuleInterfaces(implemented, supertypes);
+            }
+        }
+    }
+
+    private static boolean moduleClass(Class<?> type) {
+        return type.getName().startsWith(MODULE_PACKAGE);
+    }
+
+    /**
      * One line per type from outside the allowed packages that a public or protected signature of {@code type}
      * names, where the allowed packages are those {@link #signatureViolations} allows for this anchor and class.
+     * The static methods of an interface that is not exported are not signatures.
      */
     static Set<String> signatureViolationsOf(Class<?> anchor, Class<?> type) {
         List<String> allowed = anchor.getPackageName().equals(COMFICONF_PACKAGE)
@@ -251,8 +290,10 @@ public final class ApiRules {
         }
         List<Executable> executables = new ArrayList<>(List.of(type.getDeclaredConstructors()));
         executables.addAll(List.of(type.getDeclaredMethods()));
+        // A class does not inherit the static methods of its superinterfaces.
+        boolean staticsHidden = type.isInterface() && !exported(type);
         for (Executable executable : executables) {
-            if (!visible(executable.getModifiers())) {
+            if (!visible(executable.getModifiers()) || staticsHidden && Modifier.isStatic(executable.getModifiers())) {
                 continue;
             }
             String member = owner + "." + (executable instanceof Method ? executable.getName() : "<init>") + "()";
@@ -266,22 +307,49 @@ public final class ApiRules {
         return violations;
     }
 
-    /** One line per static field of {@code type} whose type names a plugin, logger, executor or thread. */
+    /**
+     * One line per static field of {@code type} whose type names a plugin, logger, executor or thread, and one per
+     * instance field that names one in a module class the static field's type names, directly or through the
+     * instance fields of module classes.
+     */
     static Set<String> staticHolderViolationsOf(Class<?> type) {
         Set<String> violations = new LinkedHashSet<>();
         for (Field field : type.getDeclaredFields()) {
             if (!Modifier.isStatic(field.getModifiers())) {
                 continue;
             }
+            String holder = type.getName() + "." + field.getName() + " is static and holds ";
+            Set<Class<?>> followed = new HashSet<>();
             for (Class<?> named : named(field.getGenericType())) {
                 for (Class<?> banned : NEVER_STATIC) {
                     if (banned.isAssignableFrom(named)) {
-                        violations.add(type.getName() + "." + field.getName() + " is static and holds " + banned.getName());
+                        violations.add(holder + banned.getName());
                     }
                 }
+                collectInstanceHolders(named, holder, violations, followed);
             }
         }
         return violations;
+    }
+
+    // followed ends the walk of a module class that reaches itself through its instance fields.
+    private static void collectInstanceHolders(Class<?> held, String holder, Set<String> violations,
+                                               Set<Class<?>> followed) {
+        for (Class<?> c = held; c != null && moduleClass(c) && followed.add(c); c = c.getSuperclass()) {
+            for (Field field : c.getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers())) {
+                    continue;
+                }
+                for (Class<?> named : named(field.getGenericType())) {
+                    for (Class<?> banned : NEVER_STATIC) {
+                        if (banned.isAssignableFrom(named)) {
+                            violations.add(holder + banned.getName() + " in " + c.getName() + "." + field.getName());
+                        }
+                    }
+                    collectInstanceHolders(named, holder, violations, followed);
+                }
+            }
+        }
     }
 
     private static void check(Set<String> violations, List<String> allowed, String member, Type... signature) {

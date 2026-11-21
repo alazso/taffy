@@ -3,6 +3,7 @@ package so.alaz.taffy.test;
 import org.jetbrains.annotations.Nullable;
 import org.mockito.MockMakers;
 import org.mockito.MockSettings;
+import org.mockito.quality.Strictness;
 import org.mockito.stubbing.Answer;
 
 import java.io.IOException;
@@ -40,6 +41,9 @@ public final class FakeFolders {
      *       {@code Path} return {@code null}. Every other method of the path and of its file system gives
      *       Mockito's default answer.</li>
      * </ul>
+     *
+     * <p>The stubbings are lenient: a test under Mockito's strict stubs, such as one run with
+     * {@code MockitoExtension}, does not fail for the stubbed methods it leaves uncalled.
      */
     public static Path unlistable(@Nullable DirectoryStream<Path> stream) {
         BasicFileAttributes directory = mock(BasicFileAttributes.class, subclass());
@@ -65,8 +69,8 @@ public final class FakeFolders {
         return path;
     }
 
-    /** Mocks made by subclassing, so the JDK classes they stand in for are not retransformed. */
+    /** Lenient mocks made by subclassing, so the JDK classes they stand in for are not retransformed. */
     private static MockSettings subclass() {
-        return withSettings().mockMaker(MockMakers.SUBCLASS);
+        return withSettings().mockMaker(MockMakers.SUBCLASS).strictness(Strictness.LENIENT);
     }
 }

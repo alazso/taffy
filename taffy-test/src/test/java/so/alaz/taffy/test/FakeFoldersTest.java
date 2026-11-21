@@ -1,6 +1,8 @@
 package so.alaz.taffy.test;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.MockitoSession;
+import org.mockito.quality.Strictness;
 
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
@@ -13,6 +15,7 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mockitoSession;
 
 class FakeFoldersTest {
 
@@ -82,6 +85,19 @@ class FakeFoldersTest {
         assertThat(folder.normalize()).isNull();
         assertThat(folder.resolve(FIRST)).isNull();
         assertThat(folder.getParent()).isNull();
+    }
+
+    @Test
+    void aTestUnderStrictStubsThatReadsOneMethodPasses() {
+        MockitoSession session = mockitoSession().strictness(Strictness.STRICT_STUBS).startMocking();
+        boolean directory;
+        try {
+            directory = Files.isDirectory(FakeFolders.unlistable(null));
+        } finally {
+            session.finishMocking();
+        }
+
+        assertThat(directory).isTrue();
     }
 
     private static DirectoryStream<Path> streamOf(Path... entries) {

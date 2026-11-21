@@ -5,6 +5,113 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `Relocation.check()` in `taffy-platform` throws `IllegalStateException` when a plugin's jar holds Taffy in its
+  original package, with `Demo ships Taffy in its original package so.alaz.taffy, so its Taffy classes mix with
+  those of every other plugin that does the same. Its build needs relocate("so.alaz.taffy",
+  "<group>.libs.taffy") in the shadowJar task, or the so.alaz.taffy.paper-plugin Gradle plugin, which relocates
+  Taffy.` for a plugin named `Demo`. `new ErrorReports()`, `new Text(Logger)`, `Messages.load`,
+  `Messages.loadLenient`, `new ConfigLoader(...)` and `new YamlFolder(...)` call it, and every other module takes
+  an `ErrorReports`, so a plugin with a hand-written `shadowJar` that lacks the `so.alaz.taffy` line fails when
+  it creates one of these or uses another module. A plugin that uses only the other classes of `taffy-platform`
+  and `taffy-config`, such as `DiscordWebhook` or `ItemBuilder`, does not run the check. Before, such a jar ran,
+  and a class missing from its Taffy copy loaded from another plugin's copy through Paper's lookup across
+  plugins. The check fails only when the classes are in `so.alaz.taffy` or a package inside it and their class
+  loader implements Paper's `ConfiguredPluginClassLoader`, which it finds by name, so it does nothing in a unit
+  test, on any other class loader, or in a relocated jar such as the one `so.alaz.taffy.paper-plugin` builds. It
+  inspects the class loader until it first passes and returns at once after that.
+
+### Changed
+- `so.alaz.taffy.settings` checks the Gradle version before it applies anything and fails on a Gradle older than
+  9.2.0, the oldest release the plugins build a plugin on, with `so.alaz.taffy.settings needs Gradle 9.2.0 or
+  newer, and this build runs on Gradle 9.1.0. Set a newer version in distributionUrl in
+  gradle/wrapper/gradle-wrapper.properties.` On Gradle 9.1.0, the first release that runs on Java 25, a build that
+  applied `so.alaz.taffy.paper-plugin` failed before with a `NoSuchMethodError` for
+  `AdhocComponentWithVariants.addVariantsFromConfiguration` from the Shadow plugin, and a build that applied only
+  the other plugins ran. The README and the docs state the minimum, and a TestKit case builds a plugin on 9.2.0.
+
+### Fixed
+- The `shadowJar` of `so.alaz.taffy.paper-plugin` merges the `META-INF/services` files of the plugin and of every
+  shaded jar into one file per service, with each provider name relocated like its class. Before, the first file
+  of a name won under `DuplicatesStrategy.EXCLUDE`, so a jar that shaded two JDBC drivers or two other
+  `ServiceLoader` providers of one service kept one of them. The convention calls Shadow's `mergeServiceFiles()`
+  and sets `DuplicatesStrategy.INCLUDE` on `META-INF/services/**`. Every other path, and the Groovy
+  `META-INF/services/org.codehaus.groovy.runtime.ExtensionModule` descriptor, still keeps its first copy.
+- The `shadowJar` of `so.alaz.taffy.paper-plugin` ships the root project's own `LICENSE` as `META-INF/LICENSE`,
+  and no `META-INF/LICENSE` when the root project has none. Before, the copy from a dependency jar won, so a
+  plugin that shaded a Taffy module shipped Taffy's MIT license in that place, with or without a license of its
+  own. The license files of each shaded jar (the files directly in `META-INF` whose name starts with `LICENSE`, in
+  any case) now ship as `META-INF/licenses/<jar file name without .jar>/<file name>`, for example
+  `META-INF/licenses/taffy-platform-0.4.1/LICENSE`. Two shaded jars with one file name, compared without case,
+  get `META-INF/licenses/<name>/` and `META-INF/licenses/<name>-2/`, in runtime classpath order, and a second
+  license file of one jar whose name differs only in case gets the same suffix. The new task
+  `collectDependencyLicenses` gathers them, and a `META-INF/LICENSE` in the plugin's own main resources still
+  ships and comes before the root project's file. A `META-INF/LICENSE*` file the build adds to `shadowJar` by
+  hand still ships: only the copies from the shaded jars move. `so.alaz.taffy.java` and every other jar are
+  unchanged.
+- The three relocations of `so.alaz.taffy.paper-plugin` stop at the package boundary: each carries an include
+  pattern (`org.bstats.**`, `dev.faststats.**`, `so.alaz.taffy.**`). Before, Shadow matched the raw path prefix,
+  so `so.alaz.taffyshop`, `org.bstatsx` and `dev.faststatsx` were relocated too, and a plugin with
+  `group=so.alaz.taffyshop` shipped its main class as `so.alaz.taffyshop.libs.taffyshop.TaffyShop` while
+  `paper-plugin.yml` named `so.alaz.taffyshop.TaffyShop`, which Paper could not load. Taffy, bStats and FastStats
+  relocate as before.
+- `shadowJar` and `generateRuntimeLibraries` fail on a project group that is blank or has an empty segment, with
+  `so.alaz.taffy.paper-plugin relocates Taffy under <group>.libs, and the project group "" is blank or has an
+  empty segment. Set group in gradle.properties, for example group=com.example.myplugin.` Before, a project
+  without a group built a jar whose Taffy classes sat under `/libs/taffy/`, which no class loader can load. The
+  group is read when the task is configured or run, so one the build script sets after it applies the plugin
+  counts. A group that is not a Java package name, such as `com.example.my-plugin`, still builds while
+  `paperPlugin.runtimeLibraries` is empty. With a library listed, `generateRuntimeLibraries` fails before javac
+  does, with `paperPlugin.runtimeLibraries generates RuntimeLibraries in the package named by the project group,
+  and "com.example.my-plugin" is not a Java package name. Set group in gradle.properties to one, for example
+  group=com.example.myplugin.`
+- A build that lists a runtime library fails when a `paper-plugin.yml` in a main resources directory, one that
+  a task generates included, has no top-level `loader` key, with `paperPlugin.runtimeLibraries lists 2 libraries
+  and src/main/resources/paper-plugin.yml has no top-level loader key, so Paper downloads none and the plugin
+  fails at its first use of one. Add loader: with the name of the PluginLoader class that reads
+  RuntimeLibraries.COORDINATES:
+  https://alaz.so/taffy/docs/gradle-plugins#runtime-libraries`. Before, such a build passed and the plugin failed
+  on the server with a `NoClassDefFoundError` for the first library class it used. The new task
+  `verifyPluginLoader` makes the check and `processResources` depends on it. It reads no value of the key and
+  checks nothing when no library is listed or the resources hold no `paper-plugin.yml`.
+- `generateRuntimeLibraries` fails on an entry of `paperPlugin.runtimeLibraries` that is not `group:name:version`,
+  with `The paperPlugin.runtimeLibraries entry "org.junit.platform:junit-platform-launcher:" is not
+  group:name:version, with an extension or an extension and a classifier allowed before the version, in segments
+  that are not blank and hold no whitespace, quote or backslash. A version catalog entry passed to runtimeLibrary
+  needs a version.` Before, `runtimeLibrary` of a catalog entry without a
+  version generated a coordinate that ended in a colon, which Paper's `DefaultArtifact` rejected at server start,
+  and a quote or backslash in an entry went into the generated Java source as it was. An entry with an extension
+  or a classifier, `group:name:extension:version` or `group:name:extension:classifier:version`, is written as
+  before.
+- `processResources` leaves every backslash in `paper-plugin.yml` as it is. Before, Gradle's `expand` read `\n`,
+  `\t`, `\\` and the other backslash sequences as the characters they name, so `description: "First\nSecond"`
+  came out with a line break in it and `Reads C:\data\shop` lost its backslashes. `${version}` is expanded, `\$`
+  gives a literal dollar sign and any other `${...}` expression fails the task, as before.
+- The mocks of `FakeItems` and `FakeFolders` in `taffy-test` are lenient, so a test under Mockito's strict stubs
+  (`@ExtendWith(MockitoExtension.class)`, or a `MockitoSession` with `Strictness.STRICT_STUBS`) that makes
+  `FakeItems.item("stone", 3)` or `FakeFolders.unlistable(null)` and calls one method passes. Before, such a test
+  failed with `UnnecessaryStubbingException` for every stubbed method it left uncalled, pointing into `FakeItems`
+  or `FakeFolders`.
+- A `FakeItems` item answers `add()`, `add(int)`, `subtract()` and `subtract(int)` like Paper's `ItemStack`:
+  `add` raises the amount to the maximum stack size at most, `subtract` lowers it to 0 at least, and each
+  returns the item. Before, the four gave Mockito's default answer, so `item(Material.DIAMOND, 5).subtract(2)`
+  returned `null` and left the amount at 5. The four record no `getAmount`, `setAmount` or `getMaxStackSize`
+  call on the mock. `isEmpty()` is `true` at any amount for an item made from `Material.AIR`,
+  `Material.CAVE_AIR` or `Material.VOID_AIR`, where it was `false` for `item(Material.AIR, 1)`. Every other
+  method still gives Mockito's default answer.
+- `ApiRules.signatureViolations` checks the module interfaces an exported class inherits members from, whatever
+  their visibility: those the class and its module superclasses implement, and the module interfaces those
+  extend. Before, only the superclasses were walked, so a public class that implemented a package-private
+  interface with a default method returning a third-party type, or with a third-party superinterface, passed.
+  The static methods of such an interface are left out when it is not public, because a class does not inherit
+  them.
+  `ApiRules.staticHolderViolations` follows a static field that names a module class into the instance fields
+  of that class, its module superclasses and the module classes those fields name, and gives a line such as
+  `so.alaz.taffy.demo.Registry.keeper is static and holds java.util.logging.Logger in
+  so.alaz.taffy.demo.Keeper.logger`. A module class named only as a type argument, as in `Class<Keeper>` or
+  `Comparator<Keeper>`, is followed too. Before, only the static field's own type was read. Neither check finds
+  anything new in a Taffy module.
+
 ## [0.4.0] - 2026-11-20
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

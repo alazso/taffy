@@ -43,6 +43,13 @@ class ApiRulesTest {
     private static final String COMFICONF_EXPOSED = "so.alaz.taffy.comficonf.Exposed";
     private static final String COMFICONF_SUB_EXPOSED = "so.alaz.taffy.comficonf.sub.Exposed";
     private static final String OTHER_EXPOSED = "so.alaz.taffy.other.Exposed";
+    private static final String SHOWN = "so.alaz.taffy.sample.Shown";
+    private static final String SHOWN_CHILD = "so.alaz.taffy.sample.ShownChild";
+    private static final String SHOWN_API = "so.alaz.taffy.sample.ShownApi";
+    private static final String UNSHOWN = "so.alaz.taffy.sample.Unshown";
+    private static final String HIDDEN = "so.alaz.taffy.sample.Hidden";
+    private static final String DEEPER = "so.alaz.taffy.sample.Deeper";
+    private static final String OF_BASE = "so.alaz.taffy.sample.OfBase";
 
     @Test
     void reportsADisallowedTypeInEachSignaturePosition() {
@@ -106,6 +113,26 @@ class ApiRulesTest {
             holder + ".executor is static and holds " + Executor.class.getName(),
             holder + ".thread is static and holds " + Thread.class.getName(),
             holder + ".threads is static and holds " + Thread.class.getName());
+    }
+
+    @Test
+    void aStaticFieldIsFollowedIntoTheInstanceFieldsOfTheModuleClassesItNames() {
+        String registry = Registry.class.getName();
+        String keeper = Keeper.class.getName();
+        String keeperBase = KeeperBase.class.getName();
+        String inner = Inner.class.getName();
+        assertThat(ApiRules.staticHolderViolationsOf(Registry.class)).containsExactlyInAnyOrder(
+            registry + ".keeper is static and holds " + Logger.class.getName() + " in " + keeper + ".logger",
+            registry + ".keeper is static and holds " + Plugin.class.getName() + " in " + keeperBase + ".plugin",
+            registry + ".keeper is static and holds " + Executor.class.getName() + " in " + inner + ".executor",
+            registry + ".keeper is static and holds " + Thread.class.getName() + " in " + inner + ".workers",
+            registry + ".byName is static and holds " + Executor.class.getName() + " in " + inner + ".executor",
+            registry + ".byName is static and holds " + Thread.class.getName() + " in " + inner + ".workers");
+    }
+
+    @Test
+    void aStaticFieldOfAModuleClassThatHoldsNoneOfTheFourPasses() {
+        assertThat(ApiRules.staticHolderViolationsOf(Harmless.class)).isEmpty();
     }
 
     @Test
@@ -195,6 +222,19 @@ class ApiRulesTest {
             assertThat(violations).hasSize(2);
             assertThat(violations.get(0)).startsWith(UNREADABLE).contains("missing/library/Gone");
             assertThat(violations.get(1)).isEqualTo(BASE + ".info names " + TestInfo.class.getName());
+        }
+    }
+
+    @Test
+    void theSignatureRuleCoversTheModuleInterfacesAnExportedClassInherits(@TempDir Path temp) throws Exception {
+        Path classes = temp.resolve("build/classes/java/main");
+        interfaceSample(classes);
+
+        try (URLClassLoader loader = loaderOf(classes)) {
+            assertThat(ApiRules.signatureViolations(Class.forName(SHOWN, false, loader))).containsExactlyInAnyOrder(
+                HIDDEN + ".info() names " + TestInfo.class.getName(),
+                DEEPER + " supertype names " + TestReporter.class.getName(),
+                OF_BASE + ".reporter() names " + TestReporter.class.getName());
         }
     }
 
@@ -317,6 +357,50 @@ class ApiRulesTest {
     }
 
     /**
+     * Writes a module whose only violations are in interfaces that are not public. {@code Deeper} extends an
+     * interface from outside the allowed packages. {@code Hidden} extends {@code Deeper} and has a default method
+     * and a static method, each returning a type from outside them. {@code OfBase} has an abstract method returning
+     * one and is implemented by the package-private class {@code Base}. {@code Shown} is public, extends
+     * {@code Base} and implements {@code Hidden}. {@code ShownChild} is public and extends {@code Shown}.
+     * {@code ShownApi} is a public interface that extends {@code Hidden}. {@code Unshown} is package-private and
+     * implements {@code Hidden}.
+     */
+    private static void interfaceSample(Path root) throws IOException {
+        int hiddenInterface = ClassFile.ACC_INTERFACE | ClassFile.ACC_ABSTRACT;
+        writeClass(root, DEEPER, type -> type
+            .withFlags(hiddenInterface)
+            .withInterfaceSymbols(ClassDesc.of(TestReporter.class.getName())));
+        writeClass(root, HIDDEN, type -> type
+            .withFlags(hiddenInterface)
+            .withInterfaceSymbols(ClassDesc.of(DEEPER))
+            .withMethodBody("info", MethodTypeDesc.of(ClassDesc.of(TestInfo.class.getName())), ClassFile.ACC_PUBLIC,
+                code -> code.aconst_null().areturn())
+            .withMethodBody("helper", MethodTypeDesc.of(ClassDesc.of(SoftAssertions.class.getName())),
+                ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC, code -> code.aconst_null().areturn()));
+        writeClass(root, OF_BASE, type -> type
+            .withFlags(hiddenInterface)
+            .withMethod("reporter", MethodTypeDesc.of(ClassDesc.of(TestReporter.class.getName())),
+                ClassFile.ACC_PUBLIC | ClassFile.ACC_ABSTRACT, method -> {
+                }));
+        writeClass(root, BASE, type -> type
+            .withFlags(ClassFile.ACC_ABSTRACT)
+            .withInterfaceSymbols(ClassDesc.of(OF_BASE)));
+        writeClass(root, SHOWN, type -> type
+            .withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_ABSTRACT)
+            .withSuperclass(ClassDesc.of(BASE))
+            .withInterfaceSymbols(ClassDesc.of(HIDDEN)));
+        writeClass(root, SHOWN_CHILD, type -> type
+            .withFlags(ClassFile.ACC_PUBLIC | ClassFile.ACC_ABSTRACT)
+            .withSuperclass(ClassDesc.of(SHOWN)));
+        writeClass(root, SHOWN_API, type -> type
+            .withFlags(ClassFile.ACC_PUBLIC | hiddenInterface)
+            .withInterfaceSymbols(ClassDesc.of(HIDDEN)));
+        writeClass(root, UNSHOWN, type -> type
+            .withFlags(ClassFile.ACC_ABSTRACT)
+            .withInterfaceSymbols(ClassDesc.of(HIDDEN)));
+    }
+
+    /**
      * Writes {@code com.comficonf.api.Thing}, {@code com.comficonf.internal.Other}, and three public classes, one in
      * {@code so.alaz.taffy.comficonf}, one in a subpackage of it and one in {@code so.alaz.taffy.other}, each with a
      * public method {@code thing()} returning {@code Thing} and a public method {@code other()} returning
@@ -385,5 +469,40 @@ class ApiRulesTest {
         static Map<String, Thread[]> threads;
         static String name;
         Logger perInstance;
+    }
+
+    static class Registry {
+
+        static Keeper keeper;
+        static Map<String, Inner[]> byName;
+        Logger perInstance;
+    }
+
+    static class KeeperBase {
+
+        JavaPlugin plugin;
+    }
+
+    static class Keeper extends KeeperBase {
+
+        static String name;
+        Logger logger;
+        Inner inner;
+        Keeper self;
+    }
+
+    static class Inner {
+
+        ExecutorService executor;
+        List<Thread> workers;
+        Inner next;
+    }
+
+    static class Harmless {
+
+        static Harmless instance;
+        static Map<String, Harmless[]> byName;
+        String name;
+        Harmless parent;
     }
 }
