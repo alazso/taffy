@@ -6,9 +6,12 @@ import net.kyori.adventure.chat.SignedMessage;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import org.bukkit.Material;
+import org.bukkit.Server;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
@@ -23,6 +26,8 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.view.AnvilView;
+import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.RegisteredListener;
 import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -599,6 +604,145 @@ final class PromptsTest {
         assertThat(prompts.pending(alex.id).request()).isSameAs(next);
         line("4");
         assertThat(second).containsExactly("4");
+    }
+
+    // Chat prompts of the same plugin over other menus.
+    private Prompts promptsOverOtherMenus() {
+        return new Prompts(harness.another(), PromptMode.CHAT, bedrock::contains, timer, null, link,
+            PromptsTest::ownScreen, harness.clock, prompts.asks());
+    }
+
+    // A question whose answers are added to answers and refused, and whose end is added to ended.
+    private static PromptRequest refusing(List<String> answers, List<PromptEnd> ended) {
+        return new PromptRequest(Component.text("Amount?"), "1", new Route(Sample.KIND.id(), 2, null), text -> {
+            answers.add(text);
+            return new Answer.Retry(NOT_A_NUMBER);
+        }, ended::add);
+    }
+
+    // Posts one chat line as the server does to the listeners of two prompts of one plugin: each event reaches the
+    // listener of the prompts built first, then the listener of other.
+    @SuppressWarnings("deprecation")
+    private AsyncChatEvent lineToBoth(String text, Prompts other) {
+        AsyncPlayerChatEvent legacy = new AsyncPlayerChatEvent(true, alex.player, text, new HashSet<>());
+        chat.onLegacyChat(legacy);
+        other.promptListener().onLegacyChat(legacy);
+        Component message = Component.text(text);
+        AsyncChatEvent modern = new AsyncChatEvent(true, alex.player, new HashSet<>(), ChatRenderer.defaultRenderer(),
+            message, message, mock(SignedMessage.class));
+        modern.setCancelled(legacy.isCancelled());
+        chat.onChat(modern);
+        other.promptListener().onChat(modern);
+        return modern;
+    }
+
+    @Test
+    void anAskOfOtherPromptsOfThePluginReplacesThePendingAskAndAChatLineAnswersOnlyTheNewerAsk() {
+        start(PromptMode.CHAT);
+        Prompts other = promptsOverOtherMenus();
+        List<String> answers = new ArrayList<>();
+        List<PromptEnd> ended = new ArrayList<>();
+        ask();
+
+        other.ask(alex.player, refusing(answers, ended));
+
+        assertThat(ends).containsExactly(PromptEnd.REPLACED);
+        assertThat(prompts.pending(alex.id)).isNull();
+        assertThat(other.pending(alex.id)).isNotNull();
+        link.actions.getFirst().run();
+        timer.fire(Prompts.TIMEOUT.minusSeconds(1));
+        assertThat(other.pending(alex.id)).isNotNull();
+        assertThat(lineToBoth("7", other).isCancelled()).isTrue();
+        assertThat(judged).isEmpty();
+        assertThat(answers).containsExactly("7");
+        assertThat(ended).isEmpty();
+        assertThat(alex.said()).doesNotContain(STOPPED);
+    }
+
+    @Test
+    void anAskReplacesTheAskOfOtherPromptsOfThePluginThatWaitsForItsLaterAnswer() {
+        start(PromptMode.CHAT);
+        Prompts other = promptsOverOtherMenus();
+        List<PromptEnd> ended = new ArrayList<>();
+        CompletableFuture<Answer> later = new CompletableFuture<>();
+        other.ask(alex.player, new PromptRequest(Component.text("Amount?"), "1",
+            new Route(Sample.KIND.id(), 2, null), text -> new Answer.Later(later), ended::add));
+        lineToBoth("7", other);
+
+        ask();
+
+        assertThat(ended).containsExactly(PromptEnd.REPLACED);
+        later.complete(accept(9));
+        assertThat(ended).containsExactly(PromptEnd.REPLACED);
+        assertThat(prompts.pending(alex.id)).isNotNull();
+        assertThat(alex.session()).isNull();
+        lineToBoth("5", other);
+        assertThat(judged).containsExactly("5");
+        assertThat(state()).isEqualTo(5);
+    }
+
+    @Test
+    void aLineOneListenerTookIsLeftToNoAskByTheListenerOfOtherPromptsOfThePlugin() {
+        start(PromptMode.CHAT);
+        Prompts other = promptsOverOtherMenus();
+        List<String> answers = new ArrayList<>();
+        List<PromptEnd> ended = new ArrayList<>();
+        PromptRequest next = refusing(answers, ended);
+        ask(text -> {
+            other.ask(alex.player, next);
+            return new Answer.Retry(NOT_A_NUMBER);
+        });
+
+        AsyncChatEvent first = lineToBoth("7", other);
+
+        assertThat(first.isCancelled()).isTrue();
+        assertThat(answers).isEmpty();
+        assertThat(ends).containsExactly(PromptEnd.REPLACED);
+        assertThat(other.pending(alex.id).request()).isSameAs(next);
+        lineToBoth("4", other);
+        assertThat(answers).containsExactly("4");
+        assertThat(lineToBoth("5", other).isCancelled()).isTrue();
+        assertThat(answers).containsExactly("4", "5");
+    }
+
+    @Test
+    void theMenusShutdownAndAMenuTheyOpenLeaveTheAskOfOtherPromptsOfThePlugin() {
+        start(PromptMode.CHAT);
+        Prompts other = promptsOverOtherMenus();
+        List<String> answers = new ArrayList<>();
+        List<PromptEnd> ended = new ArrayList<>();
+        other.ask(alex.player, refusing(answers, ended));
+
+        harness.open(alex, Sample.KIND.id());
+        prompts.quit(UUID.randomUUID());
+        harness.menus.shutdown();
+
+        assertThat(ended).isEmpty();
+        assertThat(other.pending(alex.id)).isNotNull();
+        assertThat(lineToBoth("7", other).isCancelled()).isTrue();
+        assertThat(answers).containsExactly("7");
+    }
+
+    @Test
+    void promptsUseTheAsksOfAPromptListenerTheServerHoldsForTheirPluginAndNewAsksWithoutOne() {
+        start(PromptMode.CHAT);
+        Plugin other = MenuHarness.plugin(mock(Server.class), harness.log.logger);
+        HandlerList handlers = AsyncChatEvent.getHandlerList();
+        handlers.register(new RegisteredListener(harness.listener, (listener, event) -> { }, EventPriority.LOWEST,
+            harness.plugin, false));
+        try {
+            assertThat(Asks.of(harness.plugin)).isNotSameAs(prompts.asks());
+            handlers.register(new RegisteredListener(chat, (listener, event) -> { }, EventPriority.LOWEST,
+                harness.plugin, false));
+
+            assertThat(Asks.of(harness.plugin)).isSameAs(prompts.asks());
+            assertThat(Asks.of(other)).isNotSameAs(prompts.asks());
+            assertThat(new Prompts(harness.another(), PromptMode.CHAT, bedrock::contains, timer, null, link,
+                PromptsTest::ownScreen, harness.clock).asks()).isSameAs(prompts.asks());
+        } finally {
+            HandlerList.unregisterAll(harness.plugin);
+        }
+        assertThat(Asks.of(harness.plugin)).isNotSameAs(prompts.asks());
     }
 
     @Test

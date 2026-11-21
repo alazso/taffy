@@ -479,6 +479,10 @@ public final class Menus {
         return prompts;
     }
 
+    Plugin plugin() {
+        return parts.plugin();
+    }
+
     /**
      * Registers a menu under its kind's id.
      *

@@ -51,6 +51,15 @@ All notable changes to Taffy are documented here. This project follows
   letters each. A host name of that shape, such as `mc.gg`, is therefore sent outside a URI and the words above,
   where it was hidden. Any other dotted name whose last label is on the rule's list is still hidden, a file name
   such as `messages.de` included.
+- The `Prompts` of one plugin in `taffy-gui` share the ask of a player. A plugin with two `Menus` can build a
+  `Prompts` over each; before, `Prompts.ask` ended only a pending ask of the same `Prompts`, so a player could
+  hold one ask in each, and one chat line was taken by both listeners and answered both asks. Now `Prompts.ask`
+  and `Prompts.askLater` also end the ask another `Prompts` of the plugin holds for the player, pending or
+  waiting for its `Answer.Later`, whose `PromptRequest.abandoned()` gets `PromptEnd.REPLACED`, and a chat line
+  answers one ask, judged by the `Prompts` that asked it. A refused answer and an `Answer.Later` no longer keep
+  an ask waiting once another `Prompts` of the plugin asked the player. Opening a menu still ends only an ask
+  of the `Prompts` built over its `Menus`, and `Menus.shutdown()` only the asks of that `Prompts`. The plugin is
+  `Menus.Parts.plugin()`.
 
 ## [0.4.1] - 2026-11-21
 

@@ -37,6 +37,10 @@ import java.util.UUID;
  * whichever event comes first, and once: a line the legacy handler took is left to no ask by the modern handler, even
  * when the same ask waits again after a refusal or the answer started another ask in between.
  *
+ * <p>The listeners of every {@link Prompts} of one plugin receive each chat event. The first of them takes the
+ * player's ask, whichever prompts asked it, and the prompts that asked judge the line; the others find the line
+ * taken and leave it to no ask.
+ *
  * <p>Every click and drag on a prompt anvil is cancelled first and again last. A click on its result slot submits the
  * name field. The result shows a PAPER named after the name field, marked with the menus' preview key. A close clears
  * the anvil, so vanilla returns nothing to the player, and ends a pending ask.
@@ -53,6 +57,11 @@ final class PaperPromptListener implements Listener {
         this.anvil = prompts.anvil();
     }
 
+    /** The asks of the prompts this listener was built for. */
+    Asks asks() {
+        return prompts.asks();
+    }
+
     /**
      * Takes a chat line that answers a pending chat prompt.
      *
@@ -61,12 +70,12 @@ final class PaperPromptListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
     public void onChat(AsyncChatEvent event) {
         UUID player = event.getPlayer().getUniqueId();
-        if (prompts.takenByLegacy(player)) {
+        if (prompts.lineTaken(player, event, false)) {
             event.setCancelled(true);
             empty(event.viewers());
             return;
         }
-        Pending taken = prompts.takeChat(player);
+        Pending taken = prompts.takeChat(player, event, false);
         if (taken == null) {
             return;
         }
@@ -84,7 +93,12 @@ final class PaperPromptListener implements Listener {
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
     public void onLegacyChat(AsyncPlayerChatEvent event) {
         UUID player = event.getPlayer().getUniqueId();
-        Pending taken = prompts.takeLegacyChat(player);
+        if (prompts.lineTaken(player, event, true)) {
+            event.setCancelled(true);
+            empty(event.getRecipients());
+            return;
+        }
+        Pending taken = prompts.takeChat(player, event, true);
         if (taken == null) {
             return;
         }

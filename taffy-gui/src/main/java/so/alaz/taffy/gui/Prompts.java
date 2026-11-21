@@ -18,12 +18,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -69,9 +67,13 @@ import java.util.logging.Level;
  * logger and the {@link ErrorReports} of the menus they are built over. Building the prompts makes them the prompts
  * of those menus, so opening a menu ends a pending ask; a second {@code Prompts} over the same menus, or prompts over
  * menus that were shut down, are refused. Building the prompts also registers their listener, which reads the chat
- * answers and guards the prompt anvil, as a listener of the menus' plugin, so the plugin registers nothing. An ask
- * ends only a pending ask of the same {@code Prompts}, and each {@code Prompts} takes the chat line of a player it
- * waits for, so a plugin with more than one {@code Menus} builds its {@code Prompts} over one of them.
+ * answers and guards the prompt anvil, as a listener of the menus' plugin, so the plugin registers nothing.
+ *
+ * <p>A plugin with more than one {@code Menus} may build a {@code Prompts} over each. The prompts of one
+ * {@link Menus.Parts#plugin()} share the ask of a player: an ask ends the ask another of them still holds for the
+ * player, pending or waiting for its {@link Answer.Later}, as {@link PromptEnd#REPLACED}, and one chat line answers
+ * one ask, judged by the prompts that asked it. Opening a menu ends only an ask of the prompts built over its menus,
+ * and {@link Menus#shutdown()} ends only the asks of the prompts built over those menus.
  *
  * <p>At disable, {@link Menus#shutdown()} ends every ask, in the order the {@code so.alaz.taffy.platform} package
  * states.
@@ -112,9 +114,9 @@ public final class Prompts {
     private final CancelLink cancelLink;
     private final Predicate<Player> ownScreen;
     private final LongSupplier nanos;
-    private final Map<UUID, Pending> pending = new ConcurrentHashMap<>();
-    private final Map<UUID, Pending> judging = new ConcurrentHashMap<>();
-    private final Set<UUID> legacyLines = ConcurrentHashMap.newKeySet();
+    private final Asks asks;
+    private final Map<UUID, Pending> pending;
+    private final Map<UUID, Pending> judging;
     private final AtomicLong tokens = new AtomicLong();
     private volatile boolean stopping;
     private final PaperPromptListener listener;
@@ -141,6 +143,13 @@ public final class Prompts {
 
     Prompts(Menus menus, PromptMode mode, BedrockPlayers bedrock, BiConsumer<Runnable, Duration> timer,
             @Nullable AnvilInput anvil, CancelLink cancelLink, Predicate<Player> ownScreen, LongSupplier nanos) {
+        this(menus, mode, bedrock, timer, anvil, cancelLink, ownScreen, nanos,
+            Asks.of(Objects.requireNonNull(menus, "menus").plugin()));
+    }
+
+    Prompts(Menus menus, PromptMode mode, BedrockPlayers bedrock, BiConsumer<Runnable, Duration> timer,
+            @Nullable AnvilInput anvil, CancelLink cancelLink, Predicate<Player> ownScreen, LongSupplier nanos,
+            Asks asks) {
         Objects.requireNonNull(menus, "menus");
         Objects.requireNonNull(mode, "mode");
         Objects.requireNonNull(bedrock, "bedrock");
@@ -161,6 +170,9 @@ public final class Prompts {
         this.cancelLink = cancelLink;
         this.ownScreen = ownScreen;
         this.nanos = nanos;
+        this.asks = asks;
+        this.pending = asks.pending();
+        this.judging = asks.judging();
         this.listener = new PaperPromptListener(this);
         menus.register(listener);
         menus.prompts(new Link());
@@ -194,9 +206,14 @@ public final class Prompts {
         return listener;
     }
 
+    Asks asks() {
+        return asks;
+    }
+
     /**
-     * Asks the player in place of the menu they have open. Replaces any ask still pending for the player without a
-     * message, which tells that ask's {@link PromptRequest#abandoned()} {@link PromptEnd#REPLACED}. Nothing happens
+     * Asks the player in place of the menu they have open. Replaces any ask still pending for the player, of these
+     * prompts or of other prompts of the same plugin, without a message, which tells that ask's
+     * {@link PromptRequest#abandoned()} {@link PromptEnd#REPLACED}. Nothing happens
      * once {@link Menus#shutdown()} ran, or when the server refused to open the anvil. Call on
      * the player's entity thread, outside an inventory event; a {@link ClickHandler} calls
      * {@link #askLater(Player, PromptRequest)} instead.
@@ -221,9 +238,9 @@ public final class Prompts {
         boolean onBedrock = bedrock.bedrock(id);
         PromptMode shown = !onBedrock && mode == PromptMode.ANVIL && anvil != null ? PromptMode.ANVIL
             : PromptMode.CHAT;
-        end(id);
+        replace(id);
         Pending entry = new Pending(tokens.incrementAndGet(), shown, request, nanos.getAsLong() + TIMEOUT.toNanos(),
-            player);
+            player, this);
         pending.put(id, entry);
         if (!show(player, entry)) {
             pending.remove(id, entry);
@@ -258,8 +275,10 @@ public final class Prompts {
         menus.tasks().accept(player, () -> ask(player, request));
     }
 
+    /** The ask of these prompts that waits for the player's answer. */
     @Nullable Pending pending(UUID player) {
-        return pending.get(player);
+        Pending entry = pending.get(player);
+        return entry != null && entry.owner() == this ? entry : null;
     }
 
     @Nullable AnvilInput anvil() {
@@ -311,27 +330,54 @@ public final class Prompts {
     }
 
     /**
-     * Ends the player's ask, pending or waiting for its {@link Answer.Later}, as {@link PromptEnd#REPLACED}, without a
-     * message, and opens nothing. Call on the player's entity thread.
+     * Ends the ask these prompts hold for the player, pending or waiting for its {@link Answer.Later}, as
+     * {@link PromptEnd#REPLACED}, without a message, and opens nothing. Call on the player's entity thread.
      */
     void end(UUID player) {
-        Pending entry = pending.remove(player);
-        if (entry != null) {
-            closeSurface(entry.player(), entry);
-            abandon(entry, PromptEnd.REPLACED);
-        }
-        Pending judged = judging.remove(player);
-        if (judged != null) {
-            closeSurface(judged.player(), judged);
-            abandon(judged, PromptEnd.REPLACED);
+        for (Map<UUID, Pending> asked : List.of(pending, judging)) {
+            Pending entry = takeOwn(asked, player);
+            if (entry != null) {
+                closeSurface(entry.player(), entry);
+                abandon(entry, PromptEnd.REPLACED);
+            }
         }
     }
 
-    /** Ends the ask of a player who quit as {@link PromptEnd#LEFT}, and forgets what the anvil keeps for them. */
+    /**
+     * Ends the ask any prompts of the plugin hold for the player, as {@link #end(UUID)} ends an ask of these prompts.
+     * Call on the player's entity thread.
+     */
+    private void replace(UUID player) {
+        for (Map<UUID, Pending> asked : List.of(pending, judging)) {
+            Pending entry = asked.remove(player);
+            if (entry != null) {
+                entry.owner().closeSurface(entry.player(), entry);
+                entry.owner().abandon(entry, PromptEnd.REPLACED);
+            }
+        }
+    }
+
+    /** Takes the player's ask out of {@code asked} when these prompts asked it. */
+    private @Nullable Pending takeOwn(Map<UUID, Pending> asked, UUID player) {
+        Pending[] taken = new Pending[1];
+        asked.computeIfPresent(player, (id, entry) -> {
+            if (entry.owner() != this) {
+                return entry;
+            }
+            taken[0] = entry;
+            return null;
+        });
+        return taken[0];
+    }
+
+    /**
+     * Ends the ask these prompts hold for a player who quit as {@link PromptEnd#LEFT}, and forgets what the anvil
+     * keeps for them and the chat line taken from them.
+     */
     void quit(UUID player) {
-        Pending entry = pending.remove(player);
-        Pending judged = judging.remove(player);
-        legacyLines.remove(player);
+        Pending entry = takeOwn(pending, player);
+        Pending judged = takeOwn(judging, player);
+        asks.forgetLine(player);
         if (anvil != null) {
             anvil.forget(player);
         }
@@ -349,8 +395,9 @@ public final class Prompts {
     }
 
     /**
-     * Ends every ask without a message and opens nothing, then or later. An anvil still showing, including one whose
-     * answer is still being judged, is taken away from each online player the calling thread owns. The anvil of a
+     * Ends every ask of these prompts without a message and opens nothing, then or later. An anvil still showing,
+     * including one whose answer is still being judged, is taken away from each online player the calling thread
+     * owns. The anvil of a
      * player the calling thread does not own is emptied from the calling thread, forgotten and stays open, and once
      * the plugin is disabled no listener cancels its clicks. Each ended ask of an online player the calling thread
      * owns ends as {@link PromptEnd#CANCELLED}.
@@ -358,9 +405,9 @@ public final class Prompts {
     void shutdown() {
         stopping = true;
         List<Pending> ended = new ArrayList<>();
-        for (Map<UUID, Pending> asks : List.of(pending, judging)) {
-            for (UUID id : List.copyOf(asks.keySet())) {
-                Pending entry = asks.remove(id);
+        for (Map<UUID, Pending> asked : List.of(pending, judging)) {
+            for (UUID id : List.copyOf(asked.keySet())) {
+                Pending entry = takeOwn(asked, id);
                 if (entry != null) {
                     ended.add(entry);
                 }
@@ -380,8 +427,19 @@ public final class Prompts {
         }
     }
 
-    /** Takes the player's ask when it waits for a chat line. */
-    @Nullable Pending takeChat(UUID player) {
+    /**
+     * Tells whether the line a chat event carries was taken as an answer already, by the listener of any prompts of
+     * the plugin.
+     */
+    boolean lineTaken(UUID player, Object event, boolean legacy) {
+        return asks.taken(player, event, legacy);
+    }
+
+    /**
+     * Takes the player's ask, of any prompts of the plugin, when it waits for a chat line, and remembers the line
+     * {@code event} carries as taken.
+     */
+    @Nullable Pending takeChat(UUID player, Object event, boolean legacy) {
         Pending[] taken = new Pending[1];
         pending.computeIfPresent(player, (id, entry) -> {
             if (entry.mode() != PromptMode.CHAT) {
@@ -390,31 +448,17 @@ public final class Prompts {
             taken[0] = entry;
             return null;
         });
+        if (taken[0] != null) {
+            asks.took(player, event, legacy);
+        }
         return taken[0];
     }
 
-    /**
-     * Takes the player's ask for a line the legacy chat event carries, and remembers the line as taken until
-     * {@link #takenByLegacy(UUID)} asks for it or the player's next legacy line arrives.
-     */
-    @Nullable Pending takeLegacyChat(UUID player) {
-        legacyLines.remove(player);
-        Pending taken = takeChat(player);
-        if (taken != null) {
-            legacyLines.add(player);
-        }
-        return taken;
-    }
-
-    /** Tells, once, whether the legacy chat event took the line the player's modern chat event now carries. */
-    boolean takenByLegacy(UUID player) {
-        return legacyLines.remove(player);
-    }
-
-    /** Judges text for an ask the caller took, on the player's entity thread. */
+    /** Judges text for an ask the caller took, with the prompts that asked it, on the player's entity thread. */
     void answer(UUID player, Pending taken, String text) {
         String answer = clean(text);
-        hop(player, taken, live -> settle(live, taken, answer));
+        Prompts owner = taken.owner();
+        owner.hop(player, taken, live -> owner.settle(live, taken, answer));
     }
 
     /** The text without surrounding whitespace, cut to {@link #MAX_LENGTH} characters. */
@@ -430,7 +474,7 @@ public final class Prompts {
     private @Nullable Pending take(UUID player, long token) {
         Pending[] taken = new Pending[1];
         pending.computeIfPresent(player, (id, entry) -> {
-            if (entry.token() != token) {
+            if (entry.owner() != this || entry.token() != token) {
                 return entry;
             }
             taken[0] = entry;
@@ -439,14 +483,15 @@ public final class Prompts {
         return taken[0];
     }
 
-    /** Takes the ask with the token, whether it waits for an answer or for its {@link Answer.Later}. */
+    /** Takes the ask of these prompts with the token, whether it waits for an answer or its {@link Answer.Later}. */
     private @Nullable Pending takeWaiting(UUID player, long token) {
         Pending taken = take(player, token);
         if (taken != null) {
             return taken;
         }
         Pending judged = judging.get(player);
-        return judged != null && judged.token() == token && judging.remove(player, judged) ? judged : null;
+        return judged != null && judged.owner() == this && judged.token() == token && judging.remove(player, judged)
+            ? judged : null;
     }
 
     private boolean show(Player player, Pending entry) {
@@ -490,9 +535,9 @@ public final class Prompts {
     }
 
     /**
-     * Keeps the ask until {@code answer} completes, unless the plugin is stopping, a menu opened or a newer ask took
-     * its place, which ends the ask, then applies the result on the player's entity thread while the ask is still the
-     * one kept.
+     * Keeps the ask until {@code answer} completes, unless the prompts are stopping, a menu opened or a newer ask of
+     * any prompts of the plugin took its place, which ends the ask, then applies the result on the player's entity
+     * thread while the ask is still the one kept.
      */
     private void await(UUID id, Pending taken, String text, CompletableFuture<Answer> answer) {
         if (stopping || menus.session(id).isPresent() || pending.containsKey(id)
