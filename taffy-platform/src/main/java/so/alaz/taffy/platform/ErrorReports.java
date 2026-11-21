@@ -53,6 +53,16 @@ public final class ErrorReports {
     private volatile @Nullable Target target;
 
     /**
+     * An instance that holds its first reports until {@link #install} or {@link #clear} runs.
+     *
+     * @throws IllegalStateException when {@link Relocation#check()} fails, because the plugin's jar holds Taffy
+     *     in its original package
+     */
+    public ErrorReports() {
+        Relocation.check();
+    }
+
+    /**
      * Routes later reports, handled and unhandled alike, to {@code handle}, or nowhere when it is {@code null}.
      * {@code handle} receives the source and the error of each report, on the thread that reported it. When
      * neither an install nor {@link #clear} has run before, the held reports are delivered to a non-null

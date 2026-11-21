@@ -92,8 +92,12 @@ public final class Text {
     /**
      * Detects PlaceholderAPI and MiniPlaceholders once, by class presence. A lookup that fails is
      * reported to {@code logger} and leaves that integration off.
+     *
+     * @throws IllegalStateException when {@link Relocation#check()} fails, because the plugin's jar holds Taffy
+     *     in its original package
      */
     public Text(Logger logger) {
+        Relocation.check();
         this.failures = new ThrowLog(logger);
         this.placeholderApi = Classes.present("me.clip.placeholderapi.PlaceholderAPI", getClass(), logger)
             ? (viewer, input) -> me.clip.placeholderapi.PlaceholderAPI.setPlaceholders(viewer, input)

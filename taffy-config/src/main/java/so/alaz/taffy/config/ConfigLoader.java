@@ -3,6 +3,7 @@ package so.alaz.taffy.config;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.jetbrains.annotations.Nullable;
+import so.alaz.taffy.platform.Relocation;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -113,6 +114,8 @@ public final class ConfigLoader {
      * @param shipped opens the {@code config.yml} inside the plugin jar, or gives {@code null} when the jar has
      *     none. It is asked on every load and the stream is closed by the loader.
      * @param logger receives one line for a written default file, an upgrade, a failed save and a newer file
+     * @throws IllegalStateException when {@link Relocation#check()} fails, because the plugin's jar holds Taffy
+     *     in its original package
      */
     public ConfigLoader(Path dataFolder, Supplier<@Nullable InputStream> shipped, Logger logger) {
         this(dataFolder, shipped, logger, Map.of());
@@ -133,6 +136,8 @@ public final class ConfigLoader {
      *     section. The map and its sets are copied.
      * @throws IllegalArgumentException when a listed path is blank, or when one listed section lies inside
      *     another, as {@code kits.special} lies inside {@code kits}
+     * @throws IllegalStateException when {@link Relocation#check()} fails, because the plugin's jar holds Taffy
+     *     in its original package
      */
     public ConfigLoader(
         Path dataFolder,
@@ -148,6 +153,7 @@ public final class ConfigLoader {
         Logger logger,
         Map<String, Set<String>> ownerKeyed,
         int baseline) {
+        Relocation.check();
         this.file = file;
         this.shipped = shipped;
         this.logger = logger;

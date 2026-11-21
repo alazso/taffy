@@ -90,6 +90,7 @@ public final class Messages {
         boolean lenient,
         Map<String, List<String>> fallback
     ) {
+        Relocation.check();
         this.folder = folder;
         this.bundled = bundled;
         this.logger = logger;
@@ -102,6 +103,7 @@ public final class Messages {
     /**
      * Loads the messages with English as the default locale and per-player languages on.
      *
+     * @throws IllegalStateException as {@link #load(Path, Supplier, Logger, String, boolean)} does
      * @see #load(Path, Supplier, Logger, String, boolean)
      */
     public static Messages load(Path dataFolder, Supplier<@Nullable InputStream> bundled, Logger logger) {
@@ -124,7 +126,8 @@ public final class Messages {
      * @param defaultLocale the language used when the viewer's own does not apply, read as
      *                      {@link #normalizeLocale} describes: {@code null} or blank means en
      * @param perPlayer     whether a message is served in the language of the locale it is asked for
-     * @throws IllegalStateException when the bundled file is missing, is not valid UTF-8 or is not valid YAML
+     * @throws IllegalStateException when the bundled file is missing, is not valid UTF-8 or is not valid YAML, or
+     *     when {@link Relocation#check()} fails, because the plugin's jar holds Taffy in its original package
      */
     public static Messages load(
         Path dataFolder,
@@ -145,7 +148,8 @@ public final class Messages {
      * U+FFFD; the first is on line <n>. Save the file as UTF-8.} A file that is not valid YAML once it is read that
      * way is still skipped, and the bundled file is still read strictly.
      *
-     * @throws IllegalStateException when the bundled file is missing, is not valid UTF-8 or is not valid YAML
+     * @throws IllegalStateException when the bundled file is missing, is not valid UTF-8 or is not valid YAML, or
+     *     when {@link Relocation#check()} fails, because the plugin's jar holds Taffy in its original package
      */
     public static Messages loadLenient(
         Path dataFolder,

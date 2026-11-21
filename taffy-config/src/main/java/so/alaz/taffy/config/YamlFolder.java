@@ -2,6 +2,7 @@ package so.alaz.taffy.config;
 
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.jetbrains.annotations.Nullable;
+import so.alaz.taffy.platform.Relocation;
 
 import java.io.IOException;
 import java.nio.file.DirectoryIteratorException;
@@ -87,7 +88,12 @@ public final class YamlFolder {
     private final @Nullable BiConsumer<String, Throwable> failures;
     private final @Nullable Consumer<String> lenientWarnings;
 
-    /** A reader of the files directly inside {@code folder}. */
+    /**
+     * A reader of the files directly inside {@code folder}.
+     *
+     * @throws IllegalStateException when {@link Relocation#check()} fails, because the plugin's jar holds Taffy
+     *     in its original package
+     */
     public YamlFolder(Path folder) {
         this(folder, null, null);
     }
@@ -101,6 +107,8 @@ public final class YamlFolder {
      *     {@link NullPointerException} from a bug in the parser, so the plugin can log it with its stack
      *     trace. The file still gets its line in {@link Loaded#errors()} and the other files still load. An
      *     exception the consumer throws leaves {@link #load} or {@link #loadOne}.
+     * @throws IllegalStateException when {@link Relocation#check()} fails, because the plugin's jar holds Taffy
+     *     in its original package
      */
     public YamlFolder(Path folder, BiConsumer<String, Throwable> failures) {
         this(folder, Objects.requireNonNull(failures, "failures"), null);
@@ -110,6 +118,7 @@ public final class YamlFolder {
         Path folder,
         @Nullable BiConsumer<String, Throwable> failures,
         @Nullable Consumer<String> lenientWarnings) {
+        Relocation.check();
         this.folder = folder;
         this.failures = failures;
         this.lenientWarnings = lenientWarnings;
