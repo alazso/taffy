@@ -89,7 +89,7 @@ Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 a
   test, on any other class loader, or in a relocated jar such as the one `so.alaz.taffy.paper-plugin` builds. It
   inspects the class loader until it first passes and returns at once after that.
 
-### Changed
+### Fixed
 - `so.alaz.taffy.settings` checks the Gradle version before it applies anything and fails on a Gradle older than
   9.2.0, the oldest release the plugins build a plugin on, with `so.alaz.taffy.settings needs Gradle 9.2.0 or
   newer, and this build runs on Gradle 9.1.0. Set a newer version in distributionUrl in
@@ -97,8 +97,6 @@ Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 a
   applied `so.alaz.taffy.paper-plugin` failed before with a `NoSuchMethodError` for
   `AdhocComponentWithVariants.addVariantsFromConfiguration` from the Shadow plugin, and a build that applied only
   the other plugins ran. The README and the docs state the minimum, and a TestKit case builds a plugin on 9.2.0.
-
-### Fixed
 - The `shadowJar` of `so.alaz.taffy.paper-plugin` merges the `META-INF/services` files of the plugin and of every
   shaded jar into one file per service, with each provider name relocated like its class. Before, the first file
   of a name won under `DuplicatesStrategy.EXCLUDE`, so a jar that shaded two JDBC drivers or two other
