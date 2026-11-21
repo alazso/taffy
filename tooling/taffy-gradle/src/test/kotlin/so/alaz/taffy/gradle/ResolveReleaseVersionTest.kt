@@ -3,13 +3,17 @@ package so.alaz.taffy.gradle
 import java.io.File
 import java.util.concurrent.TimeUnit
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.opentest4j.TestAbortedException
 
 /**
  * Taffy's own .github/scripts/resolve-release-version.sh, run by bash in a git checkout of its own, and the
- * lines of .github/workflows/release.yml that call it and create the GitHub Release.
+ * lines of .github/workflows/release.yml that call it and create the GitHub Release. On Windows a test that runs
+ * the script is skipped when no bash.exe of Git for Windows is found.
  */
 class ResolveReleaseVersionTest {
 
@@ -186,6 +190,14 @@ class ResolveReleaseVersionTest {
         }
     }
 
+    @Test
+    fun onWindowsAPathWithoutGitForWindowsSkipsTheTest() {
+        assumeTrue(windows)
+
+        assertThatThrownBy { bash(directory.path) }.isInstanceOf(TestAbortedException::class.java)
+        assertThat(File(bash(System.getenv("PATH")))).isFile()
+    }
+
     private fun version(version: String) {
         checkout.resolve("gradle.properties").writeText("group=so.alaz.demo\nversion=$version\n")
     }
@@ -203,7 +215,7 @@ class ResolveReleaseVersionTest {
         if (ref != null) {
             variables["GITHUB_REF_NAME"] = ref
         }
-        val result = execute(listOf(bash(), script.invariantSeparatorsPath), variables)
+        val result = execute(listOf(bash(System.getenv("PATH")), script.invariantSeparatorsPath), variables)
         return Result(result.first, result.third, if (output.isFile) output.readText() else "")
     }
 
@@ -236,15 +248,20 @@ class ResolveReleaseVersionTest {
         return Triple(process.exitValue(), standardOutput.readText(), standardError.readText())
     }
 
-    private fun bash(): String {
-        if (!System.getProperty("os.name").startsWith("Windows")) {
+    private val windows = System.getProperty("os.name").startsWith("Windows")
+
+    /** The bash to run, found through the directories of [path] on Windows, where a test without one is skipped. */
+    private fun bash(path: String): String {
+        if (!windows) {
             return "bash"
         }
         // A bash.exe on a Windows PATH can be the WSL launcher, which does not read Windows paths. Git for Windows
         // keeps its bash.exe in the bin directory beside the cmd and mingw64 directories that hold git.exe.
-        return System.getenv("PATH").split(File.pathSeparator)
+        val found = path.split(File.pathSeparator)
             .filter { File(it, "git.exe").isFile }
             .flatMap { listOf(File(it, "../bin/bash.exe"), File(it, "../../bin/bash.exe")) }
-            .firstOrNull { it.isFile }?.canonicalPath ?: "bash"
+            .firstOrNull { it.isFile }
+        assumeTrue(found != null, "no bash.exe of Git for Windows beside a git.exe on the PATH")
+        return found!!.canonicalPath
     }
 }

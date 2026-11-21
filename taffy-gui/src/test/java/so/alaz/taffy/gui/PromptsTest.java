@@ -714,13 +714,37 @@ final class PromptsTest {
         other.ask(alex.player, refusing(answers, ended));
 
         harness.open(alex, Sample.KIND.id());
-        prompts.quit(UUID.randomUUID());
+        prompts.quit(alex.id);
         harness.menus.shutdown();
 
         assertThat(ended).isEmpty();
         assertThat(other.pending(alex.id)).isNotNull();
         assertThat(lineToBoth("7", other).isCancelled()).isTrue();
         assertThat(answers).containsExactly("7");
+    }
+
+    @Test
+    void theCancelLinkTheTimerAndAQuitLeaveTheAskOfOtherPromptsThatWaitsForItsLaterAnswer() {
+        start(PromptMode.CHAT);
+        Prompts other = promptsOverOtherMenus();
+        List<PromptEnd> ended = new ArrayList<>();
+        CompletableFuture<Answer> later = new CompletableFuture<>();
+        ask();
+        long token = token();
+        other.ask(alex.player, new PromptRequest(Component.text("Amount?"), "1",
+            new Route(Sample.KIND.id(), 2, null), text -> new Answer.Later(later), ended::add));
+        assertThat(other.pending(alex.id).token()).isEqualTo(token);
+        lineToBoth("7", other);
+        assertThat(other.pending(alex.id)).isNull();
+
+        link.actions.getFirst().run();
+        timer.waiting.getFirst().task().run();
+        prompts.quit(alex.id);
+
+        later.complete(new Answer.Retry(NOT_A_NUMBER));
+        assertThat(ended).isEmpty();
+        assertThat(other.pending(alex.id)).isNotNull();
+        assertThat(alex.said()).doesNotContain(STOPPED);
     }
 
     @Test

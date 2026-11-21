@@ -9,17 +9,31 @@ All notable changes to Taffy are documented here. This project follows
 - The error reports of `taffy-metrics` hide more of a message. Each of these was sent before:
   - a Windows path with a space in a folder name: `Cannot read C:\Users\John Smith\Desktop\x.yml` was sent as
     `Cannot read [path hidden] Smith\Desktop\x.yml` and is now `Cannot read [path hidden]`. Each of the first 64
-    folder names holds up to three single spaces, and a space in the last name still ends the path;
+    folder names holds up to three single spaces. A space still ends the path when no `\` or `/` follows within
+    three more words, and when the word before it ends in a file extension (a dot, a letter and up to four more
+    letters or digits), so `C:\srv\x.yml is not valid/readable` is sent as `[path hidden] is not valid/readable`,
+    as before. A path without such an extension takes the words up to that slash with it:
+    `Opened C:\srv\data and logs/x now` was sent as `Opened [path hidden] and logs/x now` and is now
+    `Opened [path hidden] now`;
   - a Windows path written with forward slashes, such as `C:/Users/John/Desktop/x.yml`, and a `file:` URL, such
     as `file:///C:/Users/John/x.yml`, `file:///home/john/x.yml` or `jar:file:/C:/srv/Shop.jar!/plugin.yml`, which
-    were sent whole and are now `[path hidden]` (`jar:[path hidden]` for the last);
+    were sent whole and are now `[path hidden]` (`jar:[path hidden]` for the last). A `file:` that ends a longer
+    word, as in `profile:/home/x`, starts no URL;
+  - a jdbc URL of an absolute path with a space, the shape `Storage` builds for SQLite:
+    `jdbc:sqlite:C:\Users\John Smith\server\plugins\Shop\data.db` was sent as
+    `jdbc:[redacted] Smith\server\plugins\Shop\data.db` and `jdbc:sqlite:/home/john/My Server/data.db` as
+    `jdbc:[redacted] Server/data.db`, and both are now `jdbc:[redacted]`. A jdbc URL whose third part is an
+    absolute path, also behind `file:`, is read with the folder names of the Windows path rule;
   - an email address whose last label is longer than 4 characters: `john.smith@example.online` was sent as
     `[email hidden]ne` and is now `[email hidden]`;
   - a URI password that holds a `/`: `redis://default:hun/ter2@cache:6379` was sent whole and is now
     `redis://[credentials hidden]@[host hidden]:6379`. The password runs to the last `@` before the next
-    whitespace when that `@` is at most 128 characters in, and otherwise to the last `@` before the next `/`, as
-    before. What follows the `:` is read as a port and a path when it starts with 1 to 5 digits and a `/`, as in
-    `http://localhost:8080/users/a@b`, so a password of that shape is still sent;
+    whitespace when that `@` is at most 128 characters in and no `://` comes before it, and otherwise to the
+    last `@` before the next `/`, as before. What follows the `:` is read as a port when it is 1 to 5 digits that
+    end the text or that whitespace or one of `/ ? # [ ] { } "` follows, as in `http://localhost:8080/users/a@b`,
+    so a password of that shape is still sent. A port of a URI without credentials is therefore no longer read
+    as a password up to a later `@`: `{"url":"redis://cache:6379","note":"x@y"}` was sent as
+    `{"url":"redis://[credentials hidden]@y"}` and is now `{"url":"redis://[host hidden]:6379","note":"x@y"}`;
   - the database name in PostgreSQL's `no pg_hba.conf entry for host "10.0.0.5", user "mc_prod", database
     "survival_prod"`, now `database [database hidden]`. The rule hides the double-quoted name of 1 to 64
     characters after the word `database`;
@@ -29,20 +43,36 @@ All notable changes to Taffy are documented here. This project follows
   - a host name whose ending is not on the list of the host name rule, when it follows
     `UnknownHostException:`, `connect to`, `connecting to`, `connection to`, `connected to`, `route to`, `host`
     or `host is known` and one space, also behind an opening quote or parenthesis:
-    `Connection to db.myserver.host refused` is now `Connection to [host hidden] refused`. Such a name anywhere
-    else in a message is still sent.
+    `Connection to db.myserver.host refused` is now `Connection to [host hidden] refused`. The same holds after
+    a key that ends in `host`, `hostname` or `address` and a `=` or `:`, after `refused:`, `timed out:` or
+    `timed out after 30000 ms:`, and for the host the MariaDB driver repeats after its `address=(...)`:
+    `Socket fail to connect to address=(host=db.myserver.host)(port=3306)(type=primary). db.myserver.host` is
+    now `Socket fail to connect to address=(host=[host hidden])(port=3306)(type=primary). [host hidden]`,
+    `No route to host: db.myserver.host` is `No route to host: [host hidden]` and
+    `Connection refused: db.myserver.host/10.0.0.5:6379` is `Connection refused: [host hidden]/...`. Such a name
+    anywhere else in a message is still sent. Any dotted name after these words is hidden, which changes an
+    ordinary message such as `No value for host shop.balance`, sent before as written and now as
+    `No value for host [host hidden]`. Four shapes stay as written: a name that starts with digits, a dot and a
+    digit (`running on host 1.21.4`), a name whose last label starts with an upper case letter
+    (`Lost connection to so.alaz.shop.Sync`), a name a `(` follows (`The host player.getName() returned null`),
+    and a name whose last label is `yml`, `yaml`, `json`, `properties`, `toml`, `conf`, `cfg`, `xml`, `txt`,
+    `log`, `csv`, `sql`, `db`, `sqlite`, `dat`, `jar`, `class`, `java`, `lock`, `tmp` or `bak`
+    (`Could not find host config.yml`).
 
   Reports whose messages differ only in a value these rules hide now merge into one kind. The SQL rule is
   unchanged, so `Please select a kit from the list` is still sent as `Please [sql hidden]`.
 - The secret key rule of the `taffy-metrics` error reports leaves the plain word `token`, `tokens`, `secret` or
-  `secrets` before a `:` as written inside a sentence: `Invalid token: expected ;` was sent as
-  `Invalid token: [redacted]` and `Not enough tokens: 5 required` as `Not enough tokens: [redacted] required`,
-  and both are now sent as written. Such a word is still a key, with its value sent as `[redacted]`, before a
-  `=`, when it is quoted as in `"token": "abc"`, and when it starts its line, also after the `-` of a list item,
-  as in a YAML line `token: abc`. A longer name around it is a key before either sign, such as `bot-token:`,
-  `discord.token:`, `tokenValue:` and `secretKey=`, and so is every `password`, `passwd`, `pwd`, `api_key`,
-  `access_key` and `private_key` key, as before. A token or secret that a message writes as
-  `the token: abc` in the middle of a line is therefore sent, where it was redacted.
+  `secrets` before a `:` as written when a letter, a digit or a `_` and whitespace come before it, the shape of
+  a sentence: `Invalid token: expected ;` was sent as `Invalid token: [redacted]` and
+  `Not enough tokens: 5 required` as `Not enough tokens: [redacted] required`, and both are now sent as written.
+  Such a word is still a key, with its value sent as `[redacted]`, before a `=`, when it is quoted as in
+  `"token": "abc"`, when it starts its line, also after the `-` of a list item, as in a YAML line `token: abc`,
+  and after any other character and up to 8 spaces or tabs, as in `Loaded {token: abc}`,
+  `Bad settings (token: abc)`, `login failed, token: abc`, `discord: token: abc` and `[INFO]: token: abc`. A
+  longer name around it is a key before either sign, such as `bot-token:`, `discord.token:`, `tokenValue:` and
+  `secretKey=`, and so is every `password`, `passwd`, `pwd`, `api_key`, `access_key` and `private_key` key, as
+  before. Only a token or secret that a message writes after another word and a space, as in `the token: abc`
+  or `Bot token: abc`, is therefore sent, where it was redacted.
 - The host name rule of the `taffy-metrics` error reports leaves package names and two-letter pairs as written:
   `Caused by java.io` was sent as `Caused by [host hidden]`, `Unknown language pt.br in config` as
   `Unknown language [host hidden] in config` and `Could not load class com.example.Me` as
@@ -50,7 +80,7 @@ All notable changes to Taffy are documented here. This project follows
   first label is `java`, `javax`, `jdk`, `sun`, `kotlin`, `com`, `org` or `net`, or when it has two labels of two
   letters each. A host name of that shape, such as `mc.gg`, is therefore sent outside a URI and the words above,
   where it was hidden. Any other dotted name whose last label is on the rule's list is still hidden, a file name
-  such as `messages.de` included.
+  such as `messages.de`, a class name such as `me.john.Me` and a configuration key such as `shop.me` included.
 - The `Prompts` of one plugin in `taffy-gui` share the ask of a player. A plugin with two `Menus` can build a
   `Prompts` over each; before, `Prompts.ask` ended only a pending ask of the same `Prompts`, so a player could
   hold one ask in each, and one chat line was taken by both listeners and answered both asks. Now `Prompts.ask`

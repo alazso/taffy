@@ -57,6 +57,34 @@ class AnonymizersTest {
     }
 
     @Test
+    void aJdbcUrlOfAnAbsolutePathWithASpaceIsRedactedWhole() {
+        assertThat(apply(JDBC, "Failed to get driver instance for jdbcUrl=jdbc:sqlite:C:\\Users\\John Smith\\server"
+            + "\\plugins\\Shop\\data.db")).isEqualTo("Failed to get driver instance for jdbcUrl=jdbc:[redacted]");
+        assertThat(apply(JDBC, "cannot open jdbc:sqlite:C:/Users/John Smith/server/plugins/Shop/data.db now"))
+            .isEqualTo("cannot open jdbc:[redacted] now");
+        assertThat(apply(JDBC, "cannot open jdbc:sqlite:/home/john/My Server/plugins/Shop/data.db now"))
+            .isEqualTo("cannot open jdbc:[redacted] now");
+        assertThat(apply(JDBC, "cannot open jdbc:h2:file:C:\\Mc Server\\plugins\\Shop\\data;MODE=MySQL now"))
+            .isEqualTo("cannot open jdbc:[redacted] now");
+        assertThat(apply(JDBC, "cannot open jdbc:sqlite:/srv/data.db is locked by a/b"))
+            .isEqualTo("cannot open jdbc:[redacted] is locked by a/b");
+        assertThat(apply(JDBC, "cannot open jdbc:mysql://db.local:3306/game of the a/b test"))
+            .isEqualTo("cannot open jdbc:[redacted] of the a/b test");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Failed to get driver instance for jdbcUrl=jdbc:sqlite:C:\\Users\\John Smith\\server\\plugins\\Shop\\data.db",
+        "Failed to get driver instance for jdbcUrl=jdbc:sqlite:C:/Users/John Smith/server/plugins/Shop/data.db",
+        "Failed to get driver instance for jdbcUrl=jdbc:sqlite:/home/john/John Smith/plugins/Shop/data.db",
+    })
+    void aTrackerWithTheRulesSendsNoPartOfAJdbcPathWithASpace(String message) throws ReflectiveOperationException {
+        assertThat(Anonymizers.anonymize(message))
+            .isEqualTo("Failed to get driver instance for jdbcUrl=jdbc:[redacted]");
+        assertThat(sent(message)).doesNotContain("John", "Smith", "plugins", "Shop", "data.db");
+    }
+
+    @Test
     void theCredentialsOfAUriOfAnySchemeAreHidden() {
         assertThat(apply(URI_CREDENTIALS, "redis://default:hunter2@cache:6379 refused"))
             .isEqualTo("redis://[credentials hidden]@cache:6379 refused");
@@ -102,6 +130,36 @@ class AnonymizersTest {
             .isEqualTo("redis://user:123/ab@cache:6379 refused");
         assertThat(apply(URI_CREDENTIALS, "redis://user:123456/ab@cache:6379 refused"))
             .isEqualTo("redis://[credentials hidden]@cache:6379 refused");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "servers=[redis://cache-1:6379,redis://cache-2:6379],listener=so.alaz.shop.Sync@1b2c3d4",
+        "{\"url\":\"redis://cache:6379\",\"owner\":\"Notch\",\"note\":\"x@y\"}",
+        "{url=redis://cache:6379},handler=Sync@1b2c3d4",
+        "GET http://localhost:8080?next=a@b and http://localhost:8080#a@b",
+        "redis://cache:6379",
+    })
+    void aPortBeforeALaterAtSignIsNoPassword(String line) {
+        assertThat(apply(URI_CREDENTIALS, line)).isEqualTo(line);
+    }
+
+    @Test
+    void aPasswordOfDigitsAndASignAUriAllowsIsHidden() {
+        assertThat(apply(URI_CREDENTIALS, "redis://user:123,abc@cache:6379 refused"))
+            .isEqualTo("redis://[credentials hidden]@cache:6379 refused");
+        assertThat(apply(URI_CREDENTIALS, "redis://user:12345@cache:6379 refused"))
+            .isEqualTo("redis://[credentials hidden]@cache:6379 refused");
+    }
+
+    @Test
+    void theRulesTogetherKeepTwoUrisOfOneUnspacedList() {
+        assertThat(Anonymizers.anonymize(
+            "servers=[redis://cache-1:6379,redis://cache-2:6379],listener=so.alaz.shop.Sync@1b2c3d4"))
+            .isEqualTo("servers=[redis://[host hidden]:6379,redis://[host hidden]:6379],"
+                + "listener=so.alaz.shop.Sync@1b2c3d4");
+        assertThat(Anonymizers.anonymize("{\"url\":\"redis://cache:6379\",\"note\":\"x@y\"}"))
+            .isEqualTo("{\"url\":\"redis://[host hidden]:6379\",\"note\":\"x@y\"}");
     }
 
     @Test
@@ -293,6 +351,34 @@ class AnonymizersTest {
         assertThat(apply(SECRET_KEY, "bots:\n\t- token: abc123")).isEqualTo("bots:\n\t- token: [redacted]");
     }
 
+    @Test
+    void thePlainWordSecretOrTokenBeforeAColonIsAKeyAfterAnyCharacterButAWordAndASpace() {
+        assertThat(apply(SECRET_KEY, "[Shop] Discord login failed, token: MTIzNDU2.abc.def"))
+            .isEqualTo("[Shop] Discord login failed, token: [redacted]");
+        assertThat(apply(SECRET_KEY, "Loaded {token: MTIzNDU2, guild: 1}"))
+            .isEqualTo("Loaded {token: [redacted], guild: 1}");
+        assertThat(apply(SECRET_KEY, "Bad settings (token: MTIzNDU2)")).isEqualTo("Bad settings (token: [redacted])");
+        assertThat(apply(SECRET_KEY, "discord: token: MTIzNDU2")).isEqualTo("discord: token: [redacted]");
+        assertThat(apply(SECRET_KEY, "config.yml: token: abc123")).isEqualTo("config.yml: token: [redacted]");
+        assertThat(apply(SECRET_KEY, "[12:00:01 INFO]: token: abc123")).isEqualTo("[12:00:01 INFO]: token: [redacted]");
+        assertThat(apply(SECRET_KEY, "[Shop] secrets: abc123 and [Shop]\t  Secret: abc123"))
+            .isEqualTo("[Shop] secrets: [redacted] and [Shop]\t  Secret: [redacted]");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "[Shop] Discord login failed, token: MTIzNDU2.abc.def",
+        "Loaded {token: MTIzNDU2, guild: 1}",
+        "Bad settings (token: MTIzNDU2)",
+        "discord: token: MTIzNDU2",
+        "config.yml: token: MTIzNDU2",
+        "[12:00:01 INFO]: token: MTIzNDU2",
+    })
+    void aTrackerWithTheRulesSendsNoTokenThatFollowsAKeyInsideALine(String message)
+        throws ReflectiveOperationException {
+        assertThat(sent(message)).doesNotContain("MTIzNDU2");
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
         "Invalid token: expected ;",
@@ -410,6 +496,27 @@ class AnonymizersTest {
     }
 
     @Test
+    void theWordsAfterAFileNameOfAWindowsPathAreLeftAsWritten() {
+        assertThat(apply(WINDOWS_PATH, "C:\\srv\\x.yml is not valid/readable"))
+            .isEqualTo("[path hidden] is not valid/readable");
+        assertThat(apply(WINDOWS_PATH, "Loaded C:\\srv\\x.yml in 3 ms/tick budget"))
+            .isEqualTo("Loaded [path hidden] in 3 ms/tick budget");
+        assertThat(apply(WINDOWS_PATH, "Saved C:\\srv\\x.yml (see docs/config for the format)"))
+            .isEqualTo("Saved [path hidden] (see docs/config for the format)");
+        assertThat(apply(WINDOWS_PATH, "Cannot move C:\\srv\\a.yml to backup/b.yml now"))
+            .isEqualTo("Cannot move [path hidden] to backup/b.yml now");
+        assertThat(apply(WINDOWS_PATH, "Cannot move C:/My Server/Shop.jar to old/b now"))
+            .isEqualTo("Cannot move [path hidden] to old/b now");
+    }
+
+    @Test
+    void aFolderNameWithADotOrAVersionKeepsItsSpaces() {
+        assertThat(apply(WINDOWS_PATH, "Cannot read C:\\Users\\J. Smith\\Paper 1.21.4 Server\\x.yml now"))
+            .isEqualTo("Cannot read [path hidden] now");
+        assertThat(apply(WINDOWS_PATH, "Opened C:\\srv\\data and logs/x now")).isEqualTo("Opened [path hidden] now");
+    }
+
+    @Test
     void aWindowsPathWrittenWithForwardSlashesIsHidden() {
         assertThat(apply(WINDOWS_PATH, "Cannot read C:/Users/John/Desktop/x.yml"))
             .isEqualTo("Cannot read [path hidden]");
@@ -426,6 +533,16 @@ class AnonymizersTest {
         assertThat(apply(WINDOWS_PATH, "x://a/b and key minecraft:/stone and 1:/2"))
             .isEqualTo("x://a/b and key minecraft:/stone and 1:/2");
         assertThat(apply(WINDOWS_PATH, "Could not delete file: missing")).isEqualTo("Could not delete file: missing");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Read profile:/home/x done",
+        "Wrote logfile:/var/log/mc/latest.log",
+    })
+    void theWordFileAtTheEndOfALongerWordStartsNoFileUrl(String line) {
+        assertThat(apply(WINDOWS_PATH, line)).isEqualTo(line);
+        assertThat(Anonymizers.anonymize(line)).isEqualTo(line);
     }
 
     @Test
@@ -619,6 +736,86 @@ class AnonymizersTest {
             .isEqualTo("Connection to [host hidden] refused");
     }
 
+    @Test
+    void theHostOfAMariaDbDriverMessageIsHiddenWithAnyEnding() {
+        assertThat(Anonymizers.anonymize("Socket fail to connect to address=(host=db.myserver.host)(port=3306)"
+            + "(type=primary). db.myserver.host")).isEqualTo("Socket fail to connect to address=(host=[host hidden])"
+            + "(port=3306)(type=primary). [host hidden]");
+        assertThat(Anonymizers.anonymize("Socket fail to connect to address=(host=db.myserver.host)(port=3306)"
+            + "(type=primary). db.myserver.host: Name or service not known"))
+            .isEqualTo("Socket fail to connect to address=(host=[host hidden])(port=3306)(type=primary). "
+                + "[host hidden]: Name or service not known");
+        assertThat(Anonymizers.anonymize("Could not connect to address=(host=db.myserver.host)(port=3306)"
+            + "(type=primary) : Connection refused")).isEqualTo("Could not connect to address=(host=[host hidden])"
+            + "(port=3306)(type=primary) : Connection refused");
+        assertThat(apply(NAMED_HOST, "Socket fail to connect to address=(host=db.example.net). db.example.net"))
+            .isEqualTo("Socket fail to connect to address=(host=[host hidden]). [host hidden]");
+        assertThat(apply(NAMED_HOST, "Loaded (type=primary). kits.starter is next"))
+            .isEqualTo("Loaded (type=primary). kits.starter is next");
+    }
+
+    @Test
+    void aDottedNameAfterAHostOrAddressKeyIsHiddenWithAnyEnding() {
+        assertThat(apply(NAMED_HOST, "No route to host: play.myserver.network"))
+            .isEqualTo("No route to host: [host hidden]");
+        assertThat(apply(NAMED_HOST, "servers=[{address=db.myserver.host:27017, type=UNKNOWN"))
+            .isEqualTo("servers=[{address=[host hidden]:27017, type=UNKNOWN");
+        assertThat(apply(NAMED_HOST, "host: \"db.example.zone\" and hostname=db.example.zone"))
+            .isEqualTo("host: \"[host hidden]\" and hostname=[host hidden]");
+        assertThat(apply(NAMED_HOST, "{\"host\":\"db.example.zone\",\"db_host\" = 'db.example.zone'}"))
+            .isEqualTo("{\"host\":\"[host hidden]\",\"db_host\" = '[host hidden]'}");
+        assertThat(apply(NAMED_HOST, "serverAddress: db.example.zone")).isEqualTo("serverAddress: [host hidden]");
+    }
+
+    @Test
+    void aDottedNameAfterRefusedOrTimedOutIsHiddenWithAnyEnding() {
+        assertThat(apply(NAMED_HOST, "Connection refused: db.myserver.host/10.0.0.5:6379"))
+            .isEqualTo("Connection refused: [host hidden]/10.0.0.5:6379");
+        assertThat(apply(NAMED_HOST, "connection timed out: db.myserver.host/10.0.0.5:6379"))
+            .isEqualTo("connection timed out: [host hidden]/10.0.0.5:6379");
+        assertThat(apply(NAMED_HOST, "connection timed out after 30000 ms: db.myserver.host/10.0.0.5:6379"))
+            .isEqualTo("connection timed out after 30000 ms: [host hidden]/10.0.0.5:6379");
+        assertThat(apply(NAMED_HOST, "Connection refused: connect")).isEqualTo("Connection refused: connect");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Socket fail to connect to address=(host=db.myserver.host)(port=3306)(type=primary). db.myserver.host",
+        "Could not connect to address=(host=db.myserver.host)(port=3306)(type=primary) : Connection refused",
+        "No route to host: db.myserver.host",
+        "Connection refused: db.myserver.host/10.0.0.5:6379",
+        "servers=[{address=db.myserver.host:27017, type=UNKNOWN",
+        "host: \"db.myserver.host\"",
+        "hostname=db.myserver.host",
+    })
+    void aTrackerWithTheRulesSendsNoHostThatFollowsAKey(String message) throws ReflectiveOperationException {
+        assertThat(sent(message)).doesNotContain("myserver");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "connected to 1.21.8-R0.1-SNAPSHOT",
+        "running on host 1.21.4 build",
+        "Lost connection to so.alaz.shop.Sync channel",
+        "No handler for host me.john.shop.Shop",
+        "Failed to connect to MySQL.Check your config",
+        "The host player.getName() returned null",
+        "Cannot connect to plugin.yml loader",
+        "Could not find host config.yml in the folder",
+        "Invalid address: data.db is locked",
+    })
+    void aVersionAClassNameACallOrAFileNameAfterAConnectionWordIsLeftAsWritten(String line) {
+        assertThat(apply(NAMED_HOST, line)).isEqualTo(line);
+        assertThat(Anonymizers.anonymize(line)).isEqualTo(line);
+    }
+
+    @Test
+    void anotherDottedNameAfterAConnectionWordIsHidden() {
+        assertThat(apply(NAMED_HOST, "No value for host shop.balance")).isEqualTo("No value for host [host hidden]");
+        assertThat(apply(NAMED_HOST, "connect to 3.myserver.host or host db.myserver.Sync.host"))
+            .isEqualTo("connect to [host hidden] or host [host hidden]");
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
         "connect to cache:6379 or localhost failed",
@@ -704,7 +901,9 @@ class AnonymizersTest {
         "\t", "\\", "C:\\", ".com", "a.com.", "jdbc:", "Bearer ", "?token=", "\"", "-", ".",
         "x://a:b/", "x://a:/", "x://a@", "a.b@c.", "@a.b", "token", "token ", "'token' ", "a-token", "tokens:",
         "C:/", "C:\\a ", "C:/a a/", "a a ", "file:/", "aa.bb ", "java.", "database \"", "host ", "host a.",
-        "connect to a.", "://", "localhost",
+        "connect to a.", "://", "localhost", "host=", "host=a.", "address=(host=a.b)", "(a). ", "refused: a.",
+        "jdbc:a:/", "jdbc:a:C:\\a ", "jdbc:a:/a a/", "a.yml ", "C:/a.b a/", ", token", ",        ", "x://a:1,",
+        "x://a:1/", "://a:", "a.B", "a.yml", "a.b(",
     })
     void aLongAdversarialTextIsAnonymizedQuickly(String unit) {
         String text = unit.repeat(100_000 / unit.length() + 1);
@@ -719,6 +918,10 @@ class AnonymizersTest {
             Anonymizers.anonymize("C:\\" + text);
             Anonymizers.anonymize("C:/" + text);
             Anonymizers.anonymize("host " + text);
+            Anonymizers.anonymize("host=" + text);
+            Anonymizers.anonymize("jdbc:a:/" + text);
+            Anonymizers.anonymize("address=(host=a.b)" + text);
+            Anonymizers.anonymize("," + text + "token:");
             Anonymizers.anonymize("token" + text + ":");
         });
     }

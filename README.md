@@ -141,7 +141,7 @@ and runs javadoc with `-Xdoclint:all,-missing` and `--no-fonts`, so a broken com
   root project's `LICENSE` as `META-INF/LICENSE` and each shaded jar's license files under
   `META-INF/licenses/<jar name>/`,
 - relocation of `org.bstats`, `dev.faststats` and `so.alaz.taffy` to `<group>.libs.*`, and a build failure when
-  the group is blank,
+  the group is blank, or is `so.alaz.taffy` or a package inside it,
 - `RuntimeLibraries.COORDINATES` in the `<group>` package when `paperPlugin.runtimeLibraries` is not empty, and a
   build failure when `paper-plugin.yml` then has no `loader` key,
 - `compileAgainstPaperFloor`, which compiles the main Java sources against paper-api 26.2.build.135-stable, the

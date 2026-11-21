@@ -73,7 +73,8 @@ import java.util.logging.Level;
  * {@link Menus.Parts#plugin()} share the ask of a player: an ask ends the ask another of them still holds for the
  * player, pending or waiting for its {@link Answer.Later}, as {@link PromptEnd#REPLACED}, and one chat line answers
  * one ask, judged by the prompts that asked it. Opening a menu ends only an ask of the prompts built over its menus,
- * and {@link Menus#shutdown()} ends only the asks of the prompts built over those menus.
+ * and {@link Menus#shutdown()} ends only the asks of the prompts built over those menus. The prompts of one plugin
+ * are built on one thread, as in {@code onEnable}: prompts built on two threads at the same moment may not share.
  *
  * <p>At disable, {@link Menus#shutdown()} ends every ask, in the order the {@code so.alaz.taffy.platform} package
  * states.
@@ -213,10 +214,9 @@ public final class Prompts {
     /**
      * Asks the player in place of the menu they have open. Replaces any ask still pending for the player, of these
      * prompts or of other prompts of the same plugin, without a message, which tells that ask's
-     * {@link PromptRequest#abandoned()} {@link PromptEnd#REPLACED}. Nothing happens
-     * once {@link Menus#shutdown()} ran, or when the server refused to open the anvil. Call on
-     * the player's entity thread, outside an inventory event; a {@link ClickHandler} calls
-     * {@link #askLater(Player, PromptRequest)} instead.
+     * {@link PromptRequest#abandoned()} {@link PromptEnd#REPLACED}. Nothing happens once {@link Menus#shutdown()}
+     * ran, or when the server refused to open the anvil. Call on the player's entity thread, outside an inventory
+     * event; a {@link ClickHandler} calls {@link #askLater(Player, PromptRequest)} instead.
      *
      * @param player the player to ask
      * @param request the question
@@ -397,10 +397,9 @@ public final class Prompts {
     /**
      * Ends every ask of these prompts without a message and opens nothing, then or later. An anvil still showing,
      * including one whose answer is still being judged, is taken away from each online player the calling thread
-     * owns. The anvil of a
-     * player the calling thread does not own is emptied from the calling thread, forgotten and stays open, and once
-     * the plugin is disabled no listener cancels its clicks. Each ended ask of an online player the calling thread
-     * owns ends as {@link PromptEnd#CANCELLED}.
+     * owns. The anvil of a player the calling thread does not own is emptied from the calling thread, forgotten and
+     * stays open, and once the plugin is disabled no listener cancels its clicks. Each ended ask of an online player
+     * the calling thread owns ends as {@link PromptEnd#CANCELLED}.
      */
     void shutdown() {
         stopping = true;

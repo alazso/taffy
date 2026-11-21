@@ -209,6 +209,17 @@ class ConventionPluginsTest {
     }
 
     @Test
+    fun theToolingBuildTakesOnlyTheToolchainsGroupFromThePluginPortal() {
+        val script = File(System.getProperty("taffy.sourceRoot")).resolve("tooling/settings.gradle.kts").readText()
+        val filtered = Regex(
+            "exclusiveContent\\s*\\{\\s*forRepository\\s*\\{\\s*gradlePluginPortal\\(\\)\\s*}\\s*filter\\s*\\{([^}]*)}\\s*}",
+        ).findAll(script).map { it.groupValues[1].trim() }.toList()
+
+        assertThat(Regex("gradlePluginPortal\\(\\)").findAll(script).count()).isEqualTo(1)
+        assertThat(filtered).containsExactly("includeGroup(\"org.gradle.toolchains\")")
+    }
+
+    @Test
     fun aPluginShadesTaffyMetricsWithTheSdksRelocatedAndOffItsCompileClasspath() {
         val sourceRoot = File(System.getProperty("taffy.sourceRoot"))
         val library = projectDirectory.resolve("taffy")

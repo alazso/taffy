@@ -106,6 +106,9 @@ tasks.withType<Test>().configureEach {
         .withPropertyName("resolveReleaseVersion").withPathSensitivity(PathSensitivity.NONE)
     inputs.file(taffyRoot.file(".github/workflows/release.yml"))
         .withPropertyName("releaseWorkflow").withPathSensitivity(PathSensitivity.NONE)
+    // A test reads the repositories of this build.
+    inputs.file(rootProject.layout.projectDirectory.file("settings.gradle.kts"))
+        .withPropertyName("toolingSettings").withPathSensitivity(PathSensitivity.NONE)
     val taffyRootPath = taffyRoot.asFile.canonicalPath
     jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Dtaffy.sourceRoot=$taffyRootPath") })
 }
