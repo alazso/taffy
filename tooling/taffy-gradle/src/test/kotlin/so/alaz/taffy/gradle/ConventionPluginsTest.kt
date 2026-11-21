@@ -2,7 +2,10 @@ package so.alaz.taffy.gradle
 
 import java.io.File
 import java.net.URI
+import java.net.URLClassLoader
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 import org.assertj.core.api.Assertions.assertThat
 import org.gradle.testkit.runner.BuildResult
 import org.gradle.testkit.runner.GradleRunner
@@ -120,7 +123,10 @@ class ConventionPluginsTest {
             """,
             junit,
         )
-        write("src/main/resources/paper-plugin.yml", "name: Demo\nversion: \"\${version}\"\n")
+        write(
+            "src/main/resources/paper-plugin.yml",
+            "name: Demo\nversion: \"\${version}\"\nloader: so.alaz.demo.DemoLoader\n",
+        )
         write(
             "src/main/java/so/alaz/demo/Demo.java",
             """
@@ -137,6 +143,11 @@ class ConventionPluginsTest {
         write("src/main/java/dev/faststats/Fake.java", "package dev.faststats;\n\npublic interface Fake {\n}\n")
         write("src/main/java/so/alaz/taffy/Fake.java", "package so.alaz.taffy;\n\npublic interface Fake {\n}\n")
         write("src/main/java/com/comficonf/api/Probe.java", "package com.comficonf.api;\n\npublic interface Probe {\n}\n")
+        for (neighbour in listOf("so.alaz.taffyshop", "org.bstatsx", "dev.faststatsx")) {
+            val constant = "    String NAME = \"$neighbour.Named\";"
+            val source = "package $neighbour;\n\npublic interface Neighbour {\n$constant\n}\n"
+            write("src/main/java/${neighbour.replace('.', '/')}/Neighbour.java", source)
+        }
 
         val first = run("build", "--configuration-cache")
 
@@ -161,6 +172,20 @@ class ConventionPluginsTest {
                 .contains("com/comficonf/api/Probe.class")
                 .noneMatch { it.startsWith("so/alaz/demo/libs/") && it.contains("comficonf") }
                 .noneMatch { it.startsWith("so/alaz/demo/libs/com/") }
+            assertThat(names).`as`("a package that only starts with a relocated name stays where it is")
+                .contains(
+                    "so/alaz/taffyshop/Neighbour.class",
+                    "org/bstatsx/Neighbour.class",
+                    "dev/faststatsx/Neighbour.class",
+                )
+                .noneMatch { it.endsWith("/Neighbour.class") && it.startsWith("so/alaz/demo/libs/") }
+            for (neighbour in listOf("so.alaz.taffyshop", "org.bstatsx", "dev.faststatsx")) {
+                val bytes = jar.getInputStream(jar.getEntry(neighbour.replace('.', '/') + "/Neighbour.class"))
+                    .readBytes()
+                assertThat(String(bytes, Charsets.ISO_8859_1)).`as`(neighbour)
+                    .contains("$neighbour.Named", neighbour.replace('.', '/') + "/Neighbour")
+                    .doesNotContain("so/alaz/demo/libs", "so.alaz.demo.libs")
+            }
             val descriptor = jar.getInputStream(jar.getEntry("paper-plugin.yml")).reader().readText()
             assertThat(descriptor).contains("version: \"1.2.3\"")
         }
@@ -450,6 +475,116 @@ class ConventionPluginsTest {
                 .contains("com.comficonf.api.ComfiConfApi")
                 .doesNotContain("com/comficonf/api")
             assertThat(bytesOf("so/alaz/demo/Settings.class")).contains("com/comficonf/api/ConfigProvider")
+        }
+    }
+
+    @Test
+    fun theRelocationCheckOfAShadedTaffyPassesAndStillKnowsTheOriginalPackage() {
+        val sourceRoot = File(System.getProperty("taffy.sourceRoot"))
+        val library = projectDirectory.resolve("taffy")
+        val modules = projectDirectory.resolve("modules")
+        val modulesUri = modules.toURI().toString()
+        File(URI(testRepository)).copyRecursively(modules)
+        val module = "taffy-platform"
+        sourceRoot.resolve("$module/build.gradle.kts").copyTo(library.resolve("$module/build.gradle.kts"))
+        sourceRoot.resolve("$module/src/main").copyRecursively(library.resolve("$module/src/main"))
+        sourceRoot.resolve("gradle/libs.versions.toml").copyTo(library.resolve("gradle/libs.versions.toml"))
+        write("taffy/LICENSE", "MIT License\n")
+        write("taffy/gradle.properties", "group=so.alaz.taffy\nversion=${TaffyBuild.VERSION}\n")
+        write(
+            "taffy/settings.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.repositories")
+            }
+            rootProject.name = "taffy"
+            include(":taffy-platform", ":taffy-test")
+            """,
+        )
+        write("taffy/taffy-test/build.gradle.kts", "plugins {\n    id(\"java-library\")\n}")
+        write(
+            "taffy/build.gradle.kts",
+            """
+            subprojects {
+                plugins.withId("maven-publish") {
+                    configure<PublishingExtension> {
+                        repositories {
+                            maven("$modulesUri") { name = "modules" }
+                        }
+                    }
+                }
+            }
+            """,
+        )
+        runner(library, ":taffy-platform:publishLibraryPublicationToModulesRepository").build()
+        project()
+        write(
+            "settings.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.settings")
+            }
+            rootProject.name = "demo"
+            dependencyResolutionManagement {
+                repositories.withType<MavenArtifactRepository>().matching { it.name.startsWith("alazso") }
+                    .configureEach { url = uri("$modulesUri") }
+            }
+            """,
+        )
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            dependencies {
+                implementation(alaz.taffy.platform)
+            }
+            """,
+        )
+        write(
+            "src/main/java/so/alaz/demo/Reports.java",
+            """
+            package so.alaz.demo;
+
+            import so.alaz.taffy.platform.ErrorReports;
+
+            final class Reports {
+                static ErrorReports create() {
+                    return new ErrorReports();
+                }
+            }
+            """,
+        )
+
+        run("shadowJar")
+
+        val shaded = projectDirectory.resolve("build/libs/demo-1.2.3.jar")
+        ZipFile(shaded).use { jar ->
+            val names = jar.entries().asSequence().map { it.name }.toList()
+            assertThat(names).contains(
+                "so/alaz/demo/Reports.class",
+                "so/alaz/demo/libs/taffy/platform/ErrorReports.class",
+                "so/alaz/demo/libs/taffy/platform/Relocation.class",
+            )
+            assertThat(names).noneMatch { it.startsWith("so/alaz/taffy/") }
+        }
+        URLClassLoader(arrayOf(shaded.toURI().toURL()), ClassLoader.getPlatformClassLoader()).use { loader ->
+            val relocation = loader.loadClass("so.alaz.demo.libs.taffy.platform.Relocation")
+            val original = relocation.getDeclaredMethod("original", String::class.java).apply { isAccessible = true }
+            val message = relocation.getDeclaredMethod("message", String::class.java).apply { isAccessible = true }
+
+            assertThat(relocation.packageName).isEqualTo("so.alaz.demo.libs.taffy.platform")
+            assertThat(original.invoke(null, relocation.packageName)).isEqualTo(false)
+            assertThat(original.invoke(null, "so.alaz.taffy")).isEqualTo(true)
+            assertThat(original.invoke(null, "so.alaz.taffy.platform")).isEqualTo(true)
+            assertThat(message.invoke(null, "Demo")).isEqualTo(
+                "Demo ships Taffy in its original package so.alaz.taffy, so its Taffy classes mix with those of " +
+                    "every other plugin that does the same. Its build needs relocate(\"so.alaz.taffy\", " +
+                    "\"<group>.libs.taffy\") in the shadowJar task, or the so.alaz.taffy.paper-plugin Gradle " +
+                    "plugin, which relocates Taffy.",
+            )
+            relocation.getMethod("check").invoke(null)
         }
     }
 
@@ -929,6 +1064,73 @@ class ConventionPluginsTest {
     }
 
     @Test
+    fun settingsPluginFailsOnAGradleOlderThanTheMinimumWithAMessageNamingIt() {
+        project()
+        write("settings.gradle.kts", "plugins {\n    id(\"so.alaz.taffy.settings\")\n}\nrootProject.name = \"demo\"")
+
+        val result = runner("help").withGradleVersion("9.1.0").buildAndFail()
+
+        assertThat(result.output).contains(
+            "so.alaz.taffy.settings needs Gradle 9.2.0 or newer, and this build runs on Gradle 9.1.0. " +
+                "Set a newer version in distributionUrl in gradle/wrapper/gradle-wrapper.properties.",
+        )
+    }
+
+    @Test
+    fun aPaperPluginBuildsOnTheMinimumGradle() {
+        project()
+        write(
+            "settings.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.settings")
+            }
+            rootProject.name = "demo"
+            dependencyResolutionManagement {
+                repositories.withType<MavenArtifactRepository>().matching { it.name.startsWith("alazso") }
+                    .configureEach { url = uri("$testRepository") }
+            }
+            """,
+        )
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            dependencies {
+                implementation("org.bstats:bstats-base:3.2.1")
+                testImplementation(alaz.junit.jupiter)
+                testRuntimeOnly(alaz.junit.platform.launcher)
+            }
+            paperPlugin {
+                runtimeLibrary(alaz.hikari)
+            }
+            """,
+        )
+        write(
+            "src/main/resources/paper-plugin.yml",
+            "name: Demo\nversion: \"\${version}\"\nloader: so.alaz.demo.DemoLoader\n",
+        )
+        write("src/main/java/so/alaz/demo/Covered.java", covered)
+        write("src/test/java/so/alaz/demo/CoveredTest.java", coveredTest)
+
+        val result = runner("build").withGradleVersion(MinimumGradle.VERSION).build()
+
+        assertThat(result.task(":jacocoTestCoverageVerification")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            val names = jar.entries().asSequence().map { it.name }.toList()
+            assertThat(names).contains(
+                "so/alaz/demo/Covered.class",
+                "so/alaz/demo/RuntimeLibraries.class",
+                "so/alaz/demo/libs/bstats/MetricsBase.class",
+            )
+            val descriptor = jar.getInputStream(jar.getEntry("paper-plugin.yml")).reader().readText()
+            assertThat(descriptor).contains("version: \"1.2.3\"")
+        }
+    }
+
+    @Test
     fun runtimeLibraryTakesItsCoordinatesFromTheCatalog() {
         project()
         write(
@@ -971,6 +1173,579 @@ class ConventionPluginsTest {
             .containsPattern("\"com\\.mysql:mysql-connector-j:\\d+(\\.\\d+)+\"")
             .containsPattern("\"org\\.mariadb\\.jdbc:mariadb-java-client:\\d+(\\.\\d+)+\"")
             .containsPattern("\"org\\.postgresql:postgresql:\\d+(\\.\\d+)+\"")
+    }
+
+    @Test
+    fun shadowJarMergesTheServiceFilesOfTwoShadedProvidersAndKeepsTheFirstCopyOfAnyOtherPath() {
+        project()
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            dependencies {
+                implementation(files("libs/first.jar", "libs/second.jar"))
+            }
+            """,
+        )
+        val service = "META-INF/services/org.example.spi.Greeter"
+        jar("libs/first.jar", mapOf(service to "org.example.first.FirstGreeter\n", "shared.txt" to "first\n"))
+        jar(
+            "libs/second.jar",
+            mapOf(
+                service to "org.example.second.SecondGreeter\norg.bstats.BstatsGreeter\n",
+                "shared.txt" to "second\n",
+            ),
+        )
+        write("src/main/resources/$service", "so.alaz.demo.OwnGreeter")
+
+        run("shadowJar")
+
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            val names = jar.entries().asSequence().map { it.name }.toList()
+            assertThat(names.filter { it == service }).hasSize(1)
+            assertThat(jar.getInputStream(jar.getEntry(service)).reader().readLines()).containsExactlyInAnyOrder(
+                "so.alaz.demo.OwnGreeter",
+                "org.example.first.FirstGreeter",
+                "org.example.second.SecondGreeter",
+                "so.alaz.demo.libs.bstats.BstatsGreeter",
+            )
+            assertThat(names.filter { it == "shared.txt" }).hasSize(1)
+            assertThat(textOf(jar, "shared.txt")).isEqualTo("first\n")
+        }
+    }
+
+    @Test
+    fun shadowJarHasNoLicenseOfItsOwnWhenTheRootHasNoneAndKeepsADependencyLicenseUnderItsArtifact() {
+        write("gradle.properties", "group=so.alaz.demo\nversion=1.2.3\n")
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            dependencies {
+                implementation(files("libs/licensed-1.0.jar", "libs/other-2.0.jar"))
+            }
+            """,
+        )
+        jar(
+            "libs/licensed-1.0.jar",
+            mapOf(
+                "META-INF/LICENSE" to "Licensed dependency\n",
+                "META-INF/LICENSE.txt" to "Licensed dependency, as text\n",
+                "org/example/licensed/notes.txt" to "notes\n",
+            ),
+        )
+        jar("libs/other-2.0.jar", mapOf("META-INF/LICENSE" to "Other dependency\n"))
+        write("src/main/java/so/alaz/demo/Covered.java", covered)
+
+        val result = run("shadowJar")
+
+        assertThat(projectDirectory.resolve("LICENSE")).doesNotExist()
+        assertThat(result.task(":shadowJar")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            val names = jar.entries().asSequence().map { it.name }.toList()
+            assertThat(names).contains("so/alaz/demo/Covered.class", "org/example/licensed/notes.txt")
+            assertThat(names.filter { !it.endsWith("/") && it.contains("LICENSE") }).containsExactlyInAnyOrder(
+                "META-INF/licenses/licensed-1.0/LICENSE",
+                "META-INF/licenses/licensed-1.0/LICENSE.txt",
+                "META-INF/licenses/other-2.0/LICENSE",
+            )
+            assertThat(textOf(jar, "META-INF/licenses/licensed-1.0/LICENSE")).isEqualTo("Licensed dependency\n")
+            assertThat(textOf(jar, "META-INF/licenses/licensed-1.0/LICENSE.txt"))
+                .isEqualTo("Licensed dependency, as text\n")
+            assertThat(textOf(jar, "META-INF/licenses/other-2.0/LICENSE")).isEqualTo("Other dependency\n")
+        }
+    }
+
+    @Test
+    fun shadowJarShipsTheRootLicenseAndKeepsADependencyLicenseUnderItsArtifact() {
+        write("LICENSE", "Plugin license")
+        write("gradle.properties", "group=so.alaz.demo\nversion=1.2.3\n")
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            dependencies {
+                implementation(files("libs/licensed-1.0.jar"))
+            }
+            """,
+        )
+        jar("libs/licensed-1.0.jar", mapOf("META-INF/LICENSE" to "Licensed dependency\n"))
+        write("src/main/java/so/alaz/demo/Covered.java", covered)
+
+        run("shadowJar", "--configuration-cache")
+        projectDirectory.resolve("build").deleteRecursively()
+        val second = run("shadowJar", "--configuration-cache")
+
+        assertThat(second.output).contains("Reusing configuration cache.")
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            val names = jar.entries().asSequence().map { it.name }.toList()
+            assertThat(names.filter { !it.endsWith("/") && it.contains("LICENSE") }).containsExactlyInAnyOrder(
+                "META-INF/LICENSE",
+                "META-INF/licenses/licensed-1.0/LICENSE",
+            )
+            assertThat(textOf(jar, "META-INF/LICENSE")).isEqualTo("Plugin license\n")
+            assertThat(textOf(jar, "META-INF/licenses/licensed-1.0/LICENSE")).isEqualTo("Licensed dependency\n")
+        }
+    }
+
+    @Test
+    fun shadowJarKeepsLicenseFilesTheBuildAddsByHand() {
+        write("LICENSE.md", "Plugin license md")
+        write("legal/LICENSE-THIRD-PARTY.txt", "Third party")
+        write("legal/NOTICE", "Notice")
+        write("gradle.properties", "group=so.alaz.demo\nversion=1.2.3\n")
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            dependencies {
+                implementation(files("libs/licensed-1.0.jar"))
+            }
+            tasks.shadowJar {
+                from("LICENSE.md") {
+                    into("META-INF")
+                }
+                from("legal") {
+                    into("META-INF")
+                }
+            }
+            """,
+        )
+        jar(
+            "libs/licensed-1.0.jar",
+            mapOf("META-INF/LICENSE" to "Licensed dependency\n", "META-INF/LICENSE.md" to "Dependency md\n"),
+        )
+        write("src/main/java/so/alaz/demo/Covered.java", covered)
+
+        run("shadowJar")
+
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            val names = jar.entries().asSequence().map { it.name }.toList()
+            assertThat(names.filter { !it.endsWith("/") && it.contains("LICENSE") }).containsExactlyInAnyOrder(
+                "META-INF/LICENSE.md",
+                "META-INF/LICENSE-THIRD-PARTY.txt",
+                "META-INF/licenses/licensed-1.0/LICENSE",
+                "META-INF/licenses/licensed-1.0/LICENSE.md",
+            )
+            assertThat(names).contains("META-INF/NOTICE")
+            assertThat(textOf(jar, "META-INF/LICENSE.md")).isEqualTo("Plugin license md\n")
+            assertThat(textOf(jar, "META-INF/LICENSE-THIRD-PARTY.txt")).isEqualTo("Third party\n")
+            assertThat(textOf(jar, "META-INF/licenses/licensed-1.0/LICENSE.md")).isEqualTo("Dependency md\n")
+        }
+    }
+
+    @Test
+    fun shadowJarKeepsEveryLicenseOfJarsWithOneFileNameAndOfFilesThatDifferOnlyInCase() {
+        write("gradle.properties", "group=so.alaz.demo\nversion=1.2.3\n")
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            dependencies {
+                implementation(files("libs/first.jar", "libs/plain.jar", "other/First.jar", "libs/cased.jar"))
+            }
+            """,
+        )
+        jar("libs/first.jar", mapOf("META-INF/LICENSE" to "First\n"))
+        jar("libs/plain.jar", mapOf("org/example/plain/notes.txt" to "notes\n"))
+        jar("other/First.jar", mapOf("META-INF/LICENSE" to "Second\n"))
+        jar("libs/cased.jar", mapOf("META-INF/LICENSE" to "Upper\n", "META-INF/license" to "Lower\n"))
+        write("src/main/java/so/alaz/demo/Covered.java", covered)
+
+        run("shadowJar")
+
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            val names = jar.entries().asSequence().map { it.name }.toList()
+            assertThat(names.filter { !it.endsWith("/") && it.contains("license", ignoreCase = true) })
+                .containsExactlyInAnyOrder(
+                    "META-INF/licenses/first/LICENSE",
+                    "META-INF/licenses/First-2/LICENSE",
+                    "META-INF/licenses/cased/LICENSE",
+                    "META-INF/licenses/cased/license-2",
+                )
+            assertThat(textOf(jar, "META-INF/licenses/first/LICENSE")).isEqualTo("First\n")
+            assertThat(textOf(jar, "META-INF/licenses/First-2/LICENSE")).isEqualTo("Second\n")
+            assertThat(textOf(jar, "META-INF/licenses/cased/LICENSE")).isEqualTo("Upper\n")
+            assertThat(textOf(jar, "META-INF/licenses/cased/license-2")).isEqualTo("Lower\n")
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["", "so.alaz..demo", "demo."])
+    fun shadowJarFailsOnAGroupThatIsBlankOrHasAnEmptySegment(group: String) {
+        write("gradle.properties", "group=$group\nversion=1.2.3\n")
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.taffy.paper-plugin\")\n}")
+        write("src/main/java/so/alaz/demo/Covered.java", covered)
+
+        val help = run("help")
+
+        assertThat(help.task(":help")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+
+        val result = runner("shadowJar").buildAndFail()
+
+        assertThat(result.output).contains(
+            "so.alaz.taffy.paper-plugin relocates Taffy under <group>.libs, and the project group \"$group\" is " +
+                "blank or has an empty segment. Set group in gradle.properties, for example " +
+                "group=com.example.myplugin.",
+        )
+        assertThat(projectDirectory.resolve("build/libs")).doesNotExist()
+    }
+
+    @Test
+    fun generateRuntimeLibrariesFailsOnABlankGroup() {
+        write("gradle.properties", "version=1.2.3\n")
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.taffy.paper-plugin\")\n}")
+
+        val result = runner("generateRuntimeLibraries").buildAndFail()
+
+        assertThat(result.task(":generateRuntimeLibraries")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains(
+            "the project group \"\" is blank or has an empty segment. Set group in gradle.properties",
+        )
+    }
+
+    @Test
+    fun aGroupTheBuildScriptSetsAfterThePluginIsTheOneRelocatedUnder() {
+        write("gradle.properties", "version=1.2.3\n")
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            group = "so.alaz.late"
+            paperPlugin {
+                runtimeLibraries.add("com.zaxxer:HikariCP:7.1.0")
+            }
+            """,
+        )
+        write("src/main/resources/paper-plugin.yml", "name: Demo\nloader: so.alaz.late.DemoLoader\n")
+        write("src/main/java/so/alaz/taffy/Fake.java", "package so.alaz.taffy;\n\npublic interface Fake {\n}\n")
+
+        run("shadowJar")
+
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            val names = jar.entries().asSequence().map { it.name }.toList()
+            assertThat(names).contains("so/alaz/late/libs/taffy/Fake.class", "so/alaz/late/RuntimeLibraries.class")
+        }
+    }
+
+    @Test
+    fun aHyphenatedGroupBuildsWithoutRuntimeLibrariesAndFailsWithThem() {
+        write("gradle.properties", "group=so.alaz.my-demo\nversion=1.2.3\n")
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        val paperPlugin = "plugins {\n    id(\"so.alaz.taffy.paper-plugin\")\n}"
+        write("build.gradle.kts", paperPlugin)
+        write("src/main/java/so/alaz/taffy/Fake.java", "package so.alaz.taffy;\n\npublic interface Fake {\n}\n")
+
+        val built = run("shadowJar")
+
+        assertThat(built.task(":generateRuntimeLibraries")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            assertThat(jar.getEntry("so/alaz/my-demo/libs/taffy/Fake.class")).isNotNull()
+        }
+
+        val runtimeLibrary = "paperPlugin {\n    runtimeLibraries.add(\"com.zaxxer:HikariCP:7.1.0\")\n}"
+        write("build.gradle.kts", paperPlugin, runtimeLibrary)
+
+        val result = runner("generateRuntimeLibraries").buildAndFail()
+
+        assertThat(result.task(":generateRuntimeLibraries")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains(
+            "paperPlugin.runtimeLibraries generates RuntimeLibraries in the package named by the project group, and " +
+                "\"so.alaz.my-demo\" is not a Java package name. Set group in gradle.properties to one, for example " +
+                "group=com.example.myplugin.",
+        )
+        assertThat(projectDirectory.resolve("build/generated/sources/runtimeLibraries/java/main").walk().toList())
+            .noneMatch { it.isFile }
+    }
+
+    @Test
+    fun runtimeLibrariesFailTheBuildUntilPaperPluginYmlHasATopLevelLoaderKey() {
+        project()
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            paperPlugin {
+                runtimeLibraries.add("com.zaxxer:HikariCP:7.1.0")
+            }
+            """,
+        )
+        write(
+            "src/main/resources/paper-plugin.yml",
+            "name: Demo\n# loader: so.alaz.demo.DemoLoader\ndependencies:\n  loader: {}\nloaders: none\n",
+        )
+
+        val missing = runner("processResources").buildAndFail()
+
+        assertThat(missing.task(":verifyPluginLoader")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(missing.output).contains(
+            "paperPlugin.runtimeLibraries lists 1 library and src/main/resources/paper-plugin.yml has no top-level " +
+                "loader key, so Paper downloads none and the plugin fails at its first use of one. Add loader: " +
+                "with the name of the PluginLoader class that reads RuntimeLibraries.COORDINATES: " +
+                "https://alaz.so/taffy/docs/gradle-plugins#runtime-libraries",
+        )
+
+        write("src/main/resources/paper-plugin.yml", "name: Demo\nloader: so.alaz.demo.DemoLoader\n")
+
+        val present = run("processResources", "--configuration-cache")
+
+        assertThat(present.task(":verifyPluginLoader")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(present.task(":processResources")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+    }
+
+    @Test
+    fun aBuildWithoutRuntimeLibrariesNeedsNoLoaderKey() {
+        project()
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.taffy.paper-plugin\")\n}")
+        write("src/main/resources/paper-plugin.yml", "name: Demo\n")
+
+        val result = run("processResources")
+
+        assertThat(result.task(":verifyPluginLoader")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+    }
+
+    @Test
+    fun aResourcesDirectoryATaskGeneratesBuildsWithAndWithoutARuntimeLibrary() {
+        project()
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        val build = """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            val generateInfo = tasks.register("generateInfo") {
+                val directory = layout.buildDirectory.dir("generated/info")
+                outputs.dir(directory)
+                doLast {
+                    val target = directory.get().asFile
+                    target.mkdirs()
+                    target.resolve("build-info.properties").writeText("built=now")
+                }
+            }
+            sourceSets.main {
+                resources.srcDir(generateInfo)
+            }
+        """
+        write("build.gradle.kts", build)
+        write("src/main/resources/paper-plugin.yml", "name: Demo\nloader: so.alaz.demo.DemoLoader\n")
+        write("src/main/java/so/alaz/demo/Covered.java", covered)
+
+        val plain = run("shadowJar", "--configuration-cache")
+
+        assertThat(plain.task(":generateInfo")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(plain.task(":verifyPluginLoader")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            assertThat(jar.entries().asSequence().map { it.name }.toList())
+                .contains("build-info.properties", "paper-plugin.yml")
+        }
+
+        write("build.gradle.kts", build, "paperPlugin {\n    runtimeLibraries.add(\"com.zaxxer:HikariCP:7.1.0\")\n}")
+        projectDirectory.resolve("build").deleteRecursively()
+
+        val withLibrary = run("shadowJar", "--configuration-cache")
+
+        assertThat(withLibrary.task(":generateInfo")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(withLibrary.task(":verifyPluginLoader")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            assertThat(jar.entries().asSequence().map { it.name }.toList())
+                .contains("build-info.properties", "paper-plugin.yml", "so/alaz/demo/RuntimeLibraries.class")
+        }
+    }
+
+    @Test
+    fun aPaperPluginYmlATaskGeneratesIsCheckedForItsLoaderKey() {
+        project()
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            val generateDescriptor = tasks.register("generateDescriptor") {
+                val source = layout.projectDirectory.file("descriptor.txt")
+                val directory = layout.buildDirectory.dir("generated/descriptor")
+                inputs.file(source)
+                outputs.dir(directory)
+                doLast {
+                    val target = directory.get().asFile
+                    target.mkdirs()
+                    target.resolve("paper-plugin.yml").writeText(source.asFile.readText())
+                }
+            }
+            sourceSets.main {
+                resources.srcDir(generateDescriptor)
+            }
+            paperPlugin {
+                runtimeLibraries.add("com.zaxxer:HikariCP:7.1.0")
+            }
+            """,
+        )
+        write("descriptor.txt", "name: Demo")
+
+        val missing = runner("processResources").buildAndFail()
+
+        assertThat(missing.task(":generateDescriptor")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(missing.task(":verifyPluginLoader")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(missing.output).contains(
+            "paperPlugin.runtimeLibraries lists 1 library and build/generated/descriptor/paper-plugin.yml has no " +
+                "top-level loader key",
+        )
+
+        write("descriptor.txt", "\uFEFFloader: so.alaz.demo.DemoLoader\nname: Demo")
+
+        val present = run("processResources")
+
+        assertThat(present.task(":verifyPluginLoader")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(present.task(":processResources")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+    }
+
+    @Test
+    fun generateRuntimeLibrariesFailsOnACatalogEntryWithoutAVersion() {
+        project()
+        write(
+            "settings.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.settings")
+            }
+            rootProject.name = "demo"
+            dependencyResolutionManagement {
+                repositories.withType<MavenArtifactRepository>().matching { it.name.startsWith("alazso") }
+                    .configureEach { url = uri("$testRepository") }
+            }
+            """,
+        )
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            paperPlugin {
+                runtimeLibrary(alaz.hikari)
+                runtimeLibrary(alaz.junit.platform.launcher)
+            }
+            """,
+        )
+
+        val result = runner("generateRuntimeLibraries").buildAndFail()
+
+        assertThat(result.task(":generateRuntimeLibraries")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains(
+            "The paperPlugin.runtimeLibraries entry \"org.junit.platform:junit-platform-launcher:\" is not " +
+                "group:name:version, with an extension or an extension and a classifier allowed before the version, " +
+                "in segments that are not blank and hold no whitespace, quote or backslash. A version catalog " +
+                "entry passed to runtimeLibrary needs a version.",
+        )
+        assertThat(projectDirectory.resolve("build/generated/sources/runtimeLibraries/java/main").walk().toList())
+            .noneMatch { it.isFile }
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+        strings = [
+            "com.zaxxer:HikariCP", "com.zaxxer:HikariCP:jar::7.1.0", "org.lwjgl:lwjgl:jar:natives-windows:3.3.3:x",
+            ":HikariCP:7.1.0", "com.zaxxer: :7.1.0",
+            "com.zaxxer:Hikari CP:7.1.0", "com.zaxxer:HikariCP:7.1.0\\\"", "com.zaxxer:HikariCP:7.1.0\\\\",
+            "com.zaxxer:HikariCP:'7.1.0'",
+        ],
+    )
+    fun generateRuntimeLibrariesFailsOnACoordinateThatIsNotGroupNameVersion(coordinate: String) {
+        project()
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            paperPlugin {
+                runtimeLibraries.add("com.zaxxer:HikariCP:7.1.0")
+                runtimeLibraries.add("$coordinate")
+            }
+            """,
+        )
+
+        val result = runner("generateRuntimeLibraries").buildAndFail()
+
+        assertThat(result.task(":generateRuntimeLibraries")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains("The paperPlugin.runtimeLibraries entry \"", "is not group:name:version")
+    }
+
+    @Test
+    fun generateRuntimeLibrariesWritesACoordinateWithAnExtensionOrAClassifierAsItIs() {
+        project()
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            paperPlugin {
+                runtimeLibraries.add("com.zaxxer:HikariCP:jar:7.1.0")
+                runtimeLibraries.add("org.lwjgl:lwjgl:jar:natives-windows:3.3.3")
+            }
+            """,
+        )
+
+        val result = run("generateRuntimeLibraries")
+
+        assertThat(result.task(":generateRuntimeLibraries")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        val generated = projectDirectory
+            .resolve("build/generated/sources/runtimeLibraries/java/main/so/alaz/demo/RuntimeLibraries.java")
+        assertThat(generated.readText())
+            .contains("\"com.zaxxer:HikariCP:jar:7.1.0\"", "\"org.lwjgl:lwjgl:jar:natives-windows:3.3.3\"")
+    }
+
+    @Test
+    fun paperPluginYmlKeepsItsBackslashesAndTheDollarEscapeAndFailsOnAnotherExpression() {
+        project()
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write("build.gradle.kts", "plugins {\n    id(\"so.alaz.taffy.paper-plugin\")\n}")
+        val description = "description: \"Costs \\$5, reads C:\\data\\shop and prints First\\nSecond\\\\\""
+        write("src/main/resources/paper-plugin.yml", "name: Demo\nversion: \"\${version}\"\n$description\n")
+        write("src/main/resources/other.yml", "path: 'C:\\data\\\${version}'\n")
+
+        run("processResources")
+
+        val resources = projectDirectory.resolve("build/resources/main")
+        assertThat(resources.resolve("paper-plugin.yml").readText()).isEqualTo(
+            "name: Demo\nversion: \"1.2.3\"\n" +
+                "description: \"Costs $5, reads C:\\data\\shop and prints First\\nSecond\\\\\"\n",
+        )
+        assertThat(resources.resolve("other.yml").readText()).isEqualTo("path: 'C:\\data\\\${version}'\n")
+
+        write("src/main/resources/paper-plugin.yml", "name: \"\${name}\"\nversion: \"\${version}\"\n")
+
+        val result = runner("processResources").buildAndFail()
+
+        assertThat(result.task(":processResources")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(result.output).contains("paper-plugin.yml", "name")
     }
 
     @Test
@@ -1477,6 +2252,22 @@ class ConventionPluginsTest {
     private fun paperFloor(): String =
         File(System.getProperty("taffy.sourceRoot"), "gradle.properties").readLines()
             .first { it.startsWith("taffy.paperFloor=") }.substringAfter('=').trim()
+
+    /** Writes a jar at [path] that holds [entries], each a path and its text. */
+    private fun jar(path: String, entries: Map<String, String>) {
+        val file = projectDirectory.resolve(path)
+        file.parentFile.mkdirs()
+        ZipOutputStream(file.outputStream()).use { zip ->
+            for ((name, text) in entries) {
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(text.toByteArray())
+                zip.closeEntry()
+            }
+        }
+    }
+
+    private fun textOf(jar: ZipFile, entry: String): String =
+        jar.getInputStream(jar.getEntry(entry)).reader().readText()
 
     private fun project() {
         write("LICENSE", "MIT License\n")

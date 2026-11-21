@@ -75,6 +75,10 @@ Gradle itself must run on Java 25, because the plugins are Java 25 class files l
 `gradle/gradle-daemon-jvm.properties` holding `toolchainVersion=25` so Gradle picks a Java 25 JVM whatever
 `JAVA_HOME` is.
 
+The plugins need Gradle 9.2.0 or newer: Gradle 9.1.0 is the first release that runs on Java 25, and the Shadow
+plugin that `so.alaz.taffy.paper-plugin` applies needs 9.2.0. `so.alaz.taffy.settings` fails on an older Gradle
+with a message that names the minimum. Taffy itself builds with the Gradle wrapper at 9.9.1.
+
 To try an unpublished build, run `./gradlew publishToMavenLocal` here. In the plugin's `settings.gradle.kts`, add
 `mavenLocal()` to `pluginManagement.repositories` and set the URL of the `alazsoSnapshots` repository to the local
 Maven repository. `so.alaz.taffy.repositories` resolves the `so.alaz` groups from its two `repo.alaz.so`
@@ -133,9 +137,13 @@ and runs javadoc with `-Xdoclint:all,-missing` and `--no-fonts`, so a broken com
 **`so.alaz.taffy.paper-plugin`** adds:
 
 - `${version}` expansion in `paper-plugin.yml`,
-- one shadow jar with no classifier and the plain `jar` disabled,
-- relocation of `org.bstats`, `dev.faststats` and `so.alaz.taffy` to `<group>.libs.*`,
-- `RuntimeLibraries.COORDINATES` in the `<group>` package when `paperPlugin.runtimeLibraries` is not empty,
+- one shadow jar with no classifier and the plain `jar` disabled, with the `META-INF/services` files merged, the
+  root project's `LICENSE` as `META-INF/LICENSE` and each shaded jar's license files under
+  `META-INF/licenses/<jar name>/`,
+- relocation of `org.bstats`, `dev.faststats` and `so.alaz.taffy` to `<group>.libs.*`, and a build failure when
+  the group is blank,
+- `RuntimeLibraries.COORDINATES` in the `<group>` package when `paperPlugin.runtimeLibraries` is not empty, and a
+  build failure when `paper-plugin.yml` then has no `loader` key,
 - `compileAgainstPaperFloor`, which compiles the main Java sources against paper-api 26.2.build.135-stable, the
   oldest Paper build Taffy supports. No other task depends on it;
   `tasks.check { dependsOn("compileAgainstPaperFloor") }` makes it part of `check`.

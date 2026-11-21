@@ -1,8 +1,11 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import so.alaz.taffy.gradle.CoverageExtension
+import so.alaz.taffy.gradle.CollectDependencyLicenses
 import so.alaz.taffy.gradle.GenerateRuntimeLibraries
 import so.alaz.taffy.gradle.PaperPluginExtension
+import so.alaz.taffy.gradle.PluginGroup
 import so.alaz.taffy.gradle.TaffyBuild
+import so.alaz.taffy.gradle.VerifyPluginLoader
 
 plugins {
     id("so.alaz.taffy.coverage")
@@ -21,7 +24,7 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 val generateRuntimeLibraries = tasks.register<GenerateRuntimeLibraries>("generateRuntimeLibraries") {
-    packageName.set(project.group.toString())
+    packageName.set(provider { project.group.toString() })
     coordinates.set(paperPlugin.runtimeLibraries)
     outputDirectory.set(layout.buildDirectory.dir("generated/sources/runtimeLibraries/java/main"))
 }
@@ -65,21 +68,56 @@ tasks.register<JavaCompile>("compileAgainstPaperFloor") {
     destinationDirectory.set(layout.buildDirectory.dir("classes/java/paperFloor"))
 }
 
+val verifyPluginLoader = tasks.register<VerifyPluginLoader>("verifyPluginLoader") {
+    group = "verification"
+    description = "Fails when runtime libraries are listed and paper-plugin.yml has no top-level loader key."
+    coordinates.set(paperPlugin.runtimeLibraries)
+    descriptors.from(
+        sourceSets.named("main").map { main -> main.resources.matching { include("paper-plugin.yml") } },
+    )
+    projectDirectory.set(layout.projectDirectory)
+}
+
 tasks.named<ProcessResources>("processResources") {
+    dependsOn(verifyPluginLoader)
     val props = mapOf("version" to project.version.toString())
     inputs.properties(props)
     filesMatching("paper-plugin.yml") {
-        expand(props)
+        expand(props) {
+            escapeBackslash.set(true)
+        }
     }
+}
+
+val collectDependencyLicenses = tasks.register<CollectDependencyLicenses>("collectDependencyLicenses") {
+    description = "Copies the license files of the shaded dependency jars to META-INF/licenses/<jar name>/."
+    // A provider mapped from the shadowJar task would make this task depend on it.
+    jars.from(provider { tasks.named<ShadowJar>("shadowJar").get().includedDependencies })
+    outputDirectory.set(layout.buildDirectory.dir("generated/resources/dependencyLicenses"))
 }
 
 tasks.named<ShadowJar>("shadowJar") {
     archiveClassifier.set("")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    val libraries = project.group.toString() + ".libs"
-    relocate("org.bstats", "$libraries.bstats")
-    relocate("dev.faststats", "$libraries.faststats")
-    relocate("so.alaz.taffy", "$libraries.taffy")
+    mergeServiceFiles()
+    filesMatching("META-INF/services/**") {
+        // ServiceFileTransformer does not take this descriptor, so a second copy of it would be a second jar entry.
+        if (name != "org.codehaus.groovy.runtime.ExtensionModule") {
+            duplicatesStrategy = DuplicatesStrategy.INCLUDE
+        }
+    }
+    eachFile(CollectDependencyLicenses.DropShadedCopies(layout.buildDirectory.dir("tmp/.cache/expanded")))
+    from(collectDependencyLicenses)
+    val libraries = PluginGroup.requireSegments(project.group.toString()) + ".libs"
+    relocate("org.bstats", "$libraries.bstats") {
+        include("org.bstats.**")
+    }
+    relocate("dev.faststats", "$libraries.faststats") {
+        include("dev.faststats.**")
+    }
+    relocate("so.alaz.taffy", "$libraries.taffy") {
+        include("so.alaz.taffy.**")
+    }
 }
 
 tasks.named<Jar>("jar") {
