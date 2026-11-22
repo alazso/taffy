@@ -36,6 +36,20 @@ All notable changes to Taffy are documented here. This project follows
   over the menus on the same time source, and `chat(Player player, String line)` passes a chat line to them and
   tells whether a prompt took it. The test mocks the plugin and the players itself. The class uses no Mockito and
   adds nothing to `Menus.Parts`.
+- `PlayerCache<T>` in `taffy-platform` keeps one value per online player: `new PlayerCache<>(Plugin owner,
+  ErrorReports errors, Dispatcher dispatcher, BiConsumer<Runnable, Duration> timer, Function<UUID,
+  CompletableFuture<T>> loader)`, such as `new PlayerCache<>(this, errors, scheduler, scheduler::delayedAsync,
+  loader)`. It registers its own join and quit listener on the owner when it is built and loads every player
+  already online then. A join starts a load, which calls the loader through the dispatcher with
+  `ThreadTag.ASYNC`, and a quit forgets the player. `get(UUID player)` gives an `Optional` of the value and
+  `ready(UUID player)` tells whether there is one, from any thread: they stay empty and `false` until a load
+  succeeds. A failed load is reported to the `ErrorReports` as `PlayerCache.SOURCE` (`player-cache.load`),
+  logged through a `ThrowLog` of the owner's logger and tried again after `PlayerCache.FIRST_RETRY_DELAY`
+  (2 seconds), then after twice the delay before it, up to `PlayerCache.LONGEST_RETRY_DELAY` (5 minutes), while
+  the player stays online. The result of a load that ends after the player quit, or after a newer load of that
+  player started, is dropped. `refresh(UUID player)` loads an online player again and keeps the value held until
+  the new load succeeds. `close()` unregisters the listener and forgets every player. The cache loads nothing at
+  `AsyncPlayerPreLoginEvent`, denies no login and saves nothing at a quit or at `close()`.
 
 ## [0.4.4] - 2026-11-22
 
