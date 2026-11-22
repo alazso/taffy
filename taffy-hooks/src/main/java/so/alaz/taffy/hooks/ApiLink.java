@@ -1,5 +1,6 @@
 package so.alaz.taffy.hooks;
 
+import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 
@@ -10,12 +11,25 @@ final class ApiLink {
     private ApiLink() {
     }
 
-    static void staticMethod(Class<?> owner, String name, Class<?> returns, Class<?>... parameters) {
-        link(owner, name, MethodType.methodType(returns, parameters), true);
+    // The class of that name on the given loader, not initialized. A class the loader does not find throws a
+    // NoClassDefFoundError.
+    static Class<?> type(String name, ClassLoader loader) {
+        try {
+            return Class.forName(name, false, loader);
+        } catch (ClassNotFoundException missing) {
+            NoClassDefFoundError error = new NoClassDefFoundError(name);
+            error.initCause(missing);
+            throw error;
+        }
     }
 
-    static void instanceMethod(Class<?> owner, String name, Class<?> returns, Class<?>... parameters) {
-        link(owner, name, MethodType.methodType(returns, parameters), false);
+    static MethodHandle staticMethod(Class<?> owner, String name, Class<?> returns, Class<?>... parameters) {
+        return link(owner, name, MethodType.methodType(returns, parameters), true);
+    }
+
+    // A method the owner inherits from a superclass or a superinterface is found too.
+    static MethodHandle instanceMethod(Class<?> owner, String name, Class<?> returns, Class<?>... parameters) {
+        return link(owner, name, MethodType.methodType(returns, parameters), false);
     }
 
     static void constructor(Class<?> owner, Class<?>... parameters) {
@@ -29,14 +43,10 @@ final class ApiLink {
         }
     }
 
-    private static void link(Class<?> owner, String name, MethodType type, boolean isStatic) {
+    private static MethodHandle link(Class<?> owner, String name, MethodType type, boolean isStatic) {
         MethodHandles.Lookup lookup = MethodHandles.publicLookup();
         try {
-            if (isStatic) {
-                lookup.findStatic(owner, name, type);
-            } else {
-                lookup.findVirtual(owner, name, type);
-            }
+            return isStatic ? lookup.findStatic(owner, name, type) : lookup.findVirtual(owner, name, type);
         } catch (NoSuchMethodException | IllegalAccessException missing) {
             NoSuchMethodError error = new NoSuchMethodError(owner.getName() + "." + name + type);
             error.initCause(missing);

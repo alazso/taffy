@@ -66,17 +66,6 @@ dependencyResolutionManagement {
                 includeGroupAndSubgroups("org.enginehub")
             }
         }
-        maven("https://repo.opencollab.dev/main/") {
-            name = "opencollab"
-            content {
-                includeGroup("org.geysermc.floodgate")
-                includeGroup("org.geysermc.geyser")
-                includeGroup("org.geysermc.api")
-                includeGroup("org.geysermc.cumulus")
-                includeGroup("org.geysermc.event")
-                includeGroup("org.cloudburstmc.math")
-            }
-        }
         maven("https://maven.fancyspaces.net/fancyinnovations/releases") {
             name = "fancyinnovations"
             content { includeGroup("de.oliver") }

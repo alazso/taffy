@@ -17,9 +17,6 @@ dependencies {
     compileOnly(libs.worldguard.core) { isTransitive = false }
     compileOnly(libs.worldedit.core) { isTransitive = false }
     compileOnly(libs.worldedit.bukkit) { isTransitive = false }
-    compileOnly(libs.floodgate.api) { isTransitive = false }
-    compileOnly(libs.geyser.api) { isTransitive = false }
-    compileOnly(libs.geyser.base.api) { isTransitive = false }
     compileOnly(libs.placeholderapi) { isTransitive = false }
     compileOnly(libs.miniplaceholders.api) { isTransitive = false }
     compileOnly(libs.decentholograms) { isTransitive = false }
@@ -42,9 +39,6 @@ dependencies {
     testImplementation(libs.worldguard.core) { isTransitive = false }
     testImplementation(libs.worldedit.core) { isTransitive = false }
     testImplementation(libs.worldedit.bukkit) { isTransitive = false }
-    testImplementation(libs.floodgate.api) { isTransitive = false }
-    testImplementation(libs.geyser.api) { isTransitive = false }
-    testImplementation(libs.geyser.base.api) { isTransitive = false }
     testImplementation(libs.placeholderapi) { isTransitive = false }
     testImplementation(libs.miniplaceholders.api) { isTransitive = false }
     testImplementation(libs.decentholograms) { isTransitive = false }

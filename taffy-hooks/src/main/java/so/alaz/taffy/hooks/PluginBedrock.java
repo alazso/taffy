@@ -4,14 +4,16 @@ import org.bukkit.plugin.Plugin;
 import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.platform.ThrowLog;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodType;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.logging.Logger;
 
-// Names no Floodgate or Geyser class: the check comes from FloodgateBedrock or GeyserBedrock, which load only after
-// their plugin was found installed, enabled and with its API present.
+// The check comes from FloodgateBedrock or GeyserBedrock, which look up their API only after their plugin was found
+// installed, enabled and with its API present.
 final class PluginBedrock implements BedrockProvider {
 
     static final String FLOODGATE = "floodgate";
@@ -33,6 +35,23 @@ final class PluginBedrock implements BedrockProvider {
         this.check = check;
         this.throwLog = new ThrowLog(logger);
         this.errors = errors;
+    }
+
+    // Asks the API object that instance gives, through isBedrock. A null API object reads as no Bedrock player. A
+    // checked exception either handle throws arrives as the cause of an IllegalStateException.
+    static Predicate<UUID> check(MethodHandle instance, MethodHandle isBedrock) {
+        MethodHandle api = instance.asType(MethodType.methodType(Object.class));
+        MethodHandle asked = isBedrock.asType(MethodType.methodType(boolean.class, Object.class, UUID.class));
+        return player -> {
+            try {
+                Object found = (Object) api.invokeExact();
+                return found != null && (boolean) asked.invokeExact(found, player);
+            } catch (RuntimeException | Error failure) {
+                throw failure;
+            } catch (Throwable failure) {
+                throw new IllegalStateException(failure);
+            }
+        };
     }
 
     static Detected<BedrockProvider> detect(boolean switchedOn, Presence presence,

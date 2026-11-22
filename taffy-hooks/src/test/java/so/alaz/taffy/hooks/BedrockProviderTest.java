@@ -4,11 +4,20 @@ import io.papermc.paper.plugin.configuration.PluginMeta;
 import org.bukkit.Server;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
+import org.geysermc.floodgate.api.FloodgateApi;
+import org.geysermc.geyser.api.GeyserApi;
+import org.jetbrains.annotations.Nullable;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.test.CapturedLog;
+import so.alaz.taffy.test.SimulatedClasspath;
 
+import java.io.IOException;
+import java.lang.classfile.ClassFile;
+import java.lang.constant.ClassDesc;
+import java.lang.constant.MethodTypeDesc;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -45,6 +54,43 @@ final class BedrockProviderTest {
             reported.add(source);
             failures.add(error);
         });
+        unsetApis();
+    }
+
+    @AfterEach
+    void unsetApis() {
+        FloodgateApi.INSTANCE.set(null);
+        GeyserApi.REGISTERED.set(null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> boolean raise(Throwable failure) throws T {
+        throw (T) failure;
+    }
+
+    /**
+     * A class loader on which {@code name} is a public class that declares only a static {@code accessor} that
+     * returns {@code null}, or nothing when {@code accessor} is {@code null}, and on which no other class of
+     * Floodgate or Geyser is found.
+     */
+    private static ClassLoader changed(String name, @Nullable String accessor) {
+        return new ClassLoader(ClassLoader.getPlatformClassLoader()) {
+            @Override
+            protected Class<?> findClass(String asked) throws ClassNotFoundException {
+                if (!asked.equals(name)) {
+                    throw new ClassNotFoundException(asked);
+                }
+                ClassDesc type = ClassDesc.of(name);
+                byte[] bytes = ClassFile.of().build(type, builder -> {
+                    builder.withFlags(ClassFile.ACC_PUBLIC);
+                    if (accessor != null) {
+                        builder.withMethodBody(accessor, MethodTypeDesc.of(type),
+                            ClassFile.ACC_PUBLIC | ClassFile.ACC_STATIC, code -> code.aconst_null().areturn());
+                    }
+                });
+                return defineClass(asked, bytes, 0, bytes.length);
+            }
+        };
     }
 
     private PluginBedrock floodgate() {
@@ -127,7 +173,7 @@ final class BedrockProviderTest {
     }
 
     @Test
-    void theFloodgateFactoryLinksItsApiAndReadsAnUnsetApiAsNoBedrockPlayer() {
+    void theFloodgateFactoryReadsAnUnsetApiAsNoBedrockPlayer() {
         BedrockProvider provider = FloodgateBedrock.create(plugin, logged.logger, errors);
 
         assertThat(provider).isInstanceOf(PluginBedrock.class);
@@ -137,7 +183,88 @@ final class BedrockProviderTest {
     }
 
     @Test
-    void theGeyserFactoryLinksItsApiAndReportsAnApiGeyserHasNotRegistered() {
+    void theFloodgateFactoryAsksTheApiFloodgateSetAfterTheProviderWasBuilt() {
+        BedrockProvider provider = FloodgateBedrock.create(plugin, logged.logger, errors);
+
+        FloodgateApi.INSTANCE.set(STEVE::equals);
+
+        assertThat(provider.bedrock(STEVE)).isTrue();
+        assertThat(provider.bedrock(ALEX)).isFalse();
+        assertThat(reported).isEmpty();
+        assertThat(logged.lines()).isEmpty();
+    }
+
+    @Test
+    void aFloodgateCheckThatThrowsAnswersFalseWithOneWarningAndOneReport() {
+        IllegalStateException broken = new IllegalStateException("handshake cache closed");
+        FloodgateApi.INSTANCE.set(player -> {
+            throw broken;
+        });
+
+        assertThat(FloodgateBedrock.create(plugin, logged.logger, errors).bedrock(STEVE)).isFalse();
+        assertThat(reported).containsExactly("hook.floodgate");
+        assertThat(failures).containsExactly(broken);
+        assertThat(logged.lines()).containsExactly("WARNING floodgate could not tell whether a player joined from"
+            + " Bedrock (java.lang.IllegalStateException: handshake cache closed).");
+    }
+
+    @Test
+    void aCheckedExceptionFromTheFloodgateCheckIsReportedAsTheCauseOfAnIllegalStateException() {
+        IOException broken = new IOException("link reset");
+        FloodgateApi.INSTANCE.set(player -> BedrockProviderTest.<RuntimeException>raise(broken));
+
+        assertThat(FloodgateBedrock.create(plugin, logged.logger, errors).bedrock(STEVE)).isFalse();
+        assertThat(reported).containsExactly("hook.floodgate");
+        assertThat(failures).singleElement().isInstanceOf(IllegalStateException.class);
+        assertThat(failures.getFirst()).hasCause(broken);
+    }
+
+    @Test
+    void anErrorFromTheFloodgateCheckOtherThanALinkageErrorIsRethrown() {
+        FloodgateApi.INSTANCE.set(player -> {
+            throw new OutOfMemoryError("heap");
+        });
+        BedrockProvider provider = FloodgateBedrock.create(plugin, logged.logger, errors);
+
+        assertThatThrownBy(() -> provider.bedrock(STEVE)).isInstanceOf(OutOfMemoryError.class);
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aDisabledFloodgateIsNotAsked() {
+        FloodgateApi.INSTANCE.set(STEVE::equals);
+        when(plugin.isEnabled()).thenReturn(false);
+
+        assertThat(FloodgateBedrock.create(plugin, logged.logger, errors).bedrock(STEVE)).isFalse();
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void theFloodgateFactoryFailsToLinkWhenTheApiClassIsNotFound() {
+        ClassLoader hiding = SimulatedClasspath.hiding("so.alaz.taffy.hooks.none.", "org.geysermc.floodgate.");
+
+        assertThatThrownBy(() -> FloodgateBedrock.create(hiding, plugin, logged.logger, errors))
+            .isInstanceOf(NoClassDefFoundError.class)
+            .hasMessage("org.geysermc.floodgate.api.FloodgateApi")
+            .hasCauseInstanceOf(ClassNotFoundException.class);
+    }
+
+    @Test
+    void theFloodgateFactoryFailsToLinkWhenAMethodItReadsIsGone() {
+        ClassLoader noAccessor = changed(PluginBedrock.FLOODGATE_PROBE, null);
+        ClassLoader noCheck = changed(PluginBedrock.FLOODGATE_PROBE, "getInstance");
+
+        assertThatThrownBy(() -> FloodgateBedrock.create(noAccessor, plugin, logged.logger, errors))
+            .isInstanceOf(NoSuchMethodError.class)
+            .hasMessage("org.geysermc.floodgate.api.FloodgateApi.getInstance()FloodgateApi")
+            .hasCauseInstanceOf(NoSuchMethodException.class);
+        assertThatThrownBy(() -> FloodgateBedrock.create(noCheck, plugin, logged.logger, errors))
+            .isInstanceOf(NoSuchMethodError.class)
+            .hasMessage("org.geysermc.floodgate.api.FloodgateApi.isFloodgatePlayer(UUID)boolean");
+    }
+
+    @Test
+    void theGeyserFactoryReportsAnApiGeyserHasNotRegistered() {
         BedrockProvider provider = GeyserBedrock.create(plugin, logged.logger, errors);
 
         assertThat(provider).isInstanceOf(PluginBedrock.class);
@@ -145,6 +272,66 @@ final class BedrockProviderTest {
         assertThat(reported).containsExactly("hook.geyser-spigot");
         assertThat(logged.lines()).containsExactly("WARNING Geyser-Spigot could not tell whether a player joined from"
             + " Bedrock (java.lang.RuntimeException: Api has not been registered yet!).");
+    }
+
+    @Test
+    void theGeyserFactoryAsksTheApiGeyserRegisteredThroughTheMethodOfItsBaseInterface() {
+        BedrockProvider provider = GeyserBedrock.create(plugin, logged.logger, errors);
+
+        GeyserApi.REGISTERED.set(STEVE::equals);
+
+        assertThat(provider.bedrock(STEVE)).isTrue();
+        assertThat(provider.bedrock(ALEX)).isFalse();
+        assertThat(reported).isEmpty();
+        assertThat(logged.lines()).isEmpty();
+    }
+
+    @Test
+    void aGeyserCheckThatThrowsAnswersFalseWithOneReport() {
+        IllegalStateException broken = new IllegalStateException("session map closed");
+        GeyserApi.REGISTERED.set(player -> {
+            throw broken;
+        });
+
+        assertThat(GeyserBedrock.create(plugin, logged.logger, errors).bedrock(STEVE)).isFalse();
+        assertThat(reported).containsExactly("hook.geyser-spigot");
+        assertThat(failures).containsExactly(broken);
+    }
+
+    @Test
+    void theGeyserFactoryFailsToLinkWhenTheApiClassOrAMethodItReadsIsGone() {
+        ClassLoader hiding = SimulatedClasspath.hiding("so.alaz.taffy.hooks.none.", "org.geysermc.geyser.");
+        ClassLoader noAccessor = changed(PluginBedrock.GEYSER_PROBE, null);
+        ClassLoader noCheck = changed(PluginBedrock.GEYSER_PROBE, "api");
+
+        assertThatThrownBy(() -> GeyserBedrock.create(hiding, plugin, logged.logger, errors))
+            .isInstanceOf(NoClassDefFoundError.class)
+            .hasMessage("org.geysermc.geyser.api.GeyserApi");
+        assertThatThrownBy(() -> GeyserBedrock.create(noAccessor, plugin, logged.logger, errors))
+            .isInstanceOf(NoSuchMethodError.class)
+            .hasMessage("org.geysermc.geyser.api.GeyserApi.api()GeyserApi");
+        assertThatThrownBy(() -> GeyserBedrock.create(noCheck, plugin, logged.logger, errors))
+            .isInstanceOf(NoSuchMethodError.class)
+            .hasMessage("org.geysermc.geyser.api.GeyserApi.isBedrockPlayer(UUID)boolean");
+    }
+
+    @Test
+    void aFloodgateWhoseApiChangedCouldNotBeHookedAndGeyserIsUsed() {
+        FakePresence presence = new FakePresence();
+        ClassLoader noCheck = changed(PluginBedrock.FLOODGATE_PROBE, "getInstance");
+        GeyserApi.REGISTERED.set(STEVE::equals);
+
+        Detected<BedrockProvider> detected = PluginBedrock.detect(true, presence,
+            bound -> FloodgateBedrock.create(noCheck, bound, logged.logger, errors),
+            bound -> GeyserBedrock.create(bound, logged.logger, errors), logged.logger, errors);
+
+        assertThat(detected.status()).isEqualTo(new HookStatus("Geyser-Spigot", HookState.ON, "1.0", null));
+        assertThat(detected.provider().bedrock(STEVE)).isTrue();
+        assertThat(reported).containsExactly("hook.floodgate");
+        assertThat(failures).singleElement().isInstanceOf(NoSuchMethodError.class);
+        assertThat(logged.lines()).containsExactly("WARNING floodgate 1.0 could not be hooked"
+            + " (java.lang.NoSuchMethodError: org.geysermc.floodgate.api.FloodgateApi.isFloodgatePlayer(UUID)boolean),"
+            + " so it stays off.");
     }
 
     private Function<Plugin, BedrockProvider> named(String name, List<String> built) {
@@ -331,6 +518,9 @@ final class BedrockProviderTest {
             .isEqualTo(new HookStatus("floodgate", HookState.ON, "2.2.5-SNAPSHOT (b121-a1b2c3d)", null));
         assertThat(detected.provider()).isInstanceOf(PluginBedrock.class);
         assertThat(detected.provider().bedrock(STEVE)).isFalse();
+        FloodgateApi.INSTANCE.set(STEVE::equals);
+        assertThat(detected.provider().bedrock(STEVE)).isTrue();
+        assertThat(detected.provider().bedrock(ALEX)).isFalse();
         verify(plugins, never()).getPlugin("Geyser-Spigot");
         assertThat(logged.lines()).isEmpty();
         assertThat(reported).isEmpty();
@@ -344,6 +534,9 @@ final class BedrockProviderTest {
         assertThat(detected.status())
             .isEqualTo(new HookStatus("Geyser-Spigot", HookState.ON, "2.2.5-SNAPSHOT (b121-a1b2c3d)", null));
         assertThat(detected.provider()).isInstanceOf(PluginBedrock.class);
+        GeyserApi.REGISTERED.set(STEVE::equals);
+        assertThat(detected.provider().bedrock(STEVE)).isTrue();
+        assertThat(detected.provider().bedrock(ALEX)).isFalse();
         assertThat(logged.lines()).isEmpty();
         assertThat(reported).isEmpty();
     }

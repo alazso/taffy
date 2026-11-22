@@ -74,7 +74,7 @@ final class AbsentIntegrationsTest {
         "com.sk89q.worldguard.protection.regions.ProtectedRegion", "com.sk89q.worldedit.math.BlockVector3",
         "com.sk89q.worldedit.bukkit.BukkitAdapter"};
 
-    /** Classes the Bedrock adapters read, from the Floodgate api, Geyser api and Geyser base-api jars. */
+    /** Classes the Bedrock adapters read, which stand-ins in the test sources carry the names of. */
     private static final String[] BEDROCK_API = {
         "org.geysermc.floodgate.api.FloodgateApi", "org.geysermc.geyser.api.GeyserApi",
         "org.geysermc.api.GeyserApiBase"};

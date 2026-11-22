@@ -15,14 +15,10 @@ All notable changes to Taffy are documented here. This project follows
   logged at most once a minute and reported under `hook.floodgate` or `hook.geyser-spigot`. A plugin lists
   `floodgate` and `Geyser-Spigot` in its `paper-plugin.yml` under `dependencies.server` with `load: BEFORE` and
   `required: false`. `taffy-hooks` does not depend on `taffy-gui`, so a plugin passes `provider::bedrock` to
-  `new Prompts(...)` as its `BedrockPlayers`.
-- The catalog holds `alaz.floodgate.api` (`org.geysermc.floodgate:api` 2.2.5-SNAPSHOT), `alaz.geyser.api`
-  (`org.geysermc.geyser:api` 2.12.1-SNAPSHOT) and `alaz.geyser.base.api` (`org.geysermc.api:base-api` 1.0.3), which
-  `taffy-hooks` compiles against and does not ship. Floodgate and Geyser publish their APIs as snapshots only.
-  `so.alaz.taffy.repositories` declares the `opencollab` repository, `https://repo.opencollab.dev/main/`, after
-  `enginehub`, for the groups `org.geysermc.floodgate`, `org.geysermc.geyser` and `org.geysermc.api`, and for
-  `org.geysermc.cumulus`, `org.geysermc.event` and `org.cloudburstmc.math`, which the three APIs depend on, so
-  `compileOnly(alaz.floodgate.api)` resolves without `isTransitive = false`.
+  `new Prompts(...)` as its `BedrockPlayers`. `taffy-hooks` reads `FloodgateApi.getInstance().isFloodgatePlayer(UUID)`
+  and `GeyserApi.api().isBedrockPlayer(UUID)` through method handles and compiles against neither API, so a plugin
+  declares no dependency and no repository for them. Floodgate or Geyser whose API class is there and lacks one of
+  these methods is `HookState.FAILED`.
 - `Prompts` in `taffy-gui` asks for text that opens no menu, for a command or a plugin's own screen.
   `Prompts.ask(Player, TextRequest)` and `Prompts.askLater(Player, TextRequest)` show the question in the chat,
   anvil or dialog of the prompts, with the cancel word, the cancel link, `Prompts.TIMEOUT` and chat for Bedrock

@@ -4,10 +4,12 @@
  * MiniPlaceholders, and text holograms through DecentHolograms, FancyHolograms, Holograms and HologramLib.
  *
  * <p>The module compiles against each integration's API but ships none of them, and its published metadata names
- * none of them. No public signature names an integration type: each integration sits behind an interface of this
- * package, and the class that calls the integration loads only after the integration's API classes are found visible
- * to the plugin, and, for every integration but Vault, after its plugin is found installed and enabled. A server
- * without an integration plugin therefore never loads a class that names it.
+ * none of them. Floodgate and Geyser are the exception: they are read through method handles, so the module compiles
+ * against neither API and a plugin needs no dependency for them. No public signature names an integration type: each
+ * integration sits behind an interface of this package, and the class that calls the integration loads only after
+ * the integration's API classes are found visible to the plugin, and, for every integration but Vault, after its
+ * plugin is found installed and enabled. A server without an integration plugin therefore never loads a class that
+ * names it.
  *
  * <h2>Declaring the integrations</h2>
  *
