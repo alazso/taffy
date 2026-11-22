@@ -5,6 +5,27 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `FakeDispatcher` is a `Dispatcher` for plugin tests that needs no server, published as the test fixtures of
+  `taffy-platform`: `testImplementation(testFixtures(alaz.taffy.platform))`, or
+  `testImplementation(testFixtures("so.alaz.taffy:taffy-platform:<version>"))`. It is in the package
+  `so.alaz.taffy.platform` of `taffy-platform-<version>-test-fixtures.jar`, not in the module's own jar, so no
+  plugin jar carries it, and `taffy-test` still depends on no Taffy module. `tags()` lists the `ThreadTag` of
+  every dispatch in call order. A new instance runs each task on the calling thread and returns a completed
+  future, which carries whatever the task threw.
+- `FakeDispatcher.hold()` queues the tasks dispatched from then on, `held()` counts them, and `runHeld()` runs
+  them on the calling thread in dispatch order and ends the hold. `refuse()` fails every later dispatch without
+  running its task, with `RejectedExecutionException` for `ThreadTag.GLOBAL` and `ThreadTag.ASYNC` and with
+  `EntityUnavailableException` for an entity tag, and refuses the held tasks the same way, as `Scheduler.close()`
+  refuses a dispatch that has not started. `drop()` accepts every later dispatch, never runs its task and never
+  completes its future, and forgets the held tasks the same way. The last of `hold()`, `refuse()` and `drop()`
+  called decides what a dispatch does.
+- `new FaultyDataSource(DataSource source)` in `taffy-test` wraps the connections of an existing data source, so
+  the faults sit above a pool passed to it or below a pool built on it. `getConnection(String user, String
+  password)` of such a data source calls the same method of the wrapped one, and `unwrap` and `isWrapperFor`
+  also answer for the wrapped data source. A kill closes neither the wrapped data source nor its connections.
+  `new FaultyDataSource(String url, Properties properties)` behaves as before.
+
 ## [0.4.4] - 2026-11-22
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

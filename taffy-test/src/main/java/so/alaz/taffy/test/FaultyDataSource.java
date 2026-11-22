@@ -19,18 +19,25 @@ import java.util.logging.Logger;
 import javax.sql.DataSource;
 
 /**
- * A data source whose statements and commits fail on demand, over connections that {@link DriverManager} opens.
+ * A data source whose statements and commits fail on demand, over connections that {@link DriverManager} opens
+ * or that another {@link DataSource} gives.
  *
- * <p>Each {@link #getConnection()} opens a new connection to the URL with the properties given at construction and
- * wraps it. The wrapper checks {@link #faults()} on {@code prepareStatement} and {@code createStatement}, when a
+ * <p>Built from a URL, each {@link #getConnection()} opens a new connection to the URL with the properties given at
+ * construction and wraps it. Built from a {@link DataSource}, each {@link #getConnection()} takes a connection
+ * from that data source and wraps it, so the faults sit above a pool that is passed in and below a pool that is
+ * built on this data source.
+ *
+ * <p>The wrapper checks {@link #faults()} on {@code prepareStatement} and {@code createStatement}, when a
  * statement they return is run through {@code execute}, {@code executeUpdate}, {@code executeQuery},
  * {@code executeLargeUpdate}, {@code executeBatch} or {@code executeLargeBatch}, and on {@code commit}. A statement's
  * {@code getConnection} returns the wrapper, and a wrapper is equal only to itself. Every other call,
  * {@code prepareCall} and {@code rollback} included, goes to the real connection or statement unchanged.
+ * Closing a wrapper closes the connection it wraps, which returns a pooled connection to its pool.
  * {@link Faults#kill()} makes every later checked call fail, as if the process had died; a new data source on the
- * same database is the next process.
+ * same database is the next process. A kill closes nothing: a wrapped data source and the connections already
+ * taken from it stay open until their owner closes them.
  *
- * <p>The JDBC driver for the URL must be on the class path. This class brings none.
+ * <p>The JDBC driver for a URL must be on the class path. This class brings none.
  */
 public final class FaultyDataSource implements DataSource {
 
@@ -193,8 +200,9 @@ public final class FaultyDataSource implements DataSource {
     private static final Set<String> EXECUTES = Set.of("execute", "executeUpdate", "executeQuery",
         "executeLargeUpdate", "executeBatch", "executeLargeBatch");
 
-    private final String url;
+    private final @Nullable String url;
     private final Properties properties = new Properties();
+    private final @Nullable DataSource source;
     private final Faults faults = new Faults();
 
     /**
@@ -205,10 +213,22 @@ public final class FaultyDataSource implements DataSource {
      */
     public FaultyDataSource(String url, Properties properties) {
         this.url = Objects.requireNonNull(url, "url");
+        this.source = null;
         Objects.requireNonNull(properties, "properties");
         for (String name : properties.stringPropertyNames()) {
             this.properties.setProperty(name, properties.getProperty(name));
         }
+    }
+
+    /**
+     * A data source over the connections of {@code source}, with no fault armed. {@code source} is never closed
+     * and none of its settings is changed.
+     *
+     * @throws NullPointerException if {@code source} is {@code null}
+     */
+    public FaultyDataSource(DataSource source) {
+        this.url = null;
+        this.source = Objects.requireNonNull(source, "source");
     }
 
     /** The faults of this data source and of every connection it opened. */
@@ -217,21 +237,35 @@ public final class FaultyDataSource implements DataSource {
     }
 
     /**
-     * A new connection to the URL, wrapped so that {@link #faults()} applies to it. Its
-     * {@code unwrap(Connection.class)} returns the real connection.
+     * A new connection to the URL, or a connection from the wrapped data source, wrapped so that
+     * {@link #faults()} applies to it. Its {@code unwrap(Connection.class)} returns the connection it wraps, which
+     * over a pool is the pool's own connection object.
      *
-     * @throws SQLException if the process is dead or the driver cannot connect
+     * @throws SQLException if the process is dead, the driver cannot connect or the wrapped data source gives no
+     *     connection
      */
     @Override
     public Connection getConnection() throws SQLException {
         faults.alive();
-        return connection(DriverManager.getConnection(url, properties), faults);
+        return connection(source != null ? source.getConnection() : DriverManager.getConnection(url, properties),
+            faults);
     }
 
-    /** The same as {@link #getConnection()}: the user and password are ignored. */
+    /**
+     * Built from a URL, the same as {@link #getConnection()}: the user and password are ignored. Built from a
+     * {@link DataSource}, a connection from that data source's {@code getConnection(user, password)}, wrapped as
+     * {@link #getConnection()} wraps one.
+     *
+     * @throws SQLException if the process is dead, the driver cannot connect or the wrapped data source gives no
+     *     connection, which a pool that takes no user and password reports this way
+     */
     @Override
     public Connection getConnection(String user, String password) throws SQLException {
-        return getConnection();
+        if (source == null) {
+            return getConnection();
+        }
+        faults.alive();
+        return connection(source.getConnection(user, password), faults);
     }
 
     /** Always {@code null}. */
@@ -263,22 +297,26 @@ public final class FaultyDataSource implements DataSource {
     }
 
     /**
-     * This data source when it is an instance of {@code type}. It wraps no other object.
+     * This data source when it is an instance of {@code type}, otherwise the data source given at construction
+     * when that is one. A data source built from a URL wraps no other object.
      *
-     * @throws SQLException if this data source is not an instance of {@code type}
+     * @throws SQLException if neither is an instance of {@code type}
      */
     @Override
     public <T> T unwrap(Class<T> type) throws SQLException {
         if (type.isInstance(this)) {
             return type.cast(this);
         }
+        if (type.isInstance(source)) {
+            return type.cast(source);
+        }
         throw new SQLException("not a wrapper");
     }
 
-    /** Whether this data source is an instance of {@code type}. */
+    /** Whether this data source, or the data source given at construction, is an instance of {@code type}. */
     @Override
     public boolean isWrapperFor(Class<?> type) {
-        return type.isInstance(this);
+        return type.isInstance(this) || type.isInstance(source);
     }
 
     private static Object call(Object target, Method method, Object[] args) throws Throwable {

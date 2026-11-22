@@ -1,5 +1,6 @@
 plugins {
     id("so.alaz.taffy.library")
+    `java-test-fixtures`
 }
 
 description = "Taffy platform: the classes every other Taffy module builds on"
@@ -17,4 +18,14 @@ dependencies {
     testImplementation(libs.assertj.core)
     testImplementation(libs.mockito.core)
     testRuntimeOnly(libs.junit.platform.launcher)
+}
+
+// The test fixtures variants carry a capability, which a POM cannot state: Gradle Module Metadata does.
+publishing {
+    publications {
+        named<MavenPublication>("library") {
+            suppressPomMetadataWarningsFor("testFixturesApiElements")
+            suppressPomMetadataWarningsFor("testFixturesRuntimeElements")
+        }
+    }
 }

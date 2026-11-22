@@ -7,9 +7,11 @@ import org.junit.jupiter.api.io.TempDir;
 import java.lang.reflect.Proxy;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,6 +21,10 @@ import javax.sql.DataSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class FaultyDataSourceTest {
 
@@ -373,6 +379,116 @@ class FaultyDataSourceTest {
         assertThat(source.isWrapperFor(FaultyDataSource.class)).isTrue();
         assertThat(source.unwrap(DataSource.class)).isSameAs(source);
         assertThat(source.unwrap(FaultyDataSource.class)).isSameAs(source);
+    }
+
+    @Test
+    void aWrappedDataSourceGivesTheConnectionsAndTheFaultsApplyToThem() throws SQLException {
+        List<Connection> given = new ArrayList<>();
+        FaultyDataSource wrapping = new FaultyDataSource(pool(given));
+        wrapping.faults().failStatement(2);
+
+        try (Connection connection = wrapping.getConnection();
+             PreparedStatement statement = connection.prepareStatement(INSERT)) {
+            statement.setInt(1, 1);
+            statement.executeUpdate();
+            statement.setInt(1, 2);
+            assertThatThrownBy(statement::executeUpdate).isInstanceOf(SQLException.class)
+                .hasMessage("injected statement failure");
+
+            assertThat(given).hasSize(1);
+            assertThat(Proxy.isProxyClass(connection.getClass())).isTrue();
+            assertThat(connection.unwrap(Connection.class)).isSameAs(given.getFirst());
+            assertThat(given.getFirst().isClosed()).isFalse();
+        }
+
+        assertThat(given.getFirst().isClosed()).isTrue();
+        assertThat(ids()).containsExactly(1);
+        assertThat(wrapping.faults().statements()).isEqualTo(2);
+        assertThat(faults.statements()).isEqualTo(2);
+    }
+
+    @Test
+    void aWrappedDataSourceIsAskedWithTheUserAndPasswordAndItsRefusalPassesThrough() throws SQLException {
+        List<Connection> given = new ArrayList<>();
+        DataSource pool = pool(given);
+        when(pool.getConnection("alex", "secret")).thenAnswer(call -> pool.getConnection());
+        when(pool.getConnection("alex", "wrong")).thenThrow(new SQLFeatureNotSupportedException("no users"));
+        FaultyDataSource wrapping = new FaultyDataSource(pool);
+        wrapping.faults().failCommit(1, false, false);
+
+        try (Connection connection = wrapping.getConnection("alex", "secret")) {
+            connection.setAutoCommit(false);
+            assertThatThrownBy(connection::commit).isInstanceOf(SQLException.class)
+                .hasMessage("injected commit failure");
+            assertThat(connection.unwrap(Connection.class)).isSameAs(given.getFirst());
+        }
+        assertThatThrownBy(() -> wrapping.getConnection("alex", "wrong"))
+            .isInstanceOf(SQLFeatureNotSupportedException.class).hasMessage("no users");
+    }
+
+    @Test
+    void aKilledWrapperAsksTheWrappedDataSourceForNothingAndClosesNothing() throws SQLException {
+        List<Connection> given = new ArrayList<>();
+        DataSource pool = pool(given);
+        FaultyDataSource wrapping = new FaultyDataSource(pool);
+
+        try (Connection open = wrapping.getConnection()) {
+            wrapping.faults().kill();
+
+            assertThatThrownBy(wrapping::getConnection).isInstanceOf(SQLException.class)
+                .hasMessage("the process is dead");
+            assertThatThrownBy(() -> wrapping.getConnection("alex", "secret")).isInstanceOf(SQLException.class)
+                .hasMessage("the process is dead");
+            assertThatThrownBy(open::createStatement).isInstanceOf(SQLException.class)
+                .hasMessage("the process is dead");
+            assertThat(given).hasSize(1);
+            assertThat(given.getFirst().isClosed()).isFalse();
+        }
+        verify(pool, never()).getConnection("alex", "secret");
+    }
+
+    @Test
+    void aWrapperUnwrapsToItselfAndToTheDataSourceItWraps() throws SQLException {
+        FaultyDataSource wrapping = new FaultyDataSource(source);
+        FaultyDataSource outer = new FaultyDataSource(pool(new ArrayList<>()));
+
+        assertThat(wrapping.unwrap(FaultyDataSource.class)).isSameAs(wrapping);
+        assertThat(wrapping.unwrap(DataSource.class)).isSameAs(wrapping);
+        assertThat(wrapping.isWrapperFor(FaultyDataSource.class)).isTrue();
+        assertThat(outer.isWrapperFor(Connection.class)).isFalse();
+        assertThatThrownBy(() -> outer.unwrap(Connection.class)).isInstanceOf(SQLException.class)
+            .hasMessage("not a wrapper");
+    }
+
+    @Test
+    void aWrapperUnwrapsToTheTypeOfTheDataSourceItWraps() throws SQLException {
+        Pool pool = mock(Pool.class);
+        FaultyDataSource wrapping = new FaultyDataSource(pool);
+
+        assertThat(wrapping.isWrapperFor(Pool.class)).isTrue();
+        assertThat(wrapping.unwrap(Pool.class)).isSameAs(pool);
+        assertThat(source.isWrapperFor(Pool.class)).isFalse();
+    }
+
+    @Test
+    void aNullDataSourceIsRefusedByName() {
+        assertThatThrownBy(() -> new FaultyDataSource((DataSource) null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("source");
+    }
+
+    private interface Pool extends DataSource {
+    }
+
+    /** A data source that opens a connection to the database for each call and adds it to {@code given}. */
+    private DataSource pool(List<Connection> given) throws SQLException {
+        DataSource pool = mock(DataSource.class);
+        when(pool.getConnection()).thenAnswer(call -> {
+            Connection opened = DriverManager.getConnection(url);
+            given.add(opened);
+            return opened;
+        });
+        return pool;
     }
 
     private void insert(int id) throws SQLException {
