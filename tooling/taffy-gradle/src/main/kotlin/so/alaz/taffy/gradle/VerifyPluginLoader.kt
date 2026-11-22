@@ -19,7 +19,8 @@ import org.gradle.work.DisableCachingByDefault
  *
  * A key counts when its line starts at the first column, so a `loader` in a comment or under another key does not.
  * A key has a value when text other than a comment follows its colon, on the same line or, indented, on the next
- * line that is neither blank nor a comment.
+ * line that is neither blank nor a comment. The texts `""`, `''`, `~`, `null`, `Null` and `NULL` are no value, and
+ * neither is a block scalar indicator, `|` or `>`, whose next line that is not blank is not indented.
  * A top-level mapping that is indented as a whole or written in flow style, such as `{loader: a.B}`, does not count
  * either. A byte order mark before the first line is skipped.
  * A file of [descriptors] that does not exist is not checked, and neither is any file while [coordinates] is empty.
@@ -60,16 +61,20 @@ abstract class VerifyPluginLoader : DefaultTask() {
 
     private fun namesLoader(lines: List<String>): Boolean =
         lines.withIndex().any { (index, line) ->
-            val key = LOADER_KEY.matchEntire(line) ?: return@any false
-            if (!NO_VALUE.matches(key.groupValues[2])) {
-                return@any true
+            val value = (LOADER_KEY.matchEntire(line) ?: return@any false).groupValues[2]
+            val rest = lines.drop(index + 1)
+            when {
+                BLOCK_SCALAR.matches(value) -> rest.firstOrNull { it.isNotBlank() }?.startsWith(" ") == true
+                !NO_VALUE.matches(value) -> !EMPTY_VALUE.matches(value)
+                else -> rest.firstOrNull { !NO_VALUE.matches(it) }
+                    ?.let { it.startsWith(" ") && !EMPTY_VALUE.matches(it) } == true
             }
-            val below = lines.drop(index + 1).firstOrNull { !NO_VALUE.matches(it) }
-            below != null && below.startsWith(" ")
         }
 
     private companion object {
         val LOADER_KEY = Regex("(loader|\"loader\"|'loader')\\s*:(\\s.*)?")
         val NO_VALUE = Regex("\\s*(#.*)?")
+        val EMPTY_VALUE = Regex("\\s+(\"\"|''|~|null|Null|NULL)(\\s+#.*|\\s*)")
+        val BLOCK_SCALAR = Regex("\\s+[|>][-+1-9]{0,2}(\\s+#.*|\\s*)")
     }
 }

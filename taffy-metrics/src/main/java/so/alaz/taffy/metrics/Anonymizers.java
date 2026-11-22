@@ -24,8 +24,12 @@ import java.util.regex.Pattern;
  *       stays;</li>
  *   <li>an email address whose last label has two or more characters, with a {@code +} in the name before the
  *       {@code @}, as in {@code john+tag@example.org};</li>
- *   <li>a bearer token, and what follows {@code Authorization: Basic} in either letter case, also with a
- *       {@code =} for the {@code :}, a quote on either side of that sign and one space around it;</li>
+ *   <li>a bearer token, and what follows {@code Authorization: Basic} in either letter case and 1 to 4 spaces,
+ *       also with a {@code =} or {@code ,} for the {@code :}, a quote after the key, up to four spaces around that
+ *       sign and up to two quotes or opening brackets before {@code Basic}, as in
+ *       {@code {Authorization=[Basic dXNlcjpwYXNz]}} or {@code setHeader("Authorization", "Basic dXNlcjpwYXNz")}.
+ *       One word of letters with no upper case letter after its first stays, so
+ *       {@code Authorization: Basic authentication is not supported} reads as written;</li>
  *   <li>an AWS access key id;</li>
  *   <li>a UUID in either letter case, with its dashes, also inside a longer word such as
  *       {@code data_<uuid>}, or as 32 hex digits without them that no further hex digit touches;</li>
@@ -38,12 +42,16 @@ import java.util.regex.Pattern;
  *       {@code pwd}, {@code passphrase}, {@code secret}, {@code token}, {@code api_key}, {@code access_key},
  *       {@code private_key}, {@code license_key} or {@code licence_key} in either letter case, with {@code -} or
  *       nothing in place of the {@code _}, and the value after the {@code =} of a key that ends in {@code pass}
- *       with no letter before it, such as {@code pass=} or {@code db_pass=}. The value is one word or a quoted
- *       text. It is the rest of the line when a key that ends in {@code password}, {@code passwd}, {@code pwd}
- *       or {@code passphrase} starts its line, also after the {@code -} of a list item, and the value starts
- *       with no quote, as in {@code password: my pass word}. A value that starts with {@code -} and a space is
- *       a list: it is the rest of that line and every following line that starts with {@code -} and a space,
- *       so the items on the lines below {@code tokens:} are hidden as one value. The value {@code YES} or
+ *       with no letter before it, such as {@code pass=} or {@code db_pass=}, or in {@code Pass} after a lower
+ *       case letter, such as {@code dbPass=}. Such a key in quotes is a key before a {@code :} too, as in
+ *       {@code "db_pass": "x"}, and its value of 1 to 3 digits stays before either sign, so
+ *       {@code pass=3 fail=2} reads as written. A {@code =>} counts as the {@code =}. The value is one word or a
+ *       quoted text. It is the rest of the line when a key that ends in {@code password}, {@code passwd},
+ *       {@code pwd} or {@code passphrase} starts its line with up to 64 characters before that word, also after
+ *       the {@code -} of a list item, and the value starts with no quote, as in {@code password: my pass word}.
+ *       A value that starts with {@code -} and a space is a list: it is the rest of that line and every
+ *       following line that starts with {@code -} and a space, also past blank lines and lines that hold only a
+ *       {@code #} comment, so the items below {@code tokens:} are hidden as one value. The value {@code YES} or
  *       {@code NO} stays, so {@code (using password: YES)} reads as the driver wrote it. The plain word
  *       {@code token}, {@code tokens}, {@code secret} or {@code secrets} before a {@code :} is no key when a
  *       letter, a digit or a {@code _} and whitespace come before it, so {@code Invalid token: expected ;}
@@ -61,14 +69,20 @@ import java.util.regex.Pattern;
  *       {@code Failed to update balance for shop 12}, stays, and so does a statement of another shape. A
  *       {@code FROM} or {@code INTO} that {@code the}, {@code an}, {@code this}, {@code that}, {@code these},
  *       {@code those}, {@code your}, {@code my}, {@code our} or {@code their} follows starts no statement, so
- *       {@code Could not delete from the cache} stays, unless one of {@code , ; ( ) = *}, {@code WHERE} or
- *       {@code VALUES (} comes after that word. After {@code SELECT} this holds only when 1 to 8 words of
- *       letters stand between it and {@code FROM}, so {@code Please select a kit from the list} stays and
- *       {@code SELECT * FROM the list} is hidden. Any other sentence that holds one of these starts, such as
- *       {@code Could not delete from disk cache}, is hidden from that word on;</li>
+ *       {@code Could not delete from the cache} stays, when spaces and a letter come after that word and none of
+ *       these stands in the 200 characters after it, on its line or a later one and before the next of the verbs
+ *       above: {@code WHERE}, {@code VALUES (}, {@code DEFAULT VALUES}, {@code RETURNING}, {@code ORDER BY},
+ *       {@code GROUP BY}, {@code HAVING}, {@code LIMIT} and a digit, {@code SET} with a name and a {@code =},
+ *       {@code JOIN} or {@code USING} with {@code ON} at most three words later, {@code --} or the start of a
+ *       block comment. After {@code SELECT} this holds only when 1 to 8 words of letters stand between it and
+ *       {@code FROM}, so {@code Please select a kit from the list} stays and {@code SELECT * FROM the list} is
+ *       hidden. A statement whose table has one of the ten words as its name and that holds none of those, such
+ *       as {@code SELECT name FROM the t}, stays as well. Any other sentence that holds one of these starts,
+ *       such as {@code Could not delete from disk cache}, is hidden from that word on;</li>
  *   <li>a {@code file:} URL that no letter or digit precedes, up to the next whitespace or quote, and a Windows
  *       path that starts with a drive letter and a backslash, or with a drive letter that no letter or digit
- *       precedes and one {@code /}, with two backslashes, a server name and a backslash, as in
+ *       precedes and one {@code /}, with two backslashes, a server name of letters, digits, {@code _},
+ *       {@code .}, {@code $} and {@code -} and a backslash, as in
  *       {@code \\files\share\John\x.yml}, or with {@code Users} in either letter case that no letter or digit
  *       precedes and a backslash, as in {@code ..\Users\John\x.yml}, which is hidden from {@code Users} on.
  *       Each of the first 64 folder names of the path holds up to three single
@@ -80,7 +94,10 @@ import java.util.regex.Pattern;
  *   <li>an absolute Unix path of one segment and a further slash or more, such as {@code /home/} or
  *       {@code /etc/hosts}. {@code /home} alone stays. Each of the next 64 folder names holds up to three single
  *       spaces between words of letters, digits, {@code _}, {@code .} and {@code -}, as in
- *       {@code /home/john smith/server/x}, and a space ends the path as it does in the rule before;</li>
+ *       {@code /home/john smith/server/x}, and a space ends the path as it does in the rule before. A space
+ *       also ends it before the lower case word {@code to}, {@code at}, {@code in}, {@code is}, {@code on},
+ *       {@code from}, {@code after}, {@code with}, {@code uses}, {@code has}, {@code was} or {@code not}, so
+ *       {@code Failed to save /srv/world after 3 attempts/retries} keeps the words after the path;</li>
  *   <li>the id and token of a Discord webhook URL that starts with {@code https://} or {@code http://} on
  *       {@code discord.com} or {@code discordapp.com}, also with a {@code canary} or {@code ptb} label or an API
  *       version, and its query;</li>
@@ -122,9 +139,9 @@ import java.util.regex.Pattern;
  *       {@code host shop.balance};</li>
  *   <li>a token that no letter, digit, {@code _} or {@code -} precedes and that starts with {@code ghp_},
  *       {@code gho_}, {@code ghu_}, {@code ghs_}, {@code ghr_}, {@code github_pat_}, {@code xoxa-}, {@code xoxb-},
- *       {@code xoxe-}, {@code xoxo-}, {@code xoxp-}, {@code xoxr-}, {@code xoxs-}, {@code sk_live_} or
- *       {@code rk_live_} and 8 or more further characters, and a JSON Web Token: two parts that each start
- *       with {@code eyJ} and a third part, which may be empty, with a {@code .} between them.</li>
+ *       {@code xoxe-}, {@code xoxo-}, {@code xoxp-}, {@code xoxr-} or {@code xoxs-} and 8 or more further
+ *       characters, or with {@code sk_live_} or {@code rk_live_} and 16 or more, and a JSON Web Token: two parts
+ *       that each start with {@code eyJ} and a third part, which may be empty, with a {@code .} between them.</li>
  * </ol>
  *
  * <p>Outside a URI and those words, a host name of one label, such as {@code cache} or {@code localhost}, stays,
@@ -151,16 +168,25 @@ final class Anonymizers {
 
     private static final String SPACED_SECRET_NAMES = "password|passwd|pwd|passphrase";
 
-    private static final String DETERMINERS = "(?:the|an|this|that|these|those|your|my|our|their)(?![\\w.])"
-        + "(?!\\s*(?:[,;()=*]|where\\b|values\\s*\\())";
+    private static final String DETERMINERS = "(?:the|an|this|that|these|those|your|my|our|their)(?=[ \\t]+[a-z])"
+        + "(?!(?:(?!\\b(?:select|insert|update|delete|replace|merge|create|alter|drop)\\b)[\\s\\S]){0,200}?"
+        + "(?:--|/\\*|\\b(?:where\\b|values\\s*\\(|default\\s+values\\b|returning\\b|(?:order|group)\\s+by\\b"
+        + "|having\\b|limit\\s+\\d|set\\s+[\\w.`\"\\[\\]]{1,64}\\s*="
+        + "|(?:join|using)\\s+\\S{1,64}(?:\\s+\\S{1,64}){0,2}\\s+on\\b)))";
+
+    private static final String PASS_KEY = "(?:(?<![a-z])pass|(?<=(?-i:[a-z]))(?-i:Pass))";
+
+    private static final String NO_COUNT = "(?!\\s*\\d{1,3}(?![\\w.-]))";
+
+    private static final String FOLDER_END = "to|at|in|is|on|from|after|with|uses|has|was|not";
 
     private static final String PATH_NAME = "[^\\s\"'\\\\/:]+";
 
     private static final String PATH_FOLDERS = "(?:(?:(?![^\\s\"'\\\\/:]*\\.[A-Za-z][A-Za-z0-9]{0,4} )" + PATH_NAME
         + " ){0,3}" + PATH_NAME + "[\\\\/]){0,64}";
 
-    private static final String UNIX_FOLDERS = "(?:(?:(?![\\w.-]*\\.[A-Za-z][A-Za-z0-9]{0,4} )[\\w.-]+ ){0,3}"
-        + "[\\w.-]+/){0,64}";
+    private static final String UNIX_FOLDERS = "(?:(?:(?![\\w.-]*\\.[A-Za-z][A-Za-z0-9]{0,4} )[\\w.-]+ "
+        + "(?!(?:" + FOLDER_END + ")(?![\\w.-]))){0,3}[\\w.-]+/){0,64}";
 
     private static final String FILE_ENDINGS =
         "yml|yaml|json|properties|toml|conf|cfg|xml|txt|log|csv|sql|db|sqlite|dat|jar|class|java|lock|tmp|bak";
@@ -182,17 +208,19 @@ final class Anonymizers {
         {"(?i)([a-z][a-z0-9+.-]{0,31}://)[^/\\s:@]*:(?!\\d{1,5}(?![^\\s/?#\\[\\]{}\"]))"
             + "(?:(?:(?!://)\\S){0,128}|[^\\s/]*)@", "$1[credentials hidden]@"},
         {"(?<![\\w.+-])[\\w.+-]+@[\\w-][\\w.-]*\\.[\\w-]{2,}(?![\\w-])", "[email hidden]"},
-        {"(Bearer|(?i:Authorization[\"']?\\s?[:=]\\s?[\"']?Basic)) [A-Za-z0-9._~+/=-]+", "$1 [token hidden]"},
+        {"(?:(Bearer) |((?i:Authorization[\"']?\\s{0,4}[:=,]\\s{0,4}[\\[({\"']{0,2}Basic))[ \\t]{1,4}"
+            + "(?![A-Za-z][a-z]*+(?![A-Za-z0-9._~+/=-])))[A-Za-z0-9._~+/=-]+", "$1$2 [token hidden]"},
         {"AKIA[0-9A-Z]{16}", "[aws-key hidden]"},
         {"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
             + "|(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])", "[uuid hidden]"},
         {"'[^'\\s]*'@'[^'\\s]*'", "[user hidden]@[host hidden]"},
         {"(?i)(\\b(?:user|role)\\s+)\"[^\"\\s]{1,64}\"", "$1[user hidden]"},
         {"([?&](?:api_?key|token|secret)=)[^&\\s]+", "$1[redacted]"},
-        {"(?im)(^[ \\t]*(?:-[ \\t]+)?[\"']?[\\w.-]{0,20}?(?:" + SPACED_SECRET_NAMES + ")[\"']?[ \\t]*[:=][ \\t]*+)"
-            + "(?!(?:yes|no)\\b)(?![\"'])[^\\n]+"
-            + "|((?:(?:" + SECRET_NAMES + "|" + SECRET_WORDS + ")[\\w-]{0,20}[\"']?\\s*="
-            + "|(?<![a-z])pass[\"']?\\s*="
+        {"(?im)(^[ \\t]*(?:-[ \\t]+)?[\"']?[\\w.-]{0,64}?(?:" + SPACED_SECRET_NAMES + ")[\"']?[ \\t]*(?::|=>?+)"
+            + "[ \\t]*+)(?!(?:yes|no)\\b)(?![\"'])[^\\n]+"
+            + "|((?:(?:" + SECRET_NAMES + "|" + SECRET_WORDS + ")[\\w-]{0,20}[\"']?\\s*=>?+"
+            + "|" + PASS_KEY + "[\"']?\\s*=>?+" + NO_COUNT
+            + "|[\"'][\\w.-]{0,20}?" + PASS_KEY + "[\"']\\s*:" + NO_COUNT
             + "|(?:" + SECRET_NAMES + ")[\\w-]{0,20}[\"']?\\s*:"
             + "|(?<=[\\w.-])(?:" + SECRET_WORDS + ")[\\w-]{0,20}[\"']?\\s*:"
             + "|(?:" + SECRET_WORDS + ")(?!s?(?![\\w-]))[\\w-]{1,20}[\"']?\\s*:"
@@ -200,14 +228,15 @@ final class Anonymizers {
             + "|^[ \\t]*(?:-[ \\t]+)?(?:" + SECRET_WORDS + ")s?\\s*:"
             + "|(?<=[^\\w\\s][ \\t]{0,8})(?:" + SECRET_WORDS + ")s?\\s*:"
             + "|(?:" + SECRET_WORDS + ")s?:(?=[ \\t]{0,8}[\"']?(?=[^\\s\"'&,;)]{6})[^\\s\"'&,;)\\d]{0,64}\\d))\\s*)"
-            + "(?!(?:yes|no)\\b)(?:-[ \\t]+[^\\n]*+(?:\\n[ \\t]*+-[ \\t]++[^\\n]*+)*+|\"[^\"\\n]*\"|'[^'\\n]*'"
-            + "|[^\\s\"'&,;)]+)", "$1$2[redacted]"},
+            + "(?!(?:yes|no)\\b)(?:-[ \\t]+[^\\n]*+"
+            + "(?:\\n(?:[ \\t]*+(?:#[^\\n]*+|\\r)?\\n)*+[ \\t]*+-[ \\t]++[^\\n]*+)*+"
+            + "|\"[^\"\\n]*\"|'[^'\\n]*'|[^\\s\"'&,;)]+)", "$1$2[redacted]"},
         {"(?i)\\b(?:SELECT\\s(?!(?:[a-z]+\\s){1,8}FROM\\s" + DETERMINERS + ")[^\\n]{0,200}?\\sFROM\\s"
             + "|(?:INSERT\\s+(?:OR\\s+\\w+\\s+|IGNORE\\s+)?INTO|DELETE\\s+FROM|REPLACE\\s+INTO|MERGE\\s+INTO)\\s"
             + "(?!" + DETERMINERS + ")"
             + "|UPDATE\\s+\\S+\\s+SET\\s|(?:CREATE|ALTER|DROP)\\s+TABLE\\s)[^\\n]{0,200}", "[sql hidden]"},
         {"(?<![A-Za-z0-9])(?i:file):/+[^\\s\"']+|(?:[A-Za-z]:\\\\|(?<![A-Za-z0-9])[A-Za-z]:/(?!/)"
-            + "|(?<!\\\\)\\\\\\\\" + PATH_NAME + "\\\\|(?<![A-Za-z0-9])(?i:Users)\\\\)"
+            + "|(?<!\\\\)\\\\\\\\[\\w.$-]+\\\\|(?<![A-Za-z0-9])(?i:Users)\\\\)"
             + PATH_FOLDERS + "[^\\s\"']*", "[path hidden]"},
         {"(?<![\\w./:-])/[\\w.-]+/" + UNIX_FOLDERS + "[\\w./-]*", "[path hidden]"},
         {"(?i)(https?://(?:(?:canary|ptb)\\.)?discord(?:app)?\\.com/api/(?:v\\d+/)?webhooks/)\\d+/[\\w-]+(?:\\?\\S*)?",
@@ -226,7 +255,7 @@ final class Anonymizers {
             + "(?![\\w.-]*\\.(?:" + FILE_ENDINGS + ")" + NAME_END + ")(?![\\w.-]*\\()"
             + "[\\w-]+\\.[\\w.-]*[\\w-]", "$1[host hidden]"},
         {"(?<![\\w-])(?:gh[pousr]_[A-Za-z0-9]{8,}|github_pat_\\w{8,}|xox[abeoprs]-[A-Za-z0-9-]{8,}"
-            + "|[sr]k_live_[A-Za-z0-9]{8,}|eyJ[\\w-]{5,}\\.eyJ[\\w-]{5,}\\.[\\w-]*)", "[token hidden]"},
+            + "|[sr]k_live_[A-Za-z0-9]{16,}|eyJ[\\w-]{5,}\\.eyJ[\\w-]{5,}\\.[\\w-]*)", "[token hidden]"},
     };
 
     private static final Pattern[] PATTERNS = Arrays.stream(RULES).map(rule -> Pattern.compile(rule[0]))

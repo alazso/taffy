@@ -325,8 +325,10 @@ public final class Prompts {
      * Asks the player in place of the menu they have open. Replaces any ask still pending for the player, of these
      * prompts or of other prompts of the same plugin, without a message, which tells that ask's
      * {@link PromptRequest#abandoned()} {@link PromptEnd#REPLACED}. Nothing happens once {@link Menus#shutdown()}
-     * ran, or when the server refused to open the anvil. Call on the player's entity thread, outside an inventory
-     * event; a {@link ClickHandler} calls {@link #askLater(Player, PromptRequest)} instead.
+     * ran, or when the server refused to open the anvil. Under {@link PromptMode#DIALOG} a
+     * {@link RuntimeException} of the server that fails to show the dialog is thrown on, and no ask is left behind.
+     * Call on the player's entity thread, outside an inventory event; a {@link ClickHandler} calls
+     * {@link #askLater(Player, PromptRequest)} instead.
      *
      * @param player the player to ask
      * @param request the question
@@ -348,8 +350,10 @@ public final class Prompts {
      * player has open is closed first, and a menu of the menus these prompts are built over closes as left by its
      * viewer. Replaces any ask still pending for the player, of these prompts or of other prompts of the same
      * plugin, without a message, which tells that ask {@link PromptEnd#REPLACED}. Nothing happens once the prompts
-     * were shut down, or when the server refused to open the anvil. Call on the player's entity thread, outside an
-     * inventory event; a click handler calls {@link #askLater(Player, TextRequest)} instead.
+     * were shut down, or when the server refused to open the anvil. Under {@link PromptMode#DIALOG} a
+     * {@link RuntimeException} of the server that fails to show the dialog is thrown on, and no ask is left behind.
+     * Call on the player's entity thread, outside an inventory event; a click handler calls
+     * {@link #askLater(Player, TextRequest)} instead.
      *
      * @param player the player to ask
      * @param request the question
@@ -413,8 +417,15 @@ public final class Prompts {
      * refused to show it.
      */
     private @Nullable Pending present(Player player, Pending entry) {
-        if (open(player, entry, entry.ask().initial(), null)) {
-            return entry;
+        try {
+            if (open(player, entry, entry.ask().initial(), null)) {
+                return entry;
+            }
+        } catch (RuntimeException failure) {
+            if (entry.mode() == PromptMode.DIALOG) {
+                pending.remove(player.getUniqueId(), entry);
+            }
+            throw failure;
         }
         if (entry.mode() != PromptMode.DIALOG || dialogSurface().usable()) {
             return null;
@@ -431,9 +442,14 @@ public final class Prompts {
      * @param player the player to ask
      * @param request the question
      * @throws NullPointerException if {@code request} is {@code null}
+     * @throws IllegalStateException if these prompts are built over no menus, which have no menu to open; nothing is
+     *     asked on the next tick then
      */
     public void askLater(Player player, PromptRequest request) {
         Objects.requireNonNull(request, "request");
+        if (menus == null) {
+            throw new IllegalStateException("these prompts are built over no menus; ask with a TextRequest");
+        }
         tasks.accept(player, () -> ask(player, request));
     }
 
@@ -714,13 +730,8 @@ public final class Prompts {
                 return anvilSurface().open(player, ask.question(), initial, token);
             case DIALOG:
                 player.closeInventory(InventoryCloseEvent.Reason.PLUGIN);
-                try {
-                    return dialogSurface().open(player, token, ask.question(), note, initial,
-                        text -> submit(id, token, text), () -> cancel(id, token));
-                } catch (RuntimeException failure) {
-                    pending.remove(id, entry);
-                    throw failure;
-                }
+                return dialogSurface().open(player, token, ask.question(), note, initial,
+                    text -> submit(id, token, text), () -> cancel(id, token));
             default:
                 player.closeInventory(InventoryCloseEvent.Reason.PLUGIN);
                 return true;
@@ -873,7 +884,8 @@ public final class Prompts {
      * Puts a refused ask back under its token with its first deadline, unless a newer ask or a menu took its place,
      * which ends the ask. An anvil no longer showing comes back on the next tick, and so does the dialog, with
      * {@code note} above its field and {@code text} in it; with another inventory open then, or when the server
-     * refuses to show it, the ask ends.
+     * refuses to show it, the ask ends. A {@link RuntimeException} of the server that fails to show the dialog is
+     * thrown on after the ask ended.
      */
     private void rearm(Player player, Pending entry, String text, Component note) {
         UUID id = player.getUniqueId();
@@ -890,9 +902,20 @@ public final class Prompts {
         if (entry.mode() != PromptMode.CHAT && !showing(entry)) {
             boolean inDialog = entry.mode() == PromptMode.DIALOG;
             tasks.accept(player, () -> {
-                if (pending.get(id) == entry && !showing(entry) && (!ownScreen.test(player)
-                    || !show(player, entry, inDialog ? text : entry.ask().initial(), inDialog ? note : null))
-                    && pending.remove(id, entry)) {
+                if (pending.get(id) != entry || showing(entry)) {
+                    return;
+                }
+                boolean shown;
+                try {
+                    shown = ownScreen.test(player)
+                        && show(player, entry, inDialog ? text : entry.ask().initial(), inDialog ? note : null);
+                } catch (RuntimeException failure) {
+                    if (inDialog && pending.remove(id, entry)) {
+                        abandon(entry, PromptEnd.REPLACED);
+                    }
+                    throw failure;
+                }
+                if (!shown && pending.remove(id, entry)) {
                     abandon(entry, PromptEnd.REPLACED);
                 }
             });

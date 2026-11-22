@@ -20,7 +20,9 @@ All notable changes to Taffy are documented here. This project follows
   (`org.geysermc.geyser:api` 2.12.1-SNAPSHOT) and `alaz.geyser.base.api` (`org.geysermc.api:base-api` 1.0.3), which
   `taffy-hooks` compiles against and does not ship. Floodgate and Geyser publish their APIs as snapshots only.
   `so.alaz.taffy.repositories` declares the `opencollab` repository, `https://repo.opencollab.dev/main/`, after
-  `enginehub`, for the groups `org.geysermc.floodgate`, `org.geysermc.geyser` and `org.geysermc.api`.
+  `enginehub`, for the groups `org.geysermc.floodgate`, `org.geysermc.geyser` and `org.geysermc.api`, and for
+  `org.geysermc.cumulus`, `org.geysermc.event` and `org.cloudburstmc.math`, which the three APIs depend on, so
+  `compileOnly(alaz.floodgate.api)` resolves without `isTransitive = false`.
 - `Prompts` in `taffy-gui` asks for text that opens no menu, for a command or a plugin's own screen.
   `Prompts.ask(Player, TextRequest)` and `Prompts.askLater(Player, TextRequest)` show the question in the chat,
   anvil or dialog of the prompts, with the cancel word, the cancel link, `Prompts.TIMEOUT` and chat for Bedrock
@@ -35,9 +37,9 @@ All notable changes to Taffy are documented here. This project follows
   builds prompts over no `Menus`. It reads the plugin, text source, locale function, server, preview key, next-tick
   tasks, entity thread, logger and error reports of the parts, and registers the prompt listener as a listener of
   the plugin, which also ends the ask of a player who quits as `LEFT`. Such prompts ask with a `TextRequest` only:
-  `ask(Player, PromptRequest)` throws `IllegalStateException`. They share a player's ask with the other `Prompts`
-  of the plugin. `Prompts.shutdown()` is public: a plugin calls it at disable for prompts built this way, and
-  `Menus.shutdown()` still calls it for prompts built over menus.
+  `ask(Player, PromptRequest)` and `askLater(Player, PromptRequest)` throw `IllegalStateException` at the call.
+  They share a player's ask with the other `Prompts` of the plugin. `Prompts.shutdown()` is public: a plugin calls
+  it at disable for prompts built this way, and `Menus.shutdown()` still calls it for prompts built over menus.
 - `PromptMode.DIALOG`, marked `@ApiStatus.Experimental` as Paper's Dialog API is, asks in a Paper dialog with one
   text field, a submit button and a cancel button, for a `PromptRequest` and a `TextRequest` alike. The title is
   the question and the field starts with `initial`, cut to `Prompts.MAX_LENGTH` characters. The cancel button and
@@ -45,7 +47,11 @@ All notable changes to Taffy are documented here. This project follows
   `gui.prompt.refused` text above the field and the refused text in it, and sends nothing to chat. The buttons
   carry the client's own text for `gui.done` and `gui.cancel`, so `Prompts.KEYS` is unchanged. Bedrock players
   answer in chat. On a server without the Dialog API, building the prompts logs one warning and every ask is asked
-  in chat, as it is from the first ask on when the API cannot be linked.
+  in chat, as it is from the first ask on when the API cannot be linked. A `RuntimeException` of the server that
+  fails to show the dialog is thrown on: from `ask` with no ask left behind, and from the next tick's task after a
+  refusal, where the ask first ends as `REPLACED`. Paper has no event for a dialog that the client takes away
+  without a button, as when another plugin opens an inventory or the player dies: such an ask takes no chat line
+  and ends at its deadline as `TIMED_OUT`.
 - With the two `ask` and `askLater` overloads and the two public `Prompts` constructors, a call that passes the
   literal `null` as the request, or as the first constructor argument, needs a cast to compile. Each threw
   `NullPointerException` before and still does.
@@ -60,26 +66,35 @@ All notable changes to Taffy are documented here. This project follows
     a Windows path, so `/home/mc/x.yml is not valid/readable` is sent as `[path hidden] is not valid/readable`,
     as before. A path without a file extension takes up to three following words with it when a slash comes
     after them: `Saved /srv/data and logs/x now` was sent as `Saved [path hidden] and logs/x now` and is now
-    `Saved [path hidden] now`;
-  - a UNC path, such as `\\fileserver\share\John Smith\x.yml`, and a relative Windows path from its `Users`
-    folder on: `..\Users\John\Desktop\x.yml` was sent whole and is now `..\[path hidden]`. Any other relative
-    path is still sent;
+    `Saved [path hidden] now`. The lower case words `to`, `at`, `in`, `is`, `on`, `from`, `after`, `with`,
+    `uses`, `has`, `was` and `not` are no part of a folder name, so
+    `Failed to save /srv/world after 3 attempts/retries` is sent as
+    `Failed to save [path hidden] after 3 attempts/retries`, as before;
+  - a UNC path, such as `\\fileserver\share\John Smith\x.yml`, whose server name holds letters, digits, `_`,
+    `.`, `$` and `-`, and a relative Windows path from its `Users` folder on: `..\Users\John\Desktop\x.yml`
+    was sent whole and is now `..\[path hidden]`. Any other relative path is still sent;
   - the list items on the lines below a secret key: `tokens:`, a line break and `- abc123` was sent as
     `tokens:`, the line break and `[redacted] abc123`. The items, each on a line that starts with `-` and a
-    space, are now sent as one `[redacted]`;
+    space, are now sent as one `[redacted]`, also with blank lines or lines of a `#` comment between them;
   - the words after the first of a password that starts its line: `password: my pass word` was sent as
     `password: [redacted] pass word` and is now `password: [redacted]`. This holds for a key that ends in
-    `password`, `passwd`, `pwd` or `passphrase` and starts its line, also after the `-` of a list item, when the
-    value starts with no quote. Inside a sentence, as in `Login failed with password: my pass word`, the value
-    is still one word;
+    `password`, `passwd`, `pwd` or `passphrase` and starts its line with up to 64 characters before that word,
+    as in `spring.datasource.hikari.password`, also after the `-` of a list item, when the value starts with no
+    quote. Inside a sentence, as in `Login failed with password: my pass word`, the value is still one word;
   - a GitHub token (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` or `github_pat_` and 8 or more characters), a Slack
-    token (`xoxb-` and the other `xox` prefixes), a Stripe live key (`sk_live_` or `rk_live_`) and a JSON Web
-    Token, each now sent as `[token hidden]`, and the credentials after `Authorization: Basic`, now sent as
-    `Authorization: Basic [token hidden]`;
+    token (`xoxb-` and the other `xox` prefixes and 8 or more characters), a Stripe live key (`sk_live_` or
+    `rk_live_` and 16 or more characters) and a JSON Web Token, each now sent as `[token hidden]`, and the
+    credentials after `Authorization: Basic`, now sent as `Authorization: Basic [token hidden]`. The key is read
+    in either letter case, also as Java prints a header: `{Authorization=[Basic dXNlcjpwYXNz]}` and
+    `setHeader("Authorization", "Basic dXNlcjpwYXNz")` lose the credentials too. One word of letters with no
+    upper case letter after its first stays, as in `Authorization: Basic authentication is not supported`;
   - the value of a `passphrase` or `license-key` key (also `license_key`, `licenseKey` and the spelling
     `licence`) before a `=` or `:`, and of a key that ends in `pass` with no letter before it, such as `pass=`
-    or `db_pass=`, before a `=`. Each is now sent as `[redacted]`. `bypass=true` and `Battle pass: 3 of 5` are
-    sent as written;
+    or `db_pass=`, or in `Pass` after a lower case letter, such as `dbPass=`, before a `=`. Such a key in
+    quotes counts before a `:` too, as in `"db_pass": "x"`. Each is now sent as `[redacted]`. `bypass=true`,
+    `Battle pass: 3 of 5` and a count of 1 to 3 digits, as in `pass=3 fail=2`, are sent as written;
+  - the value after a `=>`: `'password' => 'hunter2'` was sent as `'password' =[redacted] 'hunter2'`
+    and is now `'password' => [redacted]`;
   - the id and token of a Discord webhook URL on `http://`, now sent as
     `http://[host hidden]/api/webhooks/[id hidden]/[token hidden]`;
   - the single-quoted database name of MySQL and MariaDB: `Unknown database 'survival_prod'` is now
@@ -91,15 +106,21 @@ All notable changes to Taffy are documented here. This project follows
   `Please select a kit from the list` was sent as `Please [sql hidden]`, and `Could not delete from the cache`
   and `Failed to insert into the database` were cut the same way; each is now sent whole. A `FROM` or `INTO`
   starts no statement when `the`, `an`, `this`, `that`, `these`, `those`, `your`, `my`, `our` or `their` follows
-  it, unless one of `, ; ( ) = *`, `WHERE` or `VALUES (` comes after that word. After `SELECT` this holds only
-  when 1 to 8 words of letters stand between it and `FROM`, so `SELECT * FROM the list` is still hidden. Every
-  other statement is hidden as before, and so is a sentence without such a word, such as
-  `Could not delete from disk cache`, sent as `Could not [sql hidden]`.
+  it with spaces and a letter after that word, unless one of these stands in the next 200 characters, on that
+  line or a later one and before the next SQL verb of the rule: `WHERE`, `VALUES (`, `DEFAULT VALUES`,
+  `RETURNING`, `ORDER BY`, `GROUP BY`, `HAVING`, `LIMIT` and a digit, `SET` with a name and a `=`, `JOIN` or
+  `USING` with `ON` at most three words later, `--` or `/*`. After `SELECT` this holds only when 1 to 8 words of
+  letters stand between it and `FROM`, so `SELECT * FROM the list` is still hidden, and so is
+  `SELECT name FROM the t WHERE pin = 1234`. A statement whose table is named by one of the ten words and that
+  holds none of those, such as `SELECT name FROM the t`, is now sent. Every other statement is hidden as before,
+  and so is a sentence without such a word, such as `Could not delete from disk cache`, sent as
+  `Could not [sql hidden]`.
 - `verifyPluginLoader` of `so.alaz.taffy.paper-plugin` fails when the `loader` key of `paper-plugin.yml` has no
   value while `paperPlugin.runtimeLibraries` lists a library, with the message of a missing key. Before, `loader:`
   followed by nothing, by spaces or by a comment only passed the check, so the jar shipped `RuntimeLibraries` and
   no loader, and the plugin failed at its first use of a library. A value on the same line counts, and so does an
-  indented one on the next line that is neither blank nor a comment.
+  indented one on the next line that is neither blank nor a comment. The values `""`, `''`, `~`, `null`, `Null`
+  and `NULL` fail the build as well, and so does `|` or `>` with no indented line below it.
 
 ## [0.4.2] - 2026-11-21
 

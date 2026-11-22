@@ -358,6 +358,34 @@ final class DialogPromptsTest {
     }
 
     @Test
+    void aDialogTheServerFailsToShowAgainAfterARefusalEndsTheAskAsReplaced() {
+        start();
+        ask();
+        dialogs.submit(0, "nope");
+        dialogs.failure = new IllegalStateException("refused");
+
+        assertThatIllegalStateException().isThrownBy(harness::drain).withMessage("refused");
+
+        assertThat(ends).containsExactly(PromptEnd.REPLACED);
+        assertThat(prompts.pending(alex.id)).isNull();
+        assertThat(dialogs.shown).hasSize(1);
+    }
+
+    @Test
+    void aTextDialogTheServerFailsToShowAgainAfterARefusalRunsEndedOnce() {
+        alone();
+        prompts.ask(alex.player, text());
+        dialogs.submit(0, "ab");
+        dialogs.failure = new IllegalStateException("refused");
+
+        assertThatIllegalStateException().isThrownBy(harness::drain).withMessage("refused");
+
+        assertThat(ends).containsExactly(PromptEnd.REPLACED);
+        assertThat(accepted).isEmpty();
+        assertThat(prompts.pending(alex.id)).isNull();
+    }
+
+    @Test
     void promptsInTheDialogModeWithoutADialogApiAskInChat() {
         sample = new Sample(folder);
         harness = sample.harness;

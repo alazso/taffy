@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import dev.faststats.ErrorTracker;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.lang.reflect.Method;
@@ -222,6 +223,29 @@ class AnonymizersTest {
         assertThat(Anonymizers.anonymize("Authorization: Basic dXNlcjpodW50ZXIy sent"))
             .isEqualTo("Authorization: Basic [token hidden] sent");
         assertThat(sent("Authorization: Basic dXNlcjpodW50ZXIy sent")).doesNotContain("dXNlcjpodW50ZXIy");
+    }
+
+    @Test
+    void theCredentialsOfABasicAuthorizationAreHiddenAsJavaPrintsAHeader() throws ReflectiveOperationException {
+        String headers = "{Authorization=[Basic dXNlcjpwYXNz], Content-Type=[application/json]}";
+
+        assertThat(apply(BEARER, headers))
+            .isEqualTo("{Authorization=[Basic [token hidden]], Content-Type=[application/json]}");
+        assertThat(apply(BEARER, "java.net.http.HttpHeaders@1a2b { {authorization=[Basic dXNlcjpwYXNz]} }"))
+            .isEqualTo("java.net.http.HttpHeaders@1a2b { {authorization=[Basic [token hidden]]} }");
+        assertThat(apply(BEARER, "setHeader(\"Authorization\", \"Basic dXNlcjpwYXNz\")"))
+            .isEqualTo("setHeader(\"Authorization\", \"Basic [token hidden]\")");
+        assertThat(apply(BEARER, "Authorization:  Basic  dXNlcjpwYXNz and Authorization: Basic YTpi"))
+            .isEqualTo("Authorization:  Basic [token hidden] and Authorization: Basic [token hidden]");
+        assertThat(sent(headers)).doesNotContain("dXNlcjpwYXNz");
+    }
+
+    @Test
+    void anOrdinaryWordAfterABasicAuthorizationIsLeftAsWritten() {
+        assertThat(apply(BEARER, "Authorization: Basic authentication is not supported"))
+            .isEqualTo("Authorization: Basic authentication is not supported");
+        assertThat(apply(BEARER, "Authorization: Basic is required")).isEqualTo("Authorization: Basic is required");
+        assertThat(apply(BEARER, "Authorization: Basic Auth")).isEqualTo("Authorization: Basic Auth");
     }
 
     @Test
@@ -454,6 +478,15 @@ class AnonymizersTest {
             .isEqualTo("Invalid licenseKey=[redacted] or LICENCE_KEY: [redacted]");
         assertThat(apply(SECRET_KEY, "login with pass=hunter2 and db_pass = hunter2, MYSQL_PASS=hunter2"))
             .isEqualTo("login with pass=[redacted] and db_pass = [redacted], MYSQL_PASS=[redacted]");
+        assertThat(apply(SECRET_KEY, "'pass' => 'hunter2' and config: 'password' => 'hunter2'"))
+            .isEqualTo("'pass' => [redacted] and config: 'password' => [redacted]");
+        assertThat(apply(SECRET_KEY, "password => 'hunter2'")).isEqualTo("password => [redacted]");
+        assertThat(apply(SECRET_KEY, "dbPass=hunter2 and pass=1234"))
+            .isEqualTo("dbPass=[redacted] and pass=[redacted]");
+        assertThat(apply(SECRET_KEY, "{\"pass\": \"hunter2\", 'db_pass': 'hunter2', \"dbPass\": \"hunter2\"}"))
+            .isEqualTo("{\"pass\": [redacted], 'db_pass': [redacted], \"dbPass\": [redacted]}");
+        assertThat(sent("'pass' => 'hunter2'")).doesNotContain("hunter2");
+        assertThat(sent("{\"db_pass\": \"hunter2\"}")).doesNotContain("hunter2");
         assertThat(sent("login with pass=hunter2")).isEqualTo("login with pass=[redacted]");
         assertThat(sent("Wrong passphrase: hunter2")).isEqualTo("Wrong passphrase: [redacted]");
         assertThat(sent("Invalid license-key: ABCD-1234-EFGH")).isEqualTo("Invalid license-key: [redacted]");
@@ -464,6 +497,16 @@ class AnonymizersTest {
         assertThat(apply(SECRET_KEY, "bypass=true compass=north")).isEqualTo("bypass=true compass=north");
         assertThat(apply(SECRET_KEY, "Battle pass: 3 of 5")).isEqualTo("Battle pass: 3 of 5");
         assertThat(apply(SECRET_KEY, "passenger=Steve")).isEqualTo("passenger=Steve");
+        assertThat(apply(SECRET_KEY, "{\"bypass\": \"x\", \"compass\": \"north\"}"))
+            .isEqualTo("{\"bypass\": \"x\", \"compass\": \"north\"}");
+    }
+
+    @Test
+    void aCountOfOneToThreeDigitsAfterAPassKeyIsLeftAsWritten() {
+        assertThat(apply(SECRET_KEY, "pass=3 fail=2 skip=0")).isEqualTo("pass=3 fail=2 skip=0");
+        assertThat(apply(SECRET_KEY, "tests: pass=12, fail=0")).isEqualTo("tests: pass=12, fail=0");
+        assertThat(apply(SECRET_KEY, "{\"pass\": 120, \"fail\": 2}")).isEqualTo("{\"pass\": 120, \"fail\": 2}");
+        assertThat(apply(SECRET_KEY, "pass=12ab")).isEqualTo("pass=[redacted]");
     }
 
     @Test
@@ -476,7 +519,12 @@ class AnonymizersTest {
             .isEqualTo("- passphrase: [redacted]");
         assertThat(apply(SECRET_KEY, "PWD = my pass word\npasswd:my pass word"))
             .isEqualTo("PWD = [redacted]\npasswd:[redacted]");
+        assertThat(apply(SECRET_KEY, "spring.datasource.hikari.password: my pass word"))
+            .isEqualTo("spring.datasource.hikari.password: [redacted]");
+        assertThat(apply(SECRET_KEY, "some.very.long.prefix.key.db.password = my pass word"))
+            .isEqualTo("some.very.long.prefix.key.db.password = [redacted]");
         assertThat(sent("password: my pass word")).isEqualTo("password: [redacted]");
+        assertThat(sent("spring.datasource.hikari.password: my pass word")).doesNotContain("pass word");
     }
 
     @Test
@@ -502,6 +550,20 @@ class AnonymizersTest {
         assertThat(apply(SECRET_KEY, "api-key:\n  - k-1\n  - k-2")).isEqualTo("api-key:\n  [redacted]");
         assertThat(apply(SECRET_KEY, "tokens: - abc123")).isEqualTo("tokens: [redacted]");
         assertThat(sent("tokens:\n  - abc123\n  - def456")).doesNotContain("abc123", "def456");
+    }
+
+    @Test
+    void aBlankOrACommentLineBetweenTheListItemsBelowASecretKeyKeepsThemOneValue()
+        throws ReflectiveOperationException {
+        assertThat(apply(SECRET_KEY, "tokens:\n  - abc123\n\n  - def456")).isEqualTo("tokens:\n  [redacted]");
+        assertThat(apply(SECRET_KEY, "tokens:\n  - abc123\n  # comment\n\n  - def456\nport: 25565"))
+            .isEqualTo("tokens:\n  [redacted]\nport: 25565");
+        assertThat(apply(SECRET_KEY, "tokens:\r\n  - abc123\r\n\r\n  - def456\r\nport: 25565"))
+            .isEqualTo("tokens:\r\n  [redacted]\nport: 25565");
+        assertThat(apply(SECRET_KEY, "tokens:\n  - abc123\n\n# comment\nport: 25565"))
+            .isEqualTo("tokens:\n  [redacted]\n\n# comment\nport: 25565");
+        assertThat(sent("tokens:\n  - abc123\n\n  - def456")).doesNotContain("abc123", "def456");
+        assertThat(sent("tokens:\n  - abc123\n  # comment\n  - def456")).doesNotContain("abc123", "def456");
     }
 
     @Test
@@ -557,6 +619,9 @@ class AnonymizersTest {
         "Could not delete from the cache",
         "Failed to insert into the database: timeout",
         "Cannot merge into this stack or replace into that slot",
+        "Could not delete from the cache (3 entries left)",
+        "Could not delete from the cache: key=shop-12",
+        "Failed to insert into the database, it's read only",
     })
     void aSentenceWithADeterminerAfterFromOrIntoIsLeftAsWritten(String line) throws ReflectiveOperationException {
         assertThat(apply(SQL, line)).isEqualTo(line);
@@ -576,9 +641,43 @@ class AnonymizersTest {
         "insert into the VALUES ('John', 1234)",
         "DELETE FROM the WHERE name = 'John'",
         "delete from their;",
+        "SELECT name FROM the t WHERE pin = 1234",
+        "SELECT name FROM that AS t WHERE t.pin = 1234",
+        "SELECT pin FROM those ORDER BY pin LIMIT 1",
+        "SELECT pin FROM those LIMIT 1",
+        "SELECT name FROM my JOIN x ON a = b",
+        "SELECT name FROM my\"players\" WHERE pin = 1234",
+        "SELECT name FROM the[players] WHERE pin = 1234",
+        "SELECT name FROM the-players",
+        "SELECT name FROM the 'players'",
+        "SELECT name FROM the/**/WHERE pin = 1234",
+        "SELECT name FROM the t /* players */",
+        "SELECT pin\tFROM\tthe t WHERE name='John'",
+        "SELECT name FROM the t GROUP BY name HAVING x",
+        "DELETE FROM my USING x WHERE x.id = my.id AND x.name = 'John'",
+        "DELETE FROM those RETURNING pin",
+        "INSERT INTO my SET name = 'John', pin = 1234",
+        "INSERT INTO this DEFAULT VALUES",
+        "INSERT OR REPLACE INTO my t VALUES ('John')",
+        "REPLACE INTO the SET pin = 1234",
+        "MERGE INTO the USING src ON (a = b) WHEN MATCHED THEN UPDATE SET pin = 1234",
     })
     void aStatementWithADeterminerAsItsTableIsHidden(String statement) {
         assertThat(apply(SQL, "failed: " + statement + "\nnext")).isEqualTo("failed: [sql hidden]\nnext");
+    }
+
+    @Test
+    void aStatementWithADeterminerAsItsTableIsHiddenWhenItsClauseIsOnALaterLine() {
+        assertThat(apply(SQL, "SELECT name\nFROM the t\nWHERE pin = 1234")).isEqualTo("[sql hidden]\nWHERE pin = 1234");
+        assertThat(apply(SQL, "SELECT name FROM the -- comment\nWHERE pin = 1234"))
+            .isEqualTo("[sql hidden]\nWHERE pin = 1234");
+        assertThat(apply(SQL, "DELETE FROM the t\nWHERE pin = 1234")).isEqualTo("[sql hidden]\nWHERE pin = 1234");
+    }
+
+    @Test
+    void aStatementWithADeterminerAsItsTableAndNoClauseIsLeftAsWritten() {
+        assertThat(apply(SQL, "SELECT name FROM the t")).isEqualTo("SELECT name FROM the t");
+        assertThat(apply(SQL, "DELETE FROM my USING x")).isEqualTo("DELETE FROM my USING x");
     }
 
     @ParameterizedTest
@@ -716,6 +815,7 @@ class AnonymizersTest {
     void twoBackslashesWithoutAServerNameAndAFurtherBackslashAreLeftAsWritten() {
         assertThat(apply(WINDOWS_PATH, "Illegal escape \\\\d in pattern and a\\\\b"))
             .isEqualTo("Illegal escape \\\\d in pattern and a\\\\b");
+        assertThat(apply(WINDOWS_PATH, "regex \\\\d+\\\\s is invalid")).isEqualTo("regex \\\\d+\\\\s is invalid");
     }
 
     @Test
@@ -782,6 +882,8 @@ class AnonymizersTest {
             .isEqualTo("cannot read [path hidden] now");
         assertThat(apply(UNIX_PATH, "Cannot read /srv/My Mc Server/plugins/Shop/config.yml"))
             .isEqualTo("Cannot read [path hidden]");
+        assertThat(apply(UNIX_PATH, "Cannot read /Users/John Smith/Library/Application Support/x.dat"))
+            .isEqualTo("Cannot read [path hidden]");
         assertThat(Anonymizers.anonymize("cannot read /home/john smith/server/x now"))
             .isEqualTo("cannot read [path hidden] now");
         assertThat(sent("cannot read /home/john smith/server/x now")).isEqualTo("cannot read [path hidden] now");
@@ -797,6 +899,22 @@ class AnonymizersTest {
         assertThat(apply(UNIX_PATH, "Saved /srv/data and logs/x now")).isEqualTo("Saved [path hidden] now");
         assertThat(apply(UNIX_PATH, "run /shop open first and/or close"))
             .isEqualTo("run /shop open first and/or close");
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', value = {
+        "Failed to save /srv/world after 3 attempts/retries | Failed to save [path hidden] after 3 attempts/retries",
+        "World /srv/mc/world uses 12 chunks/tick | World [path hidden] uses 12 chunks/tick",
+        "Cannot load /plugins/Shop/lang at line 3/40 | Cannot load [path hidden] at line 3/40",
+        "Directory /srv/mc/plugins/Shop is read/write protected | Directory [path hidden] is read/write protected",
+        "Loaded /srv/mc/plugins in 5 ms/plugin | Loaded [path hidden] in 5 ms/plugin",
+        "Moved /srv/world to backup/world ok | Moved [path hidden] to backup/world ok",
+        "Read /srv/world from cache/disk | Read [path hidden] from cache/disk",
+        "Path /srv/world was not found/readable | Path [path hidden] was not found/readable",
+    })
+    void aSentenceWordAfterAUnixPathEndsIt(String line, String sent) throws ReflectiveOperationException {
+        assertThat(apply(UNIX_PATH, line)).isEqualTo(sent);
+        assertThat(sent(line)).isEqualTo(sent);
     }
 
     @Test
@@ -1128,6 +1246,8 @@ class AnonymizersTest {
     void aTokenPrefixWithoutATokenIsLeftAsWritten() {
         assertThat(apply(TOKEN, "key ghp_short and sk_live_ only, eyJabc.def and task_live_abcdefgh"))
             .isEqualTo("key ghp_short and sk_live_ only, eyJabc.def and task_live_abcdefgh");
+        assertThat(apply(TOKEN, "Task sk_live_updates1 failed and field rk_live_ranking1 is missing"))
+            .isEqualTo("Task sk_live_updates1 failed and field rk_live_ranking1 is missing");
     }
 
     @Test
@@ -1195,7 +1315,9 @@ class AnonymizersTest {
         "x://a:1/", "://a:", "a.B", "a.yml", "a.b(",
         "a+", "/a/a a/", "/a/a.b a/", "\\\\a\\", "Users\\a ", "tokens:\n- ", "password: a ", "\npassword: ", "pass=",
         "ghp_", "xoxb-a", "eyJaaaaa.", "Authorization: Basic ", "http://discord.com/api/webhooks/1/", "database '",
-        "select a from the ", "delete from the ",
+        "select a from the ", "delete from the ", "from the join ", "from the a set ", "tokens:\n- a\n\n",
+        "tokens:\n- a\n#\n", "\"pass\": ", "pass=>", "pass=1", "Authorization=[Basic ", "Authorization: Basic a ",
+        "/a/a to ", "\\\\a.b$\\",
     })
     void aLongAdversarialTextIsAnonymizedQuickly(String unit) {
         String text = unit.repeat(100_000 / unit.length() + 1);

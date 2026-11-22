@@ -398,6 +398,11 @@ final class TextPromptsTest {
             .withMessage("these prompts are built over no menus; ask with a TextRequest");
         assertThatNullPointerException().isThrownBy(() -> prompts.ask(alex.player, (PromptRequest) null))
             .withMessage("request");
+        assertThatIllegalStateException().isThrownBy(() -> prompts.askLater(alex.player, menu))
+            .withMessage("these prompts are built over no menus; ask with a TextRequest");
+        assertThatNullPointerException().isThrownBy(() -> prompts.askLater(alex.player, (PromptRequest) null))
+            .withMessage("request");
+        harness.drain();
 
         assertThat(prompts.pending(alex.id)).isNull();
         assertThat(alex.said()).isEmpty();

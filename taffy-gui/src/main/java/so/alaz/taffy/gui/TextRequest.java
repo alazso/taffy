@@ -19,7 +19,10 @@ import java.util.function.Function;
  * {@link PromptEnd#TIMED_OUT} for the deadline, {@link PromptEnd#LEFT} for a player who quit or is gone, and
  * {@link PromptEnd#REPLACED} for a newer ask, a menu of the menus the prompts are built over, another inventory
  * opened over the prompt's anvil and an anvil or dialog that could not be shown again after a refusal. Neither runs
- * for an ask that never started: one after the prompts were shut down, or one whose anvil the server refused to open.
+ * for an ask that never started: one after the prompts were shut down, one whose anvil the server refused to open,
+ * or one whose dialog the server failed to show, which {@link Prompts#ask(org.bukkit.entity.Player, TextRequest)}
+ * throws on. A dialog that the client takes away without a button, as when another plugin opens an inventory or the
+ * player dies, ends at the deadline.
  *
  * <p>A refused answer tells the player the refusal and keeps the ask waiting until its first deadline, as
  * {@link Answer.Retry} does. A refusal check that throws a {@link RuntimeException}, or whose future fails, is logged

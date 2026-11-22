@@ -17,7 +17,9 @@ public enum PromptMode {
      * many. The cancel button cancels the ask, and so does closing the dialog with the escape key, which the client
      * reports as that button. A refused answer shows the dialog again on the next tick with the
      * {@link Prompts#REFUSED} text above the field and the refused text in it, and sends nothing to chat. While an
-     * {@link Answer.Later} runs no dialog shows. Bedrock players answer in chat.
+     * {@link Answer.Later} runs no dialog shows. Bedrock players answer in chat. Paper has no event for a dialog
+     * that the client takes away without a button, as when another plugin opens an inventory or the player dies: such
+     * an ask takes no chat line and ends at its deadline as {@link PromptEnd#TIMED_OUT}.
      *
      * <p>Paper marks its Dialog API as experimental and may change it, so this mode is marked experimental too. On a
      * server without that API, building the prompts logs one warning and every ask is asked in chat. When the API of

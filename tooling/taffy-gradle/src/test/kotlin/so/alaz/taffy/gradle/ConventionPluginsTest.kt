@@ -36,7 +36,8 @@ class ConventionPluginsTest {
         "io.papermc", "com.mojang", "net.md-5", "so.alaz", "me.clip", "dev.faststats.metrics", "net.milkbowl.vault",
         "org.black_ixx", "io.th0rgal", "md.thomas.hopper", "com.nexomc", "com.tcoded", "me.gabytm.util",
         "team.unnamed", "com.sk89q", "org.enginehub", "org.geysermc.floodgate", "org.geysermc.geyser",
-        "org.geysermc.api", "de.oliver", "net.thenextlvl", "com.github.retrooper",
+        "org.geysermc.api", "org.geysermc.cumulus", "org.geysermc.event", "org.cloudburstmc.math", "de.oliver",
+        "net.thenextlvl", "com.github.retrooper",
         "com.github.MilkBowl", "com.github.Arcaniax-Development", "com.github.decentsoftware-eu",
         "com.github.HologramLib", "com.github.maximjsx.EntityLib", "org.example",
     )
@@ -1595,6 +1596,14 @@ class ConventionPluginsTest {
             "loader: # so.alaz.demo.DemoLoader\nname: Demo\n",
             "name: Demo\r\n\"loader\":\r\n\r\n# so.alaz.demo.DemoLoader\r\nversion: 1\r\n",
             "loader:\n  # so.alaz.demo.DemoLoader\n\nname: Demo\n",
+            "loader: \"\"\nname: Demo\n",
+            "loader: ''  # so.alaz.demo.DemoLoader\nname: Demo\n",
+            "loader: ~\nname: Demo\n",
+            "name: Demo\nloader: null",
+            "loader: NULL\r\nname: Demo\r\n",
+            "loader: |\nname: Demo\n",
+            "loader: >-\n\nname: Demo\n",
+            "loader:\n  ~\nname: Demo\n",
         )
         for (text in withoutValue) {
             descriptor.writeText(text)
@@ -1612,6 +1621,10 @@ class ConventionPluginsTest {
             "name: Demo\nloader: so.alaz.demo.DemoLoader # read at load\n",
             "name: Demo\nloader:\n\n  # read at load\n  so.alaz.demo.DemoLoader\n",
             "loader:\nname: Demo\nloader: so.alaz.demo.DemoLoader",
+            "loader: >-\n\n  so.alaz.demo.DemoLoader\nname: Demo\n",
+            "loader: |\n  # so.alaz.demo.DemoLoader\n",
+            "loader: nullable.Loader\nname: Demo\n",
+            "loader: \"so.alaz.demo.DemoLoader\"\nname: Demo\n",
         )
         for (text in withValue) {
             descriptor.writeText(text)
@@ -1929,7 +1942,8 @@ class ConventionPluginsTest {
             "repository enginehub https://maven.enginehub.org/repo/ versions=any " +
                 "groups=[com.sk89q, com.sk89q.sub, org.enginehub, org.enginehub.sub]",
             "repository opencollab https://repo.opencollab.dev/main/ versions=any " +
-                "groups=[org.geysermc.floodgate, org.geysermc.geyser, org.geysermc.api]",
+                "groups=[org.geysermc.floodgate, org.geysermc.geyser, org.geysermc.api, org.geysermc.cumulus, " +
+                "org.geysermc.event, org.cloudburstmc.math]",
             "repository fancyinnovations https://maven.fancyspaces.net/fancyinnovations/releases versions=any " +
                 "groups=[de.oliver]",
             "repository thenextlvl https://repo.thenextlvl.net/releases versions=any groups=[net.thenextlvl]",
@@ -1995,6 +2009,9 @@ class ConventionPluginsTest {
                 "org.geysermc.geyser:missing:1.0",
                 "org.geysermc.api:missing:1.0",
                 "org.geysermc.cumulus:missing:1.0",
+                "org.geysermc.event:missing:1.0",
+                "org.cloudburstmc.math:missing:1.0",
+                "org.geysermc.other:missing:1.0",
                 "de.oliver:missing:1.0",
                 "net.thenextlvl:missing:1.0",
                 "com.github.retrooper:missing:1.0",
@@ -2046,7 +2063,10 @@ class ConventionPluginsTest {
             "asked org.geysermc.floodgate:missing:1.0=[MavenRepo, opencollab]",
             "asked org.geysermc.geyser:missing:1.0=[MavenRepo, opencollab]",
             "asked org.geysermc.api:missing:1.0=[MavenRepo, opencollab]",
-            "asked org.geysermc.cumulus:missing:1.0=[MavenRepo]",
+            "asked org.geysermc.cumulus:missing:1.0=[MavenRepo, opencollab]",
+            "asked org.geysermc.event:missing:1.0=[MavenRepo, opencollab]",
+            "asked org.cloudburstmc.math:missing:1.0=[MavenRepo, opencollab]",
+            "asked org.geysermc.other:missing:1.0=[MavenRepo]",
             "asked de.oliver:missing:1.0=[MavenRepo, fancyinnovations]",
             "asked net.thenextlvl:missing:1.0=[MavenRepo, thenextlvl]",
             "asked com.github.retrooper:missing:1.0=[MavenRepo, packetevents]",
