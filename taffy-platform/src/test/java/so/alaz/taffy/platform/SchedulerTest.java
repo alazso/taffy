@@ -1246,6 +1246,23 @@ final class SchedulerTest {
     }
 
     @Test
+    void theRegionTasksPassOnWhatALocationThrowsForAnUnloadedWorldBeforeSchedulingAnything() {
+        IllegalArgumentException unloaded = new IllegalArgumentException("World unloaded");
+        Location stale = mock(Location.class);
+        when(stale.getWorld()).thenThrow(unloaded);
+        Duration second = Duration.ofSeconds(1);
+
+        assertThatThrownBy(() -> scheduler.region(stale, taskRuns::incrementAndGet)).isSameAs(unloaded);
+        assertThatThrownBy(() -> scheduler.delayedRegion(stale, taskRuns::incrementAndGet, second))
+            .isSameAs(unloaded);
+        assertThatThrownBy(() -> scheduler.repeatingRegion(stale, taskRuns::incrementAndGet, second, second))
+            .isSameAs(unloaded);
+
+        verifyNoInteractions(regionScheduler);
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
     void aRegionTaskReportsAThrowOnceUnderTheRegionSourceAndRethrowsIt() {
         when(regionScheduler.run(eq(plugin), eq(world), anyInt(), anyInt(), any())).thenAnswer(this::enqueueRegion);
         IllegalStateException failure = new IllegalStateException("region failed");

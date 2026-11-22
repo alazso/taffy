@@ -203,6 +203,18 @@ class CooldownManagerTest {
     }
 
     @Test
+    void tryStartWithALengthOfZeroOrLessRemovesAnExpiredCooldown() {
+        manager.set("zero", HOUR);
+        manager.set("negative", HOUR);
+        advance(HOUR);
+
+        assertThat(manager.tryStart("zero", Duration.ZERO)).isTrue();
+        assertThat(manager.tryStart("negative", HOUR.negated())).isTrue();
+
+        assertThat(manager.purgeExpired()).isZero();
+    }
+
+    @Test
     void tryStartWithALengthPastTheEndOfTheClockRangeLastsUntilThatEnd() {
         assertThat(manager.tryStart("daily", Duration.ofSeconds(Long.MAX_VALUE))).isTrue();
 
@@ -260,6 +272,27 @@ class CooldownManagerTest {
         assertThat(manager.purgeExpired()).isZero();
 
         assertThat(manager.remaining("daily")).isEqualTo(HOUR.multipliedBy(3));
+    }
+
+    @Test
+    void purgeExpiredKeepsACooldownSetBetweenItsReadOfTheExpiryAndItsRemoval() {
+        AtomicReference<Runnable> duringHash = new AtomicReference<>(NOTHING);
+        // ConcurrentHashMap hashes the key at the start of a remove, which purgeExpired reaches after it read the
+        // expiry, and not while it iterates.
+        Object key = new Object() {
+            @Override
+            public int hashCode() {
+                duringHash.getAndSet(NOTHING).run();
+                return 1;
+            }
+        };
+        manager.set(key, HOUR);
+        advance(HOUR.multipliedBy(2));
+        duringHash.set(() -> manager.set(key, HOUR.multipliedBy(3)));
+
+        assertThat(manager.purgeExpired()).isZero();
+
+        assertThat(manager.remaining(key)).isEqualTo(HOUR.multipliedBy(3));
     }
 
     @Test

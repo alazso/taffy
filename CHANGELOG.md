@@ -18,17 +18,22 @@ All notable changes to Taffy are documented here. This project follows
   returns Paper's `ScheduledTask`, or `null` when the task was refused: the plugin is not enabled, or the entity
   is already removed. The two entity methods have then run `retired` on the calling thread. Paper runs `retired`
   when the entity retires before a delayed task runs or while a repeating task repeats, and `retired` runs at
-  most once.
+  most once. A repeating task whose own run removes the entity (`Entity.remove()`, a kick) stops without
+  `retired`, since Paper runs no callback then.
 - `Scheduler` schedules on the region thread that owns a block: `region(Location location, Runnable task)`,
   `delayedRegion(Location location, Runnable task, Duration delay)` and `repeatingRegion(Location location,
   Runnable task, Duration initialDelay, Duration period)`, each returning Paper's `ScheduledTask`, or `null` when
   the plugin is not enabled. The region is taken from the world and the block coordinates of the `Location` at
-  the call. A `null` task and a `Location` with no world throw `NullPointerException`. On Paper the task runs on
-  the main thread. No `ThreadTag` names a region.
+  the call. A `null` task and a `Location` with no world throw `NullPointerException`, and a `Location` whose
+  world is unloaded throws the `IllegalArgumentException` of `Location.getWorld()`. On Paper the task runs on the
+  main thread. No `ThreadTag` names a region.
 - The global, entity and region methods above count in server ticks: a `Duration` is rounded up to whole 50 ms
   ticks, and anything below one tick, zero and negative values included, is one tick. A task they start that
   throws is reported once under `scheduler.global`, `scheduler.entity` or the new source `scheduler.region` and
   rethrown, as the tasks of the other methods are.
+- A task is not passed its `ScheduledTask`: one that stops itself cancels the returned handle, kept in a
+  `volatile` field or an `AtomicReference`. A first run can start before the scheduling call returns when that
+  call is made on another thread, at once for `repeatingAsyncTask` with a zero initial delay.
 - `Scheduler.close()` also cancels the tasks `repeatingAsyncTask`, `repeatingGlobal`, `repeatingEntity` and
   `repeatingRegion` started. Each new repeating task drops the cancelled ones from the tasks `close()` tracks, so
   a plugin that cancels and restarts a task on every reload holds no more than its live tasks.

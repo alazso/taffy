@@ -12,10 +12,10 @@ import java.util.function.LongSupplier;
  * <p>A length is read in whole milliseconds, so a positive length below one millisecond counts as zero. A
  * length that reaches past the end of the clock's range lasts until that end.
  *
- * <p>Thread-safe: each call is atomic. A check followed by a start is two calls, so two threads can both
- * pass the check for one key. {@link #tryStart(Object, Duration)} checks and starts in one call.
+ * <p>Thread-safe: each call on a key is atomic. A check followed by a start is two calls, so two threads can
+ * both pass the check for one key. {@link #tryStart(Object, Duration)} checks and starts in one call.
  *
- * <p>An expired cooldown stays in memory until its key is read or started again or
+ * <p>An expired cooldown stays in memory until its key is read, started again or extended, or
  * {@link #purgeExpired()} runs.
  */
 public final class CooldownManager {
@@ -89,7 +89,8 @@ public final class CooldownManager {
 
     /**
      * Removes every cooldown that has expired, for a plugin whose keys are not read again, such as the keys of
-     * players who left. A cooldown started while this runs is kept.
+     * players who left. The cooldowns are removed key by key, each in one atomic step, so a cooldown started
+     * while this runs is kept.
      *
      * @return the number of cooldowns removed
      */

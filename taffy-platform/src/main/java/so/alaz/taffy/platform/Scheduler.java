@@ -49,6 +49,12 @@ import java.util.function.Supplier;
  * one tick, zero and negative values included, is one tick: Paper accepts no shorter delay or period. The async
  * methods pass milliseconds and count no ticks.
  *
+ * <p>A task is not passed its own handle. A task that stops itself cancels the returned handle, which its caller
+ * keeps where the task's thread reads it, in a {@code volatile} field or an
+ * {@link java.util.concurrent.atomic.AtomicReference}. When the scheduling call is made on another thread than the
+ * one that runs the task, a first run can start before the caller has stored the handle, as it can at once with a
+ * zero initial delay of {@link #repeatingAsyncTask}. Such a run finds no handle to cancel, and a later run does.
+ *
  * <p>A task Paper accepted but has not run by the time the owning plugin disables may never run: an entity
  * task then runs neither its task nor its retired callback, and a delayed task is cancelled. {@link #close}
  * completes the future of a {@link #dispatch} whose task has not started, as a refused call does. Work that must
@@ -251,6 +257,8 @@ public final class Scheduler implements Dispatcher {
      *
      * @throws NullPointerException when {@code task} is {@code null} or {@code location} has no world, before
      *     anything is scheduled
+     * @throws IllegalArgumentException when the world of {@code location} is unloaded, as
+     *     {@link Location#getWorld()} throws it, before anything is scheduled
      */
     public @Nullable ScheduledTask region(Location location, Runnable task) {
         return scheduled(inRegion(location, task, (world, chunkX, chunkZ, run) ->
@@ -265,6 +273,8 @@ public final class Scheduler implements Dispatcher {
      *
      * @throws NullPointerException when {@code task} is {@code null} or {@code location} has no world, before
      *     anything is scheduled
+     * @throws IllegalArgumentException when the world of {@code location} is unloaded, as
+     *     {@link Location#getWorld()} throws it, before anything is scheduled
      */
     public @Nullable ScheduledTask delayedRegion(Location location, Runnable task, Duration delay) {
         return scheduled(inRegion(location, task, (world, chunkX, chunkZ, run) ->
@@ -280,6 +290,8 @@ public final class Scheduler implements Dispatcher {
      *
      * @throws NullPointerException when {@code task} is {@code null} or {@code location} has no world, before
      *     anything is scheduled
+     * @throws IllegalArgumentException when the world of {@code location} is unloaded, as
+     *     {@link Location#getWorld()} throws it, before anything is scheduled
      */
     public @Nullable ScheduledTask repeatingRegion(
         Location location, Runnable task, Duration initialDelay, Duration period) {
@@ -381,7 +393,9 @@ public final class Scheduler implements Dispatcher {
      * {@code retired} has run here, on the calling thread, so it must not assume a region thread.
      *
      * <p>{@code retired} runs at most once. A task that is cancelled, by its handle, by {@link #close} or by
-     * Paper when the plugin disables, stops without it.
+     * Paper when the plugin disables, stops without it. So does a task whose own run removes the entity, for
+     * example by {@link Entity#remove()} or by kicking the player: Paper stops the task after that run and runs
+     * no callback, so such a task does itself what {@code retired} would do.
      *
      * @throws NullPointerException when {@code task} or {@code retired} is {@code null}, before anything is
      *     scheduled
