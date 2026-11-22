@@ -39,10 +39,10 @@ final class PromptListenerPriorityTest {
     }
 
     @Test
-    void theOneListenerHoldsTheTwoChatHandlersAndTheSixAnvilHandlers() {
+    void theOneListenerHoldsTheTwoChatHandlersTheSixAnvilHandlersAndTheQuitHandler() {
         assertThat(handlers(PaperPromptListener.class)).containsExactlyInAnyOrder("onChat", "onLegacyChat",
             "onAnvilClick", "recancelAnvilClick", "onAnvilDrag", "recancelAnvilDrag", "onAnvilPrepare",
-            "onAnvilClose");
+            "onAnvilClose", "onQuit");
     }
 
     private static Iterable<String> handlers(Class<?> listener) {

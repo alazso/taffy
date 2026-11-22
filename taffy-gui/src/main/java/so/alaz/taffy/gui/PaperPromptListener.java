@@ -12,6 +12,7 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.PrepareAnvilEvent;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.InventoryView;
 import org.jetbrains.annotations.Nullable;
 
@@ -21,8 +22,9 @@ import java.util.UUID;
 
 /**
  * The prompts' events: the chat line answering a pending chat prompt, and the anvil prompt's events for the
- * {@link AnvilInput} the prompts built. The prompts build it and register it as a listener of the menus' plugin
- * when they are built. Over prompts without an anvil the anvil handlers do nothing.
+ * {@link AnvilInput} the prompts built. The prompts build it and register it as a listener of their plugin
+ * when they are built. Over prompts without an anvil the anvil handlers do nothing. A quit ends the ask of prompts
+ * built over no menus; the listener of the menus tells the prompts built over them.
  *
  * <p>Both chat handlers run at {@link EventPriority#LOWEST} with {@code ignoreCancelled = false}, so the line is taken
  * before any other plugin sees it and a mute plugin cannot leave the prompt waiting. The line is cancelled and its
@@ -188,6 +190,18 @@ final class PaperPromptListener implements Listener {
         }
         event.getView().getTopInventory().clear();
         prompts.surfaceClosed(event.getPlayer().getUniqueId(), open.token(), event.getReason());
+    }
+
+    /**
+     * Ends the ask of a player who quit, for prompts built over no menus.
+     *
+     * @param event the quit
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onQuit(PlayerQuitEvent event) {
+        if (prompts.alone()) {
+            prompts.quit(event.getPlayer().getUniqueId());
+        }
     }
 
     // Bukkit does not promise that the recipients of a chat event can be changed.

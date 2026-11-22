@@ -21,6 +21,34 @@ All notable changes to Taffy are documented here. This project follows
   `taffy-hooks` compiles against and does not ship. Floodgate and Geyser publish their APIs as snapshots only.
   `so.alaz.taffy.repositories` declares the `opencollab` repository, `https://repo.opencollab.dev/main/`, after
   `enginehub`, for the groups `org.geysermc.floodgate`, `org.geysermc.geyser` and `org.geysermc.api`.
+- `Prompts` in `taffy-gui` asks for text that opens no menu, for a command or a plugin's own screen.
+  `Prompts.ask(Player, TextRequest)` and `Prompts.askLater(Player, TextRequest)` show the question in the chat,
+  anvil or dialog of the prompts, with the cancel word, the cancel link, `Prompts.TIMEOUT` and chat for Bedrock
+  players. `new TextRequest(Component question, String initial, Function<String, @Nullable Component> refusal,
+  Consumer<String> accepted, Consumer<PromptEnd> ended)` holds the question: `refusal` returns `null` to take the
+  answer or the reason that refuses it, `accepted` gets the answer once, and `ended` gets `CANCELLED`, `TIMED_OUT`,
+  `LEFT` or `REPLACED` once when no answer was taken. `TextRequest.later(...)` takes a refusal check that returns
+  a `CompletableFuture<@Nullable Component>`, for a check that reads storage or an economy, and waits for it as
+  for an `Answer.Later`. A check that throws, or whose future fails, is reported under `gui.prompt`, tells the
+  player `Menus.ERROR` and ends the ask as `CANCELLED`.
+- `new Prompts(Menus.Parts parts, PromptMode mode, BedrockPlayers bedrock, BiConsumer<Runnable, Duration> timer)`
+  builds prompts over no `Menus`. It reads the plugin, text source, locale function, server, preview key, next-tick
+  tasks, entity thread, logger and error reports of the parts, and registers the prompt listener as a listener of
+  the plugin, which also ends the ask of a player who quits as `LEFT`. Such prompts ask with a `TextRequest` only:
+  `ask(Player, PromptRequest)` throws `IllegalStateException`. They share a player's ask with the other `Prompts`
+  of the plugin. `Prompts.shutdown()` is public: a plugin calls it at disable for prompts built this way, and
+  `Menus.shutdown()` still calls it for prompts built over menus.
+- `PromptMode.DIALOG`, marked `@ApiStatus.Experimental` as Paper's Dialog API is, asks in a Paper dialog with one
+  text field, a submit button and a cancel button, for a `PromptRequest` and a `TextRequest` alike. The title is
+  the question and the field starts with `initial`, cut to `Prompts.MAX_LENGTH` characters. The cancel button and
+  the escape key cancel the ask. A refused answer shows the dialog again on the next tick with the
+  `gui.prompt.refused` text above the field and the refused text in it, and sends nothing to chat. The buttons
+  carry the client's own text for `gui.done` and `gui.cancel`, so `Prompts.KEYS` is unchanged. Bedrock players
+  answer in chat. On a server without the Dialog API, building the prompts logs one warning and every ask is asked
+  in chat, as it is from the first ask on when the API cannot be linked.
+- With the two `ask` and `askLater` overloads and the two public `Prompts` constructors, a call that passes the
+  literal `null` as the request, or as the first constructor argument, needs a cast to compile. Each threw
+  `NullPointerException` before and still does.
 
 ## [0.4.2] - 2026-11-21
 

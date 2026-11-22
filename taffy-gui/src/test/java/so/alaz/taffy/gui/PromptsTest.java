@@ -444,7 +444,7 @@ final class PromptsTest {
         assertThat(prompts.pending(alex.id).mode()).isEqualTo(PromptMode.CHAT);
         assertThat(alex.closes).containsExactly(InventoryCloseEvent.Reason.PLUGIN);
         assertThat(alex.said()).containsExactly("[Server] Price?", HINT + " [Cancel]");
-        assertThatNullPointerException().isThrownBy(() -> prompts.askLater(alex.player, null))
+        assertThatNullPointerException().isThrownBy(() -> prompts.askLater(alex.player, (PromptRequest) null))
             .withMessage("request");
     }
 
@@ -1560,14 +1560,16 @@ final class PromptsTest {
     void askRefusesANullRequestBeforeItClosesTheMenuOrReplacesAnAsk() {
         start(PromptMode.CHAT);
 
-        assertThatNullPointerException().isThrownBy(() -> prompts.ask(alex.player, null)).withMessage("request");
+        assertThatNullPointerException().isThrownBy(() -> prompts.ask(alex.player, (PromptRequest) null))
+            .withMessage("request");
 
         assertThat(alex.session()).isNotNull();
         assertThat(alex.closes).isEmpty();
         assertThat(alex.said()).isEmpty();
         ask();
         long token = token();
-        assertThatNullPointerException().isThrownBy(() -> prompts.ask(alex.player, null)).withMessage("request");
+        assertThatNullPointerException().isThrownBy(() -> prompts.ask(alex.player, (PromptRequest) null))
+            .withMessage("request");
         assertThat(token()).isEqualTo(token);
     }
 
@@ -1664,17 +1666,18 @@ final class PromptsTest {
     void bothConstructorsRefuseEveryNullArgumentButTheAnvil() {
         harness = new Sample(folder).harness;
         Menus menus = harness.menus;
+        Menus absent = null;
         BedrockPlayers none = BedrockPlayers.NONE;
         Predicate<Player> screen = player -> true;
 
-        assertThatNullPointerException().isThrownBy(() -> new Prompts(null, PromptMode.CHAT, none, timer))
+        assertThatNullPointerException().isThrownBy(() -> new Prompts(absent, PromptMode.CHAT, none, timer))
             .withMessage("menus");
         assertThatNullPointerException().isThrownBy(() -> new Prompts(menus, null, none, timer)).withMessage("mode");
         assertThatNullPointerException().isThrownBy(() -> new Prompts(menus, PromptMode.CHAT, null, timer))
             .withMessage("bedrock");
         assertThatNullPointerException().isThrownBy(() -> new Prompts(menus, PromptMode.CHAT, none, null))
             .withMessage("timer");
-        assertThatNullPointerException().isThrownBy(() -> new Prompts(null, PromptMode.CHAT, none, timer, null, link,
+        assertThatNullPointerException().isThrownBy(() -> new Prompts(absent, PromptMode.CHAT, none, timer, null, link,
             screen, harness.clock)).withMessage("menus");
         assertThatNullPointerException().isThrownBy(() -> new Prompts(menus, null, none, timer, null, link, screen,
             harness.clock)).withMessage("mode");

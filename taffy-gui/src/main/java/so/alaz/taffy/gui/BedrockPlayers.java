@@ -2,7 +2,10 @@ package so.alaz.taffy.gui;
 
 import java.util.UUID;
 
-/** Tells which players joined from Minecraft Bedrock Edition. They always answer a prompt in chat. */
+/**
+ * Tells which players joined from Minecraft Bedrock Edition. They always answer a prompt in chat, whatever the
+ * {@link PromptMode}.
+ */
 @FunctionalInterface
 public interface BedrockPlayers {
 

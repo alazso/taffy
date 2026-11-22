@@ -9,6 +9,7 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.InventoryView;
 import org.jetbrains.annotations.Nullable;
+import so.alaz.taffy.platform.EntityThread;
 import so.alaz.taffy.platform.EntityUnavailableException;
 import so.alaz.taffy.platform.ErrorReports;
 
@@ -24,18 +25,22 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Asks a player for one line of text in place of a menu, and opens a menu with the answer.
  *
  * <p>A player types the answer into chat, or, for {@link PromptMode#ANVIL}, into the name field of an anvil the
- * prompts build. Bedrock players always type into chat. Each ask has a token; the chat line, the anvil's submit, the
- * cancel link and the timer each take the pending ask by its token in one atomic step, so only one of them acts on
- * it. Typing the cancel word cancels. An answer is
+ * prompts build, or, for {@link PromptMode#DIALOG}, into the text field of a dialog. Bedrock players always type
+ * into chat. Each ask has a token; the chat line, the anvil's submit, the dialog's buttons, the cancel link and the
+ * timer each take the pending ask by its token in one atomic step, so only one of them acts on it. Typing the cancel
+ * word cancels. An answer is
  * stripped of surrounding whitespace and cut to {@link #MAX_LENGTH} characters. A refused answer keeps the ask waiting
  * until its first deadline, {@link #TIMEOUT} after it was asked. Submit, cancel and timeout open a menu again unless
  * the player is dead or offline, has another plugin's inventory open, or the plugin is stopping; an ask ended by
@@ -48,8 +53,10 @@ import java.util.logging.Level;
  * {@link #CANCEL_BUTTON} (the clickable cancel link put after the hint), {@link #CANCEL_WORD} (the word that cancels,
  * {@link #DEFAULT_CANCEL_WORD} when the key is absent or blank; the English word always works too),
  * {@link #CANCELLED}, {@link #TIMED_OUT}, {@link #REFUSED} (with the refusal as {@code <reason>} and the typed text as
- * {@code <answer>}) and {@link Menus#ERROR}; {@link #KEYS} lists them. No prefix is put in front of these messages: a message carries the
- * plugin's prefix only where its text writes {@code <prefix>}.
+ * {@code <answer>}) and {@link Menus#ERROR}; {@link #KEYS} lists them. No prefix is put in front of these messages:
+ * a message carries the plugin's prefix only where its text writes {@code <prefix>}. A dialog ask sends no question
+ * and no hint: the dialog's title is the question, the {@link #REFUSED} text shows above its field, and its two
+ * buttons carry the client's own text for {@code gui.done} and {@code gui.cancel}.
  *
  * <p>An answer function that throws a {@link RuntimeException} or returns {@code null} is logged, reported to
  * {@link ErrorReports} under {@code gui.prompt}, and the player is told {@link Menus#ERROR} and taken back to the
@@ -58,10 +65,10 @@ import java.util.logging.Level;
  *
  * <p>An answer function returns an {@link Answer.Later} to decide off the player's entity thread. The ask then waits
  * for the future, which completes on any thread, and its result is applied on the player's entity thread. Until then
- * no chat line and no anvil submit is taken; the timer, the cancel link, a closed anvil, another menu, a newer ask, a
- * quit and {@link Menus#shutdown()} still end the ask, and the result of a future that completes after that is
- * dropped. A future that fails or completes with {@code null} is handled as an answer function that throws, and a
- * cancelled future opens the origin again with no message.
+ * no chat line, no anvil submit and no dialog submit is taken; the timer, the cancel link, a closed anvil, another
+ * menu, a newer ask, a quit and {@link Menus#shutdown()} still end the ask, and the result of a future that completes
+ * after that is dropped. A future that fails or completes with {@code null} is handled as an answer function that
+ * throws, and a cancelled future opens the origin again with no message.
  *
  * <p>The prompts read the text source, the locale function, the entity-thread seams, the thread-ownership check, the
  * logger and the {@link ErrorReports} of the menus they are built over. Building the prompts makes them the prompts
@@ -69,8 +76,15 @@ import java.util.logging.Level;
  * menus that were shut down, are refused. Building the prompts also registers their listener, which reads the chat
  * answers and guards the prompt anvil, as a listener of the menus' plugin, so the plugin registers nothing.
  *
+ * <p>A {@link TextRequest} asks for text that opens no menu: {@link #ask(Player, TextRequest)} shows the question in
+ * the same chat, anvil or dialog, with the same cancel word, cancel link, deadline and Bedrock rule, and ends in
+ * {@link TextRequest#accepted()} or {@link TextRequest#ended()}. Prompts built with
+ * {@link #Prompts(Menus.Parts, PromptMode, BedrockPlayers, BiConsumer)} need no {@link Menus}: they ask with a
+ * {@code TextRequest} only, no menu ends their asks, and the plugin calls {@link #shutdown()} at disable.
+ *
  * <p>A plugin with more than one {@code Menus} may build a {@code Prompts} over each. The prompts of one
- * {@link Menus.Parts#plugin()} share the ask of a player: an ask ends the ask another of them still holds for the
+ * {@link Menus.Parts#plugin()} share the ask of a player, whether they are built over menus or over none: an ask
+ * ends the ask another of them still holds for the
  * player, pending or waiting for its {@link Answer.Later}, as {@link PromptEnd#REPLACED}, and one chat line answers
  * one ask, judged by the prompts that asked it. Opening a menu ends only an ask of the prompts built over its menus,
  * and {@link Menus#shutdown()} ends only the asks of the prompts built over those menus. The prompts of one plugin
@@ -107,11 +121,19 @@ public final class Prompts {
     public static final List<String> KEYS = List.of(QUESTION, HINT, CANCEL_BUTTON, CANCEL_WORD, CANCELLED, TIMED_OUT,
         REFUSED, Menus.ERROR);
 
-    private final Menus menus;
+    private final @Nullable Menus menus;
+    private final TextSource source;
+    private final Function<Player, Locale> locales;
+    private final BiConsumer<Player, Runnable> tasks;
+    private final EntityThread entity;
+    private final Predicate<Player> ownedHere;
+    private final Logger logger;
+    private final ErrorReports errors;
     private final PromptMode mode;
     private final BedrockPlayers bedrock;
     private final BiConsumer<Runnable, Duration> timer;
     private final @Nullable AnvilInput anvil;
+    private final @Nullable DialogPrompt dialog;
     private final CancelLink cancelLink;
     private final Predicate<Player> ownScreen;
     private final LongSupplier nanos;
@@ -138,36 +160,112 @@ public final class Prompts {
      * @throws IllegalStateException if prompts were already built over {@code menus}, or {@link Menus#shutdown()} ran
      */
     public Prompts(Menus menus, PromptMode mode, BedrockPlayers bedrock, BiConsumer<Runnable, Duration> timer) {
-        this(menus, mode, bedrock, timer, anvilFor(menus, mode), new PaperCancelLink(), Prompts::ownScreen,
-            System::nanoTime);
+        this(menus, mode, bedrock, timer, anvilFor(menus, mode), dialogFor(mode, menus.logger()),
+            new PaperCancelLink(), Prompts::ownScreen, System::nanoTime);
+    }
+
+    /**
+     * Creates prompts built over no menus, with no ask pending, for a plugin that asks from a command or from a
+     * screen of its own, and registers their listener as a listener of {@link Menus.Parts#plugin()}. The listener
+     * reads the chat answers, guards the prompt anvil and ends the ask of a player who quits. These prompts ask with
+     * a {@link TextRequest} only, and the plugin calls {@link #shutdown()} at disable. They share a player's ask with
+     * the other prompts of the plugin, as prompts built over menus do. Call while the plugin is enabled, such as in
+     * {@code onEnable}.
+     *
+     * @param parts what the prompts are built from: {@link Menus.Parts#plugin()}, {@link Menus.Parts#text()},
+     *     {@link Menus.Parts#locales()}, {@link Menus.Parts#server()}, which registers the listener and tells whether
+     *     the calling thread owns a player, {@link Menus.Parts#preview()}, the key the paper of the prompt anvil
+     *     carries, {@link Menus.Parts#tasks()}, {@link Menus.Parts#entity()}, {@link Menus.Parts#logger()} and
+     *     {@link Menus.Parts#errors()}. The layouts, the settings, the sounds and the home menu are not read
+     * @param mode where players type their answers. It holds for the life of the prompts
+     * @param bedrock which players joined from Bedrock Edition, or {@link BedrockPlayers#NONE}
+     * @param timer runs a task on any thread after a delay, such as {@code scheduler::delayedAsync}; a task it refuses
+     *     at disable is not needed, since {@link #shutdown()} ends every ask
+     * @throws NullPointerException if an argument is {@code null}
+     * @throws org.bukkit.plugin.IllegalPluginAccessException if the plugin is not enabled, as the server refuses a
+     *     listener of such a plugin
+     */
+    public Prompts(Menus.Parts parts, PromptMode mode, BedrockPlayers bedrock,
+                   BiConsumer<Runnable, Duration> timer) {
+        this(parts, mode, bedrock, timer, anvilFor(parts, mode), dialogFor(mode, parts.logger()),
+            new PaperCancelLink(), Prompts::ownScreen, System::nanoTime,
+            player -> parts.server().isOwnedByCurrentRegion(player),
+            listener -> parts.server().getPluginManager().registerEvents(listener, parts.plugin()));
     }
 
     Prompts(Menus menus, PromptMode mode, BedrockPlayers bedrock, BiConsumer<Runnable, Duration> timer,
             @Nullable AnvilInput anvil, CancelLink cancelLink, Predicate<Player> ownScreen, LongSupplier nanos) {
-        this(menus, mode, bedrock, timer, anvil, cancelLink, ownScreen, nanos,
-            Asks.of(Objects.requireNonNull(menus, "menus").plugin()));
+        this(menus, mode, bedrock, timer, anvil, null, cancelLink, ownScreen, nanos);
     }
 
     Prompts(Menus menus, PromptMode mode, BedrockPlayers bedrock, BiConsumer<Runnable, Duration> timer,
             @Nullable AnvilInput anvil, CancelLink cancelLink, Predicate<Player> ownScreen, LongSupplier nanos,
             Asks asks) {
-        Objects.requireNonNull(menus, "menus");
+        this(menus, mode, bedrock, timer, anvil, null, cancelLink, ownScreen, nanos, asks);
+    }
+
+    Prompts(Menus menus, PromptMode mode, BedrockPlayers bedrock, BiConsumer<Runnable, Duration> timer,
+            @Nullable AnvilInput anvil, @Nullable DialogPrompt dialog, CancelLink cancelLink,
+            Predicate<Player> ownScreen, LongSupplier nanos) {
+        this(menus, mode, bedrock, timer, anvil, dialog, cancelLink, ownScreen, nanos,
+            Asks.of(Objects.requireNonNull(menus, "menus").plugin()));
+    }
+
+    Prompts(Menus menus, PromptMode mode, BedrockPlayers bedrock, BiConsumer<Runnable, Duration> timer,
+            @Nullable AnvilInput anvil, @Nullable DialogPrompt dialog, CancelLink cancelLink,
+            Predicate<Player> ownScreen, LongSupplier nanos, Asks asks) {
+        this(Objects.requireNonNull(menus, "menus"), menus.source(), menus.locales(), menus.tasks(), menus.entity(),
+            menus.ownedHere(), menus.logger(), menus.errors(), menus::register, mode, bedrock, timer, anvil, dialog,
+            cancelLink, ownScreen, nanos, asks);
+    }
+
+    Prompts(Menus.Parts parts, PromptMode mode, BedrockPlayers bedrock, BiConsumer<Runnable, Duration> timer,
+            @Nullable AnvilInput anvil, @Nullable DialogPrompt dialog, CancelLink cancelLink,
+            Predicate<Player> ownScreen, LongSupplier nanos, Predicate<Player> ownedHere,
+            Consumer<Listener> registrar) {
+        this(parts, mode, bedrock, timer, anvil, dialog, cancelLink, ownScreen, nanos, ownedHere, registrar,
+            Asks.of(Objects.requireNonNull(parts, "parts").plugin()));
+    }
+
+    Prompts(Menus.Parts parts, PromptMode mode, BedrockPlayers bedrock, BiConsumer<Runnable, Duration> timer,
+            @Nullable AnvilInput anvil, @Nullable DialogPrompt dialog, CancelLink cancelLink,
+            Predicate<Player> ownScreen, LongSupplier nanos, Predicate<Player> ownedHere,
+            Consumer<Listener> registrar, Asks asks) {
+        this(null, Objects.requireNonNull(parts, "parts").text(), parts.locales(), parts.tasks(), parts.entity(),
+            ownedHere, parts.logger(), parts.errors(), registrar, mode, bedrock, timer, anvil, dialog, cancelLink,
+            ownScreen, nanos, asks);
+    }
+
+    private Prompts(@Nullable Menus menus, TextSource source, Function<Player, Locale> locales,
+                    BiConsumer<Player, Runnable> tasks, EntityThread entity, Predicate<Player> ownedHere,
+                    Logger logger, ErrorReports errors, Consumer<Listener> registrar, PromptMode mode,
+                    BedrockPlayers bedrock, BiConsumer<Runnable, Duration> timer, @Nullable AnvilInput anvil,
+                    @Nullable DialogPrompt dialog, CancelLink cancelLink, Predicate<Player> ownScreen,
+                    LongSupplier nanos, Asks asks) {
         Objects.requireNonNull(mode, "mode");
         Objects.requireNonNull(bedrock, "bedrock");
         Objects.requireNonNull(timer, "timer");
         Objects.requireNonNull(cancelLink, "cancelLink");
         Objects.requireNonNull(ownScreen, "ownScreen");
-        if (menus.stopping()) {
+        if (menus != null && menus.stopping()) {
             throw new IllegalStateException("the menus were shut down");
         }
-        if (menus.prompts() instanceof Link) {
+        if (menus != null && menus.prompts() instanceof Link) {
             throw new IllegalStateException("the menus already have prompts");
         }
         this.menus = menus;
+        this.source = source;
+        this.locales = locales;
+        this.tasks = tasks;
+        this.entity = entity;
+        this.ownedHere = ownedHere;
+        this.logger = logger;
+        this.errors = errors;
         this.mode = mode;
         this.bedrock = bedrock;
         this.timer = timer;
         this.anvil = anvil;
+        this.dialog = dialog;
         this.cancelLink = cancelLink;
         this.ownScreen = ownScreen;
         this.nanos = nanos;
@@ -175,13 +273,25 @@ public final class Prompts {
         this.pending = asks.pending();
         this.judging = asks.judging();
         this.listener = new PaperPromptListener(this);
-        menus.register(listener);
-        menus.prompts(new Link());
+        registrar.accept(listener);
+        if (menus != null) {
+            menus.prompts(new Link());
+        }
     }
 
     private static @Nullable AnvilInput anvilFor(Menus menus, PromptMode mode) {
         Objects.requireNonNull(menus, "menus");
         return Objects.requireNonNull(mode, "mode") == PromptMode.ANVIL ? new AnvilInput(menus.marker()) : null;
+    }
+
+    private static @Nullable AnvilInput anvilFor(Menus.Parts parts, PromptMode mode) {
+        Objects.requireNonNull(parts, "parts");
+        return Objects.requireNonNull(mode, "mode") == PromptMode.ANVIL
+            ? new AnvilInput(new PreviewMarker(parts.preview())) : null;
+    }
+
+    private static @Nullable DialogPrompt dialogFor(PromptMode mode, Logger logger) {
+        return mode == PromptMode.DIALOG ? DialogPrompt.paper(PaperDialogs.API, logger) : null;
     }
 
     // Whether the player sees their own crafting or creative screen, and no other inventory. InventoryType loads only
@@ -223,42 +333,94 @@ public final class Prompts {
      * @throws NullPointerException if {@code request} is {@code null}; nothing is closed or replaced then
      * @throws IllegalStateException if the calling thread does not own the player and {@link Menus#shutdown()} did
      *     not run; nothing is closed or replaced then, and {@link #askLater(Player, PromptRequest)} asks from any
-     *     thread
+     *     thread. Also if these prompts are built over no menus, which have no menu to open
      */
     public void ask(Player player, PromptRequest request) {
         Objects.requireNonNull(request, "request");
+        if (menus == null) {
+            throw new IllegalStateException("these prompts are built over no menus; ask with a TextRequest");
+        }
+        start(player, new Ask(request, null));
+    }
+
+    /**
+     * Asks the player for text that opens no menu, in the chat, anvil or dialog of these prompts. The inventory the
+     * player has open is closed first, and a menu of the menus these prompts are built over closes as left by its
+     * viewer. Replaces any ask still pending for the player, of these prompts or of other prompts of the same
+     * plugin, without a message, which tells that ask {@link PromptEnd#REPLACED}. Nothing happens once the prompts
+     * were shut down, or when the server refused to open the anvil. Call on the player's entity thread, outside an
+     * inventory event; a click handler calls {@link #askLater(Player, TextRequest)} instead.
+     *
+     * @param player the player to ask
+     * @param request the question
+     * @throws NullPointerException if {@code request} is {@code null}; nothing is closed or replaced then
+     * @throws IllegalStateException if the calling thread does not own the player and the prompts were not shut
+     *     down; nothing is closed or replaced then, and {@link #askLater(Player, TextRequest)} asks from any thread
+     */
+    public void ask(Player player, TextRequest request) {
+        Objects.requireNonNull(request, "request");
+        start(player, new Ask(null, request));
+    }
+
+    private void start(Player player, Ask ask) {
         if (stopping) {
             return;
         }
-        if (!menus.ownedHere().test(player)) {
+        if (!ownedHere.test(player)) {
             throw new IllegalStateException(
                 "Prompts.ask must run on the player's entity thread; use Prompts.askLater");
         }
         UUID id = player.getUniqueId();
         boolean onBedrock = bedrock.bedrock(id);
-        PromptMode shown = !onBedrock && mode == PromptMode.ANVIL && anvil != null ? PromptMode.ANVIL
-            : PromptMode.CHAT;
         replace(id);
-        Pending entry = new Pending(tokens.incrementAndGet(), shown, request, nanos.getAsLong() + TIMEOUT.toNanos(),
-            player, this);
+        Pending entry = new Pending(tokens.incrementAndGet(), shown(onBedrock), ask,
+            nanos.getAsLong() + TIMEOUT.toNanos(), player, this);
         pending.put(id, entry);
-        if (!show(player, entry)) {
+        Pending[] presented = new Pending[1];
+        if (!handoff(player, entry, () -> (presented[0] = present(player, entry)) != null)) {
             pending.remove(id, entry);
             return;
         }
-        timer.accept(() -> expire(id, entry.token()), TIMEOUT);
-        if (shown == PromptMode.ANVIL) {
+        Pending asked = presented[0];
+        timer.accept(() -> expire(id, asked.token()), TIMEOUT);
+        if (asked.mode() != PromptMode.CHAT) {
             return;
         }
-        Locale locale = menus.locales().apply(player);
-        player.sendMessage(menus.source().render(locale, QUESTION,
-            Placeholder.component("question", request.question())));
-        Component hint = menus.source().render(locale, HINT, Placeholder.unparsed("word", cancelWord(locale)));
+        Locale locale = locales.apply(player);
+        player.sendMessage(source.render(locale, QUESTION, Placeholder.component("question", ask.question())));
+        Component hint = source.render(locale, HINT, Placeholder.unparsed("word", cancelWord(locale)));
         if (!onBedrock) {
-            hint = hint.append(Component.space()).append(menus.source().render(locale, CANCEL_BUTTON)
-                .clickEvent(cancelLink.link(() -> cancel(id, entry.token()))));
+            hint = hint.append(Component.space()).append(source.render(locale, CANCEL_BUTTON)
+                .clickEvent(cancelLink.link(() -> cancel(id, asked.token()))));
         }
         player.sendMessage(hint);
+    }
+
+    /** Where a player answers: in chat on Bedrock, without the anvil or dialog of the mode, or with an unusable one. */
+    private PromptMode shown(boolean onBedrock) {
+        if (!onBedrock && mode == PromptMode.ANVIL && anvil != null) {
+            return PromptMode.ANVIL;
+        }
+        if (!onBedrock && mode == PromptMode.DIALOG && dialog != null && dialog.usable()) {
+            return PromptMode.DIALOG;
+        }
+        return PromptMode.CHAT;
+    }
+
+    /**
+     * Shows a new ask and gives it as shown: {@code entry}, or its chat twin under the same token when the dialog
+     * could not be linked, which has closed the player's inventory already. Gives {@code null} when the server
+     * refused to show it.
+     */
+    private @Nullable Pending present(Player player, Pending entry) {
+        if (open(player, entry, entry.ask().initial(), null)) {
+            return entry;
+        }
+        if (entry.mode() != PromptMode.DIALOG || dialogSurface().usable()) {
+            return null;
+        }
+        Pending chat = new Pending(entry.token(), PromptMode.CHAT, entry.ask(), entry.deadline(), player, this);
+        return pending.replace(player.getUniqueId(), entry, chat) ? chat : null;
     }
 
     /**
@@ -272,7 +434,21 @@ public final class Prompts {
      */
     public void askLater(Player player, PromptRequest request) {
         Objects.requireNonNull(request, "request");
-        menus.tasks().accept(player, () -> ask(player, request));
+        tasks.accept(player, () -> ask(player, request));
+    }
+
+    /**
+     * Asks the player as {@link #ask(Player, TextRequest)} does, on the next tick on the player's entity thread. This
+     * is how the click handler of a plugin's own screen asks from inside an inventory event. Nothing happens when the
+     * prompts were shut down by then.
+     *
+     * @param player the player to ask
+     * @param request the question
+     * @throws NullPointerException if {@code request} is {@code null}
+     */
+    public void askLater(Player player, TextRequest request) {
+        Objects.requireNonNull(request, "request");
+        tasks.accept(player, () -> ask(player, request));
     }
 
     /** The ask of these prompts that waits for the player's answer. */
@@ -285,14 +461,24 @@ public final class Prompts {
         return anvil;
     }
 
+    /** Tells whether these prompts are built over no menus, so that their own listener hears a quit for them. */
+    boolean alone() {
+        return menus == null;
+    }
+
     /** The click on an anvil prompt's slot; the result slot submits the name field's text. */
     void anvilClick(UUID player, long token, int rawSlot, @Nullable String renameText) {
         if (rawSlot != ANVIL_RESULT_SLOT) {
             return;
         }
+        submit(player, token, renameText == null ? "" : renameText);
+    }
+
+    /** Any thread: judges the text an anvil or a dialog submitted for the ask, while the ask waits for an answer. */
+    private void submit(UUID player, long token, String text) {
         Pending taken = take(player, token);
         if (taken != null) {
-            answer(player, taken, renameText == null ? "" : renameText);
+            answer(player, taken, text);
         }
     }
 
@@ -315,8 +501,7 @@ public final class Prompts {
     void cancel(UUID player, long token) {
         Pending taken = takeWaiting(player, token);
         if (taken != null) {
-            hop(player, taken, live -> finish(live, taken, CANCELLED, taken.request().origin(),
-                PromptEnd.CANCELLED));
+            hop(player, taken, live -> finish(live, taken, CANCELLED, taken.ask().origin(), PromptEnd.CANCELLED));
         }
     }
 
@@ -324,8 +509,7 @@ public final class Prompts {
     void expire(UUID player, long token) {
         Pending taken = takeWaiting(player, token);
         if (taken != null) {
-            hop(player, taken, live -> finish(live, taken, TIMED_OUT, taken.request().origin(),
-                PromptEnd.TIMED_OUT));
+            hop(player, taken, live -> finish(live, taken, TIMED_OUT, taken.ask().origin(), PromptEnd.TIMED_OUT));
         }
     }
 
@@ -372,7 +556,7 @@ public final class Prompts {
 
     /**
      * Ends the ask these prompts hold for a player who quit as {@link PromptEnd#LEFT}, and forgets what the anvil
-     * keeps for them and the chat line taken from them.
+     * and the dialog keep for them and the chat line taken from them.
      */
     void quit(UUID player) {
         Pending entry = takeOwn(pending, player);
@@ -380,6 +564,9 @@ public final class Prompts {
         asks.forgetLine(player);
         if (anvil != null) {
             anvil.forget(player);
+        }
+        if (dialog != null) {
+            dialog.forget(player);
         }
         if (entry != null) {
             abandon(entry, PromptEnd.LEFT);
@@ -395,13 +582,18 @@ public final class Prompts {
     }
 
     /**
-     * Ends every ask of these prompts without a message and opens nothing, then or later. An anvil still showing,
-     * including one whose answer is still being judged, is taken away from each online player the calling thread
-     * owns. The anvil of a player the calling thread does not own is emptied from the calling thread, forgotten and
-     * stays open, and once the plugin is disabled no listener cancels its clicks. Each ended ask of an online player
-     * the calling thread owns ends as {@link PromptEnd#CANCELLED}.
+     * Ends every ask of these prompts without a message and opens nothing, then or later; nothing is asked
+     * afterwards. An anvil or dialog still showing, including an anvil whose answer is still being judged, is taken
+     * away from each online player the calling thread owns. The anvil of a player the calling thread does not own
+     * is emptied from the calling thread, forgotten and stays open, as does the dialog of such a player, and once
+     * the plugin is disabled no listener cancels the clicks of that anvil. Each ended ask of an online player the
+     * calling thread owns ends as {@link PromptEnd#CANCELLED}.
+     *
+     * <p>{@link Menus#shutdown()} calls this for the prompts built over those menus. A plugin calls it at disable for
+     * prompts built with {@link #Prompts(Menus.Parts, PromptMode, BedrockPlayers, BiConsumer)}. The listener of the
+     * prompts stays registered.
      */
-    void shutdown() {
+    public void shutdown() {
         stopping = true;
         List<Pending> ended = new ArrayList<>();
         for (Map<UUID, Pending> asked : List.of(pending, judging)) {
@@ -412,10 +604,13 @@ public final class Prompts {
                 }
             }
         }
-        Predicate<Player> here = player -> player.isOnline() && menus.ownedHere().test(player);
+        Predicate<Player> here = player -> player.isOnline() && ownedHere.test(player);
         try {
             if (anvil != null) {
                 anvil.shutdown(here);
+            }
+            if (dialog != null) {
+                dialog.shutdown(here);
             }
         } finally {
             for (Pending entry : ended) {
@@ -462,12 +657,16 @@ public final class Prompts {
 
     /** The text without surrounding whitespace, cut to {@link #MAX_LENGTH} characters. */
     static String clean(String text) {
-        String stripped = text.strip();
-        if (stripped.length() <= MAX_LENGTH) {
-            return stripped;
+        return cut(text.strip());
+    }
+
+    /** The first {@link #MAX_LENGTH} characters of the text, one fewer when that splits a surrogate pair. */
+    static String cut(String text) {
+        if (text.length() <= MAX_LENGTH) {
+            return text;
         }
-        int end = Character.isHighSurrogate(stripped.charAt(MAX_LENGTH - 1)) ? MAX_LENGTH - 1 : MAX_LENGTH;
-        return stripped.substring(0, end);
+        int end = Character.isHighSurrogate(text.charAt(MAX_LENGTH - 1)) ? MAX_LENGTH - 1 : MAX_LENGTH;
+        return text.substring(0, end);
     }
 
     private @Nullable Pending take(UUID player, long token) {
@@ -493,27 +692,55 @@ public final class Prompts {
             ? judged : null;
     }
 
-    private boolean show(Player player, Pending entry) {
-        PromptRequest request = entry.request();
-        return switch (entry.mode()) {
-            case CHAT -> menus.handoff(player, () -> {
+    private boolean show(Player player, Pending entry, String initial, @Nullable Component note) {
+        return handoff(player, entry, () -> open(player, entry, initial, note));
+    }
+
+    /**
+     * Runs {@code replace}, which closes the player's inventory for an ask. For an ask that opens a menu when it
+     * ends, a menu the player has open is handed off, as {@link Menus#handoff} does.
+     */
+    private boolean handoff(Player player, Pending entry, BooleanSupplier replace) {
+        return menus != null && entry.ask().menu() != null ? menus.handoff(player, replace)
+            : replace.getAsBoolean();
+    }
+
+    private boolean open(Player player, Pending entry, String initial, @Nullable Component note) {
+        Ask ask = entry.ask();
+        UUID id = player.getUniqueId();
+        long token = entry.token();
+        switch (entry.mode()) {
+            case ANVIL:
+                return anvilSurface().open(player, ask.question(), initial, token);
+            case DIALOG:
+                player.closeInventory(InventoryCloseEvent.Reason.PLUGIN);
+                try {
+                    return dialogSurface().open(player, token, ask.question(), note, initial,
+                        text -> submit(id, token, text), () -> cancel(id, token));
+                } catch (RuntimeException failure) {
+                    pending.remove(id, entry);
+                    throw failure;
+                }
+            default:
                 player.closeInventory(InventoryCloseEvent.Reason.PLUGIN);
                 return true;
-            });
-            case ANVIL -> menus.handoff(player, () -> surface(entry).open(player, request.question(),
-                request.initial(), entry.token()));
-        };
+        }
     }
 
     private void settle(Player player, Pending taken, String text) {
-        Locale locale = menus.locales().apply(player);
+        Locale locale = locales.apply(player);
         if (text.equalsIgnoreCase(cancelWord(locale)) || text.equalsIgnoreCase(DEFAULT_CANCEL_WORD)) {
-            finish(player, taken, CANCELLED, taken.request().origin(), PromptEnd.CANCELLED);
+            finish(player, taken, CANCELLED, taken.ask().origin(), PromptEnd.CANCELLED);
+            return;
+        }
+        PromptRequest request = taken.ask().menu();
+        if (request == null) {
+            check(player, taken, text);
             return;
         }
         Answer result;
         try {
-            result = Objects.requireNonNull(taken.request().answer().apply(text), "the answer function returned null");
+            result = Objects.requireNonNull(request.answer().apply(text), "the answer function returned null");
         } catch (RuntimeException failure) {
             failed(player, taken, failure);
             return;
@@ -524,13 +751,93 @@ public final class Prompts {
     private void decide(Player player, Pending taken, String text, Answer result) {
         switch (result) {
             case Answer.Accept accept -> finish(player, taken, null, accept.next(), null);
-            case Answer.Retry retry -> {
-                player.sendMessage(menus.source().render(menus.locales().apply(player), REFUSED,
-                    Placeholder.component("reason", retry.reason()), Placeholder.unparsed("answer", text)));
-                rearm(player, taken);
-            }
-            case Answer.Later later -> await(player.getUniqueId(), taken, text, later.answer());
+            case Answer.Retry retry -> refuse(player, taken, text, retry.reason());
+            case Answer.Later later -> await(player.getUniqueId(), taken, later.answer(), (live, answer, failure) -> {
+                Throwable cause = cause(failure);
+                if (cause instanceof CancellationException) {
+                    finish(live, taken, null, taken.ask().origin(), null);
+                } else if (cause != null) {
+                    failed(live, taken, cause);
+                } else if (answer == null) {
+                    failed(live, taken, new NullPointerException("the answer future completed with null"));
+                } else {
+                    decide(live, taken, text, answer);
+                }
+            });
         }
+    }
+
+    /**
+     * Runs the refusal check of a {@link TextRequest}. A future that is complete is applied at once, and any other
+     * as an {@link Answer.Later} is.
+     */
+    private void check(Player player, Pending taken, String text) {
+        CompletableFuture<@Nullable Component> refusal;
+        try {
+            refusal = Objects.requireNonNull(Objects.requireNonNull(taken.ask().text()).check().apply(text),
+                "the refusal check returned null");
+        } catch (RuntimeException failure) {
+            failed(player, taken, failure);
+            return;
+        }
+        if (!refusal.isDone()) {
+            await(player.getUniqueId(), taken, refusal,
+                (live, reason, failure) -> checked(live, taken, text, reason, failure));
+            return;
+        }
+        Component reason = null;
+        Throwable failure = null;
+        try {
+            reason = refusal.join();
+        } catch (CancellationException | CompletionException thrown) {
+            failure = thrown;
+        }
+        checked(player, taken, text, reason, failure);
+    }
+
+    private void checked(Player player, Pending taken, String text, @Nullable Component reason,
+                         @Nullable Throwable failure) {
+        Throwable cause = cause(failure);
+        if (cause instanceof CancellationException) {
+            finish(player, taken, null, null, null);
+        } else if (cause != null) {
+            failed(player, taken, cause);
+        } else if (reason != null) {
+            refuse(player, taken, text, reason);
+        } else {
+            closeSurface(player, taken);
+            try {
+                Objects.requireNonNull(taken.ask().text()).accepted().accept(text);
+            } catch (RuntimeException thrown) {
+                logger.log(Level.WARNING, "gui: the accepted step of a prompt for " + player.getName() + " failed: "
+                    + thrown, thrown);
+                errors.report("gui.prompt", thrown);
+            }
+        }
+    }
+
+    private static @Nullable Throwable cause(@Nullable Throwable failure) {
+        return failure instanceof CompletionException && failure.getCause() != null ? failure.getCause() : failure;
+    }
+
+    /**
+     * Tells the player why the answer was refused, in the dialog shown again for a dialog ask and in chat for any
+     * other, and keeps the ask waiting.
+     */
+    private void refuse(Player player, Pending taken, String text, Component reason) {
+        Component told = source.render(locales.apply(player), REFUSED, Placeholder.component("reason", reason),
+            Placeholder.unparsed("answer", text));
+        if (taken.mode() != PromptMode.DIALOG) {
+            player.sendMessage(told);
+        }
+        rearm(player, taken, text, told);
+    }
+
+    /** What a completed future of an ask is applied with, on the player's entity thread. */
+    @FunctionalInterface
+    private interface Applied<T> {
+
+        void apply(Player live, @Nullable T result, @Nullable Throwable failure);
     }
 
     /**
@@ -538,47 +845,39 @@ public final class Prompts {
      * any prompts of the plugin took its place, which ends the ask, then applies the result on the player's entity
      * thread while the ask is still the one kept.
      */
-    private void await(UUID id, Pending taken, String text, CompletableFuture<Answer> answer) {
-        if (stopping || menus.session(id).isPresent() || pending.containsKey(id)
-            || judging.putIfAbsent(id, taken) != null) {
+    private <T> void await(UUID id, Pending taken, CompletableFuture<T> answer, Applied<T> applied) {
+        if (stopping || inMenu(id) || pending.containsKey(id) || judging.putIfAbsent(id, taken) != null) {
             abandon(taken, stopping ? PromptEnd.CANCELLED : PromptEnd.REPLACED);
             return;
         }
         answer.whenComplete((result, failure) -> hop(id, null, live -> {
-            if (!judging.remove(id, taken)) {
-                return;
-            }
-            Throwable cause = failure instanceof CompletionException && failure.getCause() != null
-                ? failure.getCause() : failure;
-            if (cause instanceof CancellationException) {
-                finish(live, taken, null, taken.request().origin(), null);
-            } else if (cause != null) {
-                failed(live, taken, cause);
-            } else if (result == null) {
-                failed(live, taken, new NullPointerException("the answer future completed with null"));
-            } else {
-                decide(live, taken, text, result);
+            if (judging.remove(id, taken)) {
+                applied.apply(live, result, failure);
             }
         }));
     }
 
+    /** Tells whether the player has a menu of the menus these prompts are built over open. */
+    private boolean inMenu(UUID player) {
+        return menus != null && menus.session(player).isPresent();
+    }
+
     private void failed(Player player, Pending taken, Throwable failure) {
-        menus.logger().log(Level.WARNING, "gui: a prompt answer failed for " + player.getName() + ": " + failure,
-            failure);
-        menus.errors().report("gui.prompt", failure);
-        player.sendMessage(menus.source().render(menus.locales().apply(player), Menus.ERROR));
-        finish(player, taken, null, taken.request().origin(), null);
+        logger.log(Level.WARNING, "gui: a prompt answer failed for " + player.getName() + ": " + failure, failure);
+        errors.report("gui.prompt", failure);
+        player.sendMessage(source.render(locales.apply(player), Menus.ERROR));
+        finish(player, taken, null, taken.ask().origin(), null);
     }
 
     /**
      * Puts a refused ask back under its token with its first deadline, unless a newer ask or a menu took its place,
-     * which ends the ask. An anvil no longer showing comes back on the next tick; with another inventory open then, or
-     * when the server refuses to show it, the ask ends.
+     * which ends the ask. An anvil no longer showing comes back on the next tick, and so does the dialog, with
+     * {@code note} above its field and {@code text} in it; with another inventory open then, or when the server
+     * refuses to show it, the ask ends.
      */
-    private void rearm(Player player, Pending entry) {
+    private void rearm(Player player, Pending entry, String text, Component note) {
         UUID id = player.getUniqueId();
-        if (stopping || menus.session(id).isPresent() || judging.containsKey(id)
-            || pending.putIfAbsent(id, entry) != null) {
+        if (stopping || inMenu(id) || judging.containsKey(id) || pending.putIfAbsent(id, entry) != null) {
             abandon(entry, stopping ? PromptEnd.CANCELLED : PromptEnd.REPLACED);
             return;
         }
@@ -588,10 +887,12 @@ public final class Prompts {
             return;
         }
         timer.accept(() -> expire(id, entry.token()), left);
-        if (entry.mode() != PromptMode.CHAT && !surface(entry).showing(id, entry.token())) {
-            menus.tasks().accept(player, () -> {
-                if (pending.get(id) == entry && !surface(entry).showing(id, entry.token())
-                    && (!ownScreen.test(player) || !show(player, entry)) && pending.remove(id, entry)) {
+        if (entry.mode() != PromptMode.CHAT && !showing(entry)) {
+            boolean inDialog = entry.mode() == PromptMode.DIALOG;
+            tasks.accept(player, () -> {
+                if (pending.get(id) == entry && !showing(entry) && (!ownScreen.test(player)
+                    || !show(player, entry, inDialog ? text : entry.ask().initial(), inDialog ? note : null))
+                    && pending.remove(id, entry)) {
                     abandon(entry, PromptEnd.REPLACED);
                 }
             });
@@ -599,16 +900,22 @@ public final class Prompts {
     }
 
     /**
-     * Ends an ask the caller took: closes its anvil, tells the player {@code key} when one is given and opens
-     * {@code next}. When no menu may open, or the menu does not open because the server refused its inventory or
-     * opening it threw, the ask ends as {@code cause}, or without one as what keeps the menu from opening, which is
-     * {@link PromptEnd#REPLACED} for a menu that does not open. A failure of the open is thrown on after the ask
-     * ended.
+     * Ends an ask the caller took: closes its anvil or dialog, tells the player {@code key} when one is given and
+     * opens {@code next}. When no menu may open, or the menu does not open because the server refused its inventory
+     * or opening it threw, the ask ends as {@code cause}, or without one as what keeps the menu from opening, which
+     * is {@link PromptEnd#REPLACED} for a menu that does not open. A failure of the open is thrown on after the ask
+     * ended. With no {@code next}, as for a {@link TextRequest}, the ask ends as {@code cause}, or without one as
+     * {@link PromptEnd#CANCELLED}.
      */
-    private void finish(Player player, Pending entry, @Nullable String key, Route next, @Nullable PromptEnd cause) {
+    private void finish(Player player, Pending entry, @Nullable String key, @Nullable Route next,
+                        @Nullable PromptEnd cause) {
         closeSurface(player, entry);
         if (key != null) {
-            player.sendMessage(menus.source().render(menus.locales().apply(player), key));
+            player.sendMessage(source.render(locales.apply(player), key));
+        }
+        if (menus == null || next == null) {
+            abandon(entry, cause != null ? cause : PromptEnd.CANCELLED);
+            return;
         }
         if (stopping || player.isDead() || !player.isOnline() || !ownScreen.test(player)) {
             abandon(entry, cause != null ? cause : stopping ? PromptEnd.CANCELLED
@@ -630,30 +937,41 @@ public final class Prompts {
 
     private void abandon(Pending entry, PromptEnd end) {
         try {
-            entry.request().abandoned().accept(end);
+            entry.ask().ended().accept(end);
         } catch (RuntimeException failure) {
-            menus.logger().log(Level.WARNING, "gui: the abandoned step of a prompt for " + entry.player().getName()
+            logger.log(Level.WARNING, "gui: the abandoned step of a prompt for " + entry.player().getName()
                 + " failed: " + failure, failure);
-            menus.errors().report("gui.prompt", failure);
+            errors.report("gui.prompt", failure);
         }
     }
 
     private void closeSurface(Player player, Pending entry) {
-        if (entry.mode() != PromptMode.CHAT) {
-            surface(entry).close(player, entry.token());
+        if (entry.mode() == PromptMode.ANVIL) {
+            anvilSurface().close(player, entry.token());
+        } else if (entry.mode() == PromptMode.DIALOG) {
+            dialogSurface().close(player, entry.token());
         }
     }
 
-    private AnvilInput surface(Pending entry) {
-        return Objects.requireNonNull(anvil, entry.mode().name());
+    private boolean showing(Pending entry) {
+        UUID id = entry.player().getUniqueId();
+        return entry.mode() == PromptMode.ANVIL ? anvilSurface().showing(id, entry.token())
+            : dialogSurface().showing(id, entry.token());
+    }
+
+    private AnvilInput anvilSurface() {
+        return Objects.requireNonNull(anvil, "ANVIL");
+    }
+
+    private DialogPrompt dialogSurface() {
+        return Objects.requireNonNull(dialog, "DIALOG");
     }
 
     private String cancelWord(Locale locale) {
-        if (!menus.source().has(locale, CANCEL_WORD)) {
+        if (!source.has(locale, CANCEL_WORD)) {
             return DEFAULT_CANCEL_WORD;
         }
-        String word = PlainTextComponentSerializer.plainText().serialize(menus.source().render(locale, CANCEL_WORD))
-            .strip();
+        String word = PlainTextComponentSerializer.plainText().serialize(source.render(locale, CANCEL_WORD)).strip();
         return word.isEmpty() ? DEFAULT_CANCEL_WORD : word;
     }
 
@@ -662,19 +980,18 @@ public final class Prompts {
      * caller took and nothing else holds, ends as {@link PromptEnd#LEFT} on the thread that found the player gone.
      */
     private void hop(UUID player, @Nullable Pending taken, Consumer<Player> task) {
-        menus.entity().call(player, live -> {
+        entity.call(player, live -> {
             task.accept(live);
             return null;
         }).whenComplete((done, failure) -> {
-            Throwable cause = failure instanceof CompletionException && failure.getCause() != null
-                ? failure.getCause() : failure;
+            Throwable cause = cause(failure);
             if (cause instanceof EntityUnavailableException) {
                 if (taken != null) {
                     abandon(taken, PromptEnd.LEFT);
                 }
             } else if (cause != null) {
-                menus.logger().log(Level.WARNING, "gui: a prompt for " + player + " failed: " + cause, cause);
-                menus.errors().report("gui.prompt", cause);
+                logger.log(Level.WARNING, "gui: a prompt for " + player + " failed: " + cause, cause);
+                errors.report("gui.prompt", cause);
             }
         });
     }

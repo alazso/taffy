@@ -1,8 +1,10 @@
 package so.alaz.taffy.gui;
 
 /**
- * How an ask ended when the prompts opened no menu after it, as {@link PromptRequest#abandoned()} is told. A later
- * release may add constants, so a {@code switch} over the ends has a {@code default} branch.
+ * How an ask ended when the prompts opened no menu after it, as {@link PromptRequest#abandoned()} is told, and how
+ * the ask of a {@link TextRequest} ended when no answer was taken, as {@link TextRequest#ended()} is told and as
+ * {@link TextRequest} states for each end. A later release may add constants, so a {@code switch} over the ends has a
+ * {@code default} branch.
  */
 public enum PromptEnd {
     /**
@@ -25,8 +27,9 @@ public enum PromptEnd {
      */
     REPLACED,
     /**
-     * The player cancelled the ask, with the cancel word, the cancel link or by closing the anvil, and its origin did
-     * not open, for a reason {@link #TIMED_OUT} lists; or {@link Menus#shutdown()} ended the ask.
+     * The player cancelled the ask, with the cancel word, the cancel link, the cancel button of a dialog or by
+     * closing the anvil or the dialog, and its origin did not open, for a reason {@link #TIMED_OUT} lists; or
+     * {@link Menus#shutdown()} or {@link Prompts#shutdown()} ended the ask.
      */
     CANCELLED
 }

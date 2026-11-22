@@ -51,7 +51,8 @@ public sealed interface Answer {
      * entity thread exactly as a result the answer function returned: an {@link Accept} opens its menu, a
      * {@link Retry} tells the player and waits for the next answer, and another {@code Later} waits again.
      *
-     * <p>While the future runs the ask takes no chat line and no anvil submit, and an anvil stays open. The ask's
+     * <p>While the future runs the ask takes no chat line and no anvil submit, an anvil stays open and no dialog
+     * shows. The ask's
      * first deadline, the cancel link and a closed anvil still end it, as do another menu, a newer ask, a quit and
      * {@link Menus#shutdown()}; the result of a future that completes after the ask ended is dropped, and nothing runs
      * for a player who left the server. A future that fails or completes with {@code null} is handled as an answer

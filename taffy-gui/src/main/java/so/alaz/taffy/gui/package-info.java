@@ -64,7 +64,15 @@
  * answer in chat. Building the prompts registers their listener as a listener of the plugin; it reads the chat
  * answers, cancels every click and drag on the prompt anvil, submits its result slot and ends the ask when the anvil
  * closes. A {@link so.alaz.taffy.gui.ClickHandler} asks through {@link so.alaz.taffy.gui.Prompts#askLater}, on the
- * next tick. No prefix is put in front of the prompt text unless the text writes {@code <prefix>}.
+ * next tick. No prefix is put in front of the prompt text unless the text writes {@code <prefix>}. For
+ * {@link so.alaz.taffy.gui.PromptMode#DIALOG}, which is experimental, the player types into the text field of a Paper
+ * dialog.
+ *
+ * <p>A {@link so.alaz.taffy.gui.TextRequest} asks for text that opens no menu: it holds the question, a check that
+ * refuses an answer or lets it through, and the steps that get the accepted answer or how the ask ended. A plugin
+ * without menus builds the prompts with {@code new Prompts(parts, mode, bedrock, scheduler::delayedAsync)} over a
+ * {@link so.alaz.taffy.gui.Menus.Parts}, asks with a {@code TextRequest} only and calls
+ * {@link so.alaz.taffy.gui.Prompts#shutdown()} at disable.
  *
  * <p>No lang file ships with the library. {@link so.alaz.taffy.gui.Menus#keys(java.util.Collection)} lists the lang
  * keys the plugin's menus read with no other text to fall back to, and {@link so.alaz.taffy.gui.Prompts#KEYS} the

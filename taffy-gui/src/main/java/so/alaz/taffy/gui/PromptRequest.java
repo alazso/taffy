@@ -17,7 +17,7 @@ import java.util.function.Function;
  * open, which leaves the menu closed with {@code left = true}.
  *
  * @param question the text shown
- * @param initial the text an anvil's name field starts with
+ * @param initial the text an anvil's name field or a dialog's text field starts with
  * @param origin the menu that a cancel and a timeout open again
  * @param answer judges the typed text, on the player's entity thread; it must not return {@code null}, and a
  *     {@code null} result is handled as a failure of the function. A function whose decision needs storage or an
