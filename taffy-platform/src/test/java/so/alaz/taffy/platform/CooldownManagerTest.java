@@ -3,6 +3,13 @@ package so.alaz.taffy.platform;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -150,6 +157,107 @@ class CooldownManagerTest {
         duringClockRead.set(() -> manager.set("daily", HOUR.multipliedBy(3)));
 
         assertThat(manager.remaining("daily")).isEqualTo(Duration.ZERO);
+
+        assertThat(manager.remaining("daily")).isEqualTo(HOUR.multipliedBy(3));
+    }
+
+    @Test
+    void tryStartStartsACooldownForAFreeKey() {
+        assertThat(manager.tryStart("daily", HOUR)).isTrue();
+
+        assertThat(manager.remaining("daily")).isEqualTo(HOUR);
+    }
+
+    @Test
+    void tryStartLeavesARunningCooldownAsItIs() {
+        manager.set("daily", HOUR);
+        advance(Duration.ofMinutes(20));
+
+        assertThat(manager.tryStart("daily", HOUR.multipliedBy(3))).isFalse();
+
+        assertThat(manager.remaining("daily")).isEqualTo(Duration.ofMinutes(40));
+    }
+
+    @Test
+    void tryStartStartsAgainOnceTheCooldownHasExpired() {
+        manager.tryStart("daily", HOUR);
+        advance(HOUR);
+
+        assertThat(manager.tryStart("daily", HOUR.multipliedBy(2))).isTrue();
+
+        assertThat(manager.remaining("daily")).isEqualTo(HOUR.multipliedBy(2));
+    }
+
+    @Test
+    void tryStartWithALengthOfZeroOrLessStartsNothingAndTellsWhetherTheKeyWasFree() {
+        manager.set("running", HOUR);
+
+        assertThat(manager.tryStart("free", Duration.ZERO)).isTrue();
+        assertThat(manager.tryStart("free", HOUR.negated())).isTrue();
+        assertThat(manager.tryStart("free", Duration.ofNanos(999_999))).isTrue();
+        assertThat(manager.tryStart("running", Duration.ZERO)).isFalse();
+        assertThat(manager.tryStart("running", HOUR.negated())).isFalse();
+
+        assertThat(manager.isOnCooldown("free")).isFalse();
+        assertThat(manager.remaining("running")).isEqualTo(HOUR);
+    }
+
+    @Test
+    void tryStartWithALengthPastTheEndOfTheClockRangeLastsUntilThatEnd() {
+        assertThat(manager.tryStart("daily", Duration.ofSeconds(Long.MAX_VALUE))).isTrue();
+
+        assertThat(manager.remaining("daily")).isEqualTo(Duration.ofMillis(Long.MAX_VALUE - now.get()));
+    }
+
+    @Test
+    void tryStartIsTrueForExactlyOneOfTheThreadsThatRaceForAKey() throws Exception {
+        int threads = 16;
+        int rounds = 500;
+        try (ExecutorService pool = Executors.newFixedThreadPool(threads)) {
+            for (int round = 0; round < rounds; round++) {
+                Integer key = round;
+                CyclicBarrier together = new CyclicBarrier(threads);
+                List<Future<Boolean>> results = new ArrayList<>();
+                for (int thread = 0; thread < threads; thread++) {
+                    results.add(pool.submit(() -> {
+                        together.await();
+                        return manager.tryStart(key, HOUR);
+                    }));
+                }
+                int started = 0;
+                for (Future<Boolean> result : results) {
+                    if (result.get(10, TimeUnit.SECONDS)) {
+                        started++;
+                    }
+                }
+
+                assertThat(started).as("threads that started round %d", round).isEqualTo(1);
+            }
+        }
+    }
+
+    @Test
+    void purgeExpiredRemovesTheExpiredCooldownsAndCountsThem() {
+        manager.set("short", HOUR);
+        manager.set("exact", HOUR.multipliedBy(2));
+        manager.set("long", HOUR.multipliedBy(3));
+
+        assertThat(manager.purgeExpired()).isZero();
+
+        advance(HOUR.multipliedBy(2));
+
+        assertThat(manager.purgeExpired()).isEqualTo(2);
+        assertThat(manager.purgeExpired()).isZero();
+        assertThat(manager.remaining("long")).isEqualTo(HOUR);
+    }
+
+    @Test
+    void purgeExpiredKeepsACooldownSetAfterItReadTheClock() {
+        manager.set("daily", HOUR);
+        advance(HOUR.multipliedBy(2));
+        duringClockRead.set(() -> manager.set("daily", HOUR.multipliedBy(3)));
+
+        assertThat(manager.purgeExpired()).isZero();
 
         assertThat(manager.remaining("daily")).isEqualTo(HOUR.multipliedBy(3));
     }

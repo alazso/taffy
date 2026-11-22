@@ -36,6 +36,20 @@ All notable changes to Taffy are documented here. This project follows
   `org.jetbrains.annotations.CheckReturnValue`, so IntelliJ IDEA flags a call that drops the `boolean` that
   reports a refusal. Their signatures and behaviour are unchanged. A plugin compiles as before, with or without
   `org.jetbrains:annotations` on its classpath.
+- `CooldownManager.tryStart(Object key, Duration length)` in `taffy-platform` starts a cooldown only when the key
+  has none running and returns whether it did, as one atomic step: of the threads that call it for one free key
+  at once, exactly one gets `true`. A running cooldown is left as it is. A length of zero or less starts nothing
+  and returns whether the key was free. `isOnCooldown` followed by `set` stays two calls that two threads can
+  both pass.
+- `CooldownManager.purgeExpired()` removes every expired cooldown and returns how many it removed. An expired
+  cooldown otherwise stays in memory until its key is read or started again, so a plugin whose keys are not read
+  again, such as those of players who left, calls it from a repeating task.
+- `PdcKey.remove(PersistentDataHolder holder)` in `taffy-platform` removes the key from the holder's container,
+  whatever the type of its value, and leaves a holder without the key unchanged. A removal from an `ItemMeta`
+  reaches its item only through `ItemStack.setItemMeta`, as a `set` does.
+- `PdcKey.getOrDefault(PersistentDataHolder holder, C fallback)` returns the stored value, or `fallback` when the
+  key is absent, and throws `IllegalArgumentException` for a value of another type as `get` does. `PdcKey.key()`
+  returns the `NamespacedKey` the instance was built with.
 
 ## [0.4.3] - 2026-11-22
 
