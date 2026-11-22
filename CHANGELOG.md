@@ -95,6 +95,11 @@ All notable changes to Taffy are documented here. This project follows
   when 1 to 8 words of letters stand between it and `FROM`, so `SELECT * FROM the list` is still hidden. Every
   other statement is hidden as before, and so is a sentence without such a word, such as
   `Could not delete from disk cache`, sent as `Could not [sql hidden]`.
+- `verifyPluginLoader` of `so.alaz.taffy.paper-plugin` fails when the `loader` key of `paper-plugin.yml` has no
+  value while `paperPlugin.runtimeLibraries` lists a library, with the message of a missing key. Before, `loader:`
+  followed by nothing, by spaces or by a comment only passed the check, so the jar shipped `RuntimeLibraries` and
+  no loader, and the plugin failed at its first use of a library. A value on the same line counts, and so does an
+  indented one on the next line that is neither blank nor a comment.
 
 ## [0.4.2] - 2026-11-21
 

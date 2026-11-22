@@ -22,7 +22,10 @@ modules it uses, so a server owner installs one jar per plugin and nothing else.
 ```kotlin
 pluginManagement {
     repositories {
-        maven("https://repo.alaz.so/releases")
+        exclusiveContent {
+            forRepositories(maven("https://repo.alaz.so/releases"))
+            filter { includeGroupAndSubgroups("so.alaz.taffy") }
+        }
         gradlePluginPortal()
     }
 }
@@ -34,8 +37,12 @@ plugins {
 rootProject.name = "myplugin"
 ```
 
+`exclusiveContent` makes Gradle ask `repo.alaz.so` for the `so.alaz.taffy` plugins only, and ask the Gradle Plugin
+Portal for every plugin but those.
+
 Releases follow [Semantic Versioning](https://semver.org). Every push to `main` publishes the next version as a
-`-SNAPSHOT` to `https://repo.alaz.so/snapshots`; add that repository to `pluginManagement` to build against it.
+`-SNAPSHOT` to `https://repo.alaz.so/snapshots`; add `maven("https://repo.alaz.so/snapshots")` to
+`forRepositories(...)` to build against it.
 
 `build.gradle.kts`:
 
@@ -143,7 +150,7 @@ and runs javadoc with `-Xdoclint:all,-missing` and `--no-fonts`, so a broken com
 - relocation of `org.bstats`, `dev.faststats` and `so.alaz.taffy` to `<group>.libs.*`, and a build failure when
   the group is blank, or is `so.alaz.taffy` or a package inside it,
 - `RuntimeLibraries.COORDINATES` in the `<group>` package when `paperPlugin.runtimeLibraries` is not empty, and a
-  build failure when `paper-plugin.yml` then has no `loader` key,
+  build failure when `paper-plugin.yml` then has no `loader` key or the key has no value,
 - `compileAgainstPaperFloor`, which compiles the main Java sources against paper-api 26.2.build.135-stable, the
   oldest Paper build Taffy supports. No other task depends on it;
   `tasks.check { dependsOn("compileAgainstPaperFloor") }` makes it part of `check`.

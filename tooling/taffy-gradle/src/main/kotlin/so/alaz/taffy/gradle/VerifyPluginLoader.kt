@@ -14,9 +14,12 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.work.DisableCachingByDefault
 
 /**
- * Fails when [coordinates] lists a runtime library and a file of [descriptors] has no top-level `loader` key.
+ * Fails when [coordinates] lists a runtime library and a file of [descriptors] has no top-level `loader` key with
+ * a value.
  *
  * A key counts when its line starts at the first column, so a `loader` in a comment or under another key does not.
+ * A key has a value when text other than a comment follows its colon, on the same line or, indented, on the next
+ * line that is neither blank nor a comment.
  * A top-level mapping that is indented as a whole or written in flow style, such as `{loader: a.B}`, does not count
  * either. A byte order mark before the first line is skipped.
  * A file of [descriptors] that does not exist is not checked, and neither is any file while [coordinates] is empty.
@@ -42,7 +45,7 @@ abstract class VerifyPluginLoader : DefaultTask() {
             return
         }
         for (descriptor in descriptors.files.filter { it.isFile }) {
-            if (descriptor.readText().removePrefix("\uFEFF").lines().none(LOADER_KEY::matches)) {
+            if (!namesLoader(descriptor.readText().removePrefix("\uFEFF").lines())) {
                 val path = descriptor.relativeTo(projectDirectory.get().asFile).invariantSeparatorsPath
                 val listed = if (libraries == 1) "1 library" else "$libraries libraries"
                 throw GradleException(
@@ -55,7 +58,18 @@ abstract class VerifyPluginLoader : DefaultTask() {
         }
     }
 
+    private fun namesLoader(lines: List<String>): Boolean =
+        lines.withIndex().any { (index, line) ->
+            val key = LOADER_KEY.matchEntire(line) ?: return@any false
+            if (!NO_VALUE.matches(key.groupValues[2])) {
+                return@any true
+            }
+            val below = lines.drop(index + 1).firstOrNull { !NO_VALUE.matches(it) }
+            below != null && below.startsWith(" ")
+        }
+
     private companion object {
         val LOADER_KEY = Regex("(loader|\"loader\"|'loader')\\s*:(\\s.*)?")
+        val NO_VALUE = Regex("\\s*(#.*)?")
     }
 }

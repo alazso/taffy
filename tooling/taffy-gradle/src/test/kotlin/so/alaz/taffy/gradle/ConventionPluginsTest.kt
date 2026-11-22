@@ -1571,6 +1571,58 @@ class ConventionPluginsTest {
     }
 
     @Test
+    fun aLoaderKeyWithoutAValueFailsTheBuildLikeAMissingOne() {
+        project()
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            paperPlugin {
+                runtimeLibraries.add("com.zaxxer:HikariCP:7.1.0")
+            }
+            """,
+        )
+        val descriptor = projectDirectory.resolve("src/main/resources/paper-plugin.yml")
+        descriptor.parentFile.mkdirs()
+
+        val withoutValue = listOf(
+            "name: Demo\nloader:",
+            "name: Demo\nloader:\n",
+            "loader:   \nname: Demo\n",
+            "loader: # so.alaz.demo.DemoLoader\nname: Demo\n",
+            "name: Demo\r\n\"loader\":\r\n\r\n# so.alaz.demo.DemoLoader\r\nversion: 1\r\n",
+            "loader:\n  # so.alaz.demo.DemoLoader\n\nname: Demo\n",
+        )
+        for (text in withoutValue) {
+            descriptor.writeText(text)
+
+            val missing = runner("verifyPluginLoader").buildAndFail()
+
+            assertThat(missing.task(":verifyPluginLoader")?.outcome).`as`(text).isEqualTo(TaskOutcome.FAILED)
+            assertThat(missing.output).`as`(text).contains(
+                "paperPlugin.runtimeLibraries lists 1 library and src/main/resources/paper-plugin.yml has no " +
+                    "top-level loader key, so Paper downloads none and the plugin fails at its first use of one.",
+            )
+        }
+
+        val withValue = listOf(
+            "name: Demo\nloader: so.alaz.demo.DemoLoader # read at load\n",
+            "name: Demo\nloader:\n\n  # read at load\n  so.alaz.demo.DemoLoader\n",
+            "loader:\nname: Demo\nloader: so.alaz.demo.DemoLoader",
+        )
+        for (text in withValue) {
+            descriptor.writeText(text)
+
+            val present = run("verifyPluginLoader")
+
+            assertThat(present.task(":verifyPluginLoader")?.outcome).`as`(text).isEqualTo(TaskOutcome.SUCCESS)
+        }
+    }
+
+    @Test
     fun aBuildWithoutRuntimeLibrariesNeedsNoLoaderKey() {
         project()
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
