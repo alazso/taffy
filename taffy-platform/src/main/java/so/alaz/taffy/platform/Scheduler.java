@@ -1,11 +1,15 @@
 package so.alaz.taffy.platform;
 
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import org.bukkit.Location;
 import org.bukkit.Server;
+import org.bukkit.World;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.IllegalPluginAccessException;
 import org.bukkit.plugin.Plugin;
+import org.jetbrains.annotations.CheckReturnValue;
+import org.jetbrains.annotations.Nullable;
 
 import java.time.Duration;
 import java.util.List;
@@ -32,7 +36,18 @@ import java.util.function.Supplier;
  * {@link #delayedAsync} and {@link #repeatingAsync} return {@code false} and run nothing,
  * {@link #entity(Entity, Runnable, Runnable)} runs {@code retired} on the calling thread, {@link #dispatch}
  * completes exceptionally, {@link #asyncExecutor} rejects, and {@link #asyncOrRun} runs the task on the calling
- * thread.
+ * thread. The methods that return a {@link ScheduledTask} ({@link #repeatingAsyncTask}, {@link #delayedGlobal},
+ * {@link #repeatingGlobal}, {@link #delayedEntity}, {@link #repeatingEntity}, {@link #region},
+ * {@link #delayedRegion} and {@link #repeatingRegion}) return {@code null} and run nothing, and the two entity
+ * ones first run {@code retired} on the calling thread. A {@code null} from them always means the task was
+ * refused: besides a plugin that is not enabled, only an entity that is already removed gives one.
+ *
+ * <p>A returned {@link ScheduledTask} is Paper's own handle, and its {@code cancel()} stops that one task. The
+ * global, entity and region schedulers count in server ticks of 50 ms, so a {@link Duration} given to
+ * {@link #delayedGlobal}, {@link #repeatingGlobal}, {@link #delayedEntity}, {@link #repeatingEntity},
+ * {@link #delayedRegion} or {@link #repeatingRegion} is rounded up to whole ticks, and anything shorter than
+ * one tick, zero and negative values included, is one tick: Paper accepts no shorter delay or period. The async
+ * methods pass milliseconds and count no ticks.
  *
  * <p>A task Paper accepted but has not run by the time the owning plugin disables may never run: an entity
  * task then runs neither its task nor its retired callback, and a delayed task is cancelled. {@link #close}
@@ -48,7 +63,10 @@ import java.util.function.Supplier;
  * checked exception thrown without being declared included), the scheduler reports it to the {@link ErrorReports}
  * it was built with, under the source {@code scheduler.global}, {@code scheduler.async} or
  * {@code scheduler.entity}, and then rethrows it unchanged, so Paper logs and handles it as it would without the
- * scheduler. The report is made through {@link ErrorReports#reportUnhandled}, since nothing handles the error.
+ * scheduler. The same holds for the methods that return a {@link ScheduledTask}: the global ones report under
+ * {@code scheduler.global}, {@link #repeatingAsyncTask} under {@code scheduler.async}, the entity ones under
+ * {@code scheduler.entity} and the region ones under {@code scheduler.region}. The report is made through
+ * {@link ErrorReports#reportUnhandled}, since nothing handles the error.
  * Each throw is reported once: a repeating task that throws on several runs is reported for each of them. A task
  * or {@code retired} callback run on the calling thread is not reported, and what it throws reaches the caller.
  * {@link #dispatch} reports nothing: its future carries what the task threw.
@@ -69,6 +87,10 @@ public final class Scheduler implements Dispatcher {
     static final String GLOBAL_SOURCE = "scheduler.global";
     static final String ASYNC_SOURCE = "scheduler.async";
     static final String ENTITY_SOURCE = "scheduler.entity";
+    static final String REGION_SOURCE = "scheduler.region";
+
+    private static final long TICKS_PER_SECOND = 20;
+    private static final long NANOS_PER_TICK = 50_000_000;
 
     private static final Runnable NOTHING = () -> {
     };
@@ -115,8 +137,9 @@ public final class Scheduler implements Dispatcher {
      *
      * <p>On Paper the global region thread is the main thread, which owns every chunk and entity. On Folia it
      * owns no chunk and no entity, so world and entity work in {@code task} must hop to the thread that owns
-     * its target: Paper's region scheduler for a location, {@link #entity} for an entity.
+     * its target: {@link #region} for a location, {@link #entity} for an entity.
      */
+    @CheckReturnValue
     public boolean global(Runnable task) {
         return submit(() -> server.getGlobalRegionScheduler().run(plugin, reported(GLOBAL_SOURCE, task)));
     }
@@ -125,6 +148,7 @@ public final class Scheduler implements Dispatcher {
      * Runs {@code task} on an async thread, as soon as possible. Returns {@code false} when the plugin is
      * not enabled (before {@code onEnable} or once it is disabling): the task will never run.
      */
+    @CheckReturnValue
     public boolean async(Runnable task) {
         return submit(() -> server.getAsyncScheduler().runNow(plugin, reported(ASYNC_SOURCE, task)));
     }
@@ -162,6 +186,7 @@ public final class Scheduler implements Dispatcher {
      * disabling): the task will never run. Paper cancels the task when the plugin disables, so one not yet due
      * by then never runs either. Paper throws {@link IllegalArgumentException} for a negative delay.
      */
+    @CheckReturnValue
     public boolean delayedAsync(Runnable task, Duration delay) {
         return submit(() -> server.getAsyncScheduler().runDelayed(
             plugin, reported(ASYNC_SOURCE, task), delay.toMillis(), TimeUnit.MILLISECONDS));
@@ -172,36 +197,103 @@ public final class Scheduler implements Dispatcher {
      * both passed to Paper in whole milliseconds, until {@link #close}. Returns {@code false} when the
      * plugin is not enabled (before {@code onEnable} or once it is disabling): the task is then not scheduled,
      * or is cancelled at once. Paper throws {@link IllegalArgumentException} for a negative initial delay or a
-     * period below one millisecond.
+     * period below one millisecond. The task cannot be cancelled on its own: {@link #repeatingAsyncTask}
+     * returns a handle that can.
      */
+    @CheckReturnValue
     public boolean repeatingAsync(Runnable task, Duration initialDelay, Duration period) {
-        if (!plugin.isEnabled()) {
-            return false;
-        }
-        ScheduledTask added;
-        try {
-            added = server.getAsyncScheduler().runAtFixedRate(
-                plugin, reported(ASYNC_SOURCE, task), initialDelay.toMillis(), period.toMillis(),
-                TimeUnit.MILLISECONDS);
-        } catch (IllegalPluginAccessException disabling) {
-            return false;
-        }
-        repeating.add(added);
-        // close() may have finished its pass before the task was tracked, so the task is cancelled directly.
-        if (!plugin.isEnabled()) {
-            repeating.remove(added);
-            added.cancel();
-            repeating.forEach(ScheduledTask::cancel);
-            return false;
-        }
-        return true;
+        return repeatingAsyncTask(task, initialDelay, period) != null;
     }
 
     /**
-     * Cancels every task {@link #repeatingAsync} started through this instance, whichever class started it, and
-     * completes every future {@link #dispatch} returned whose task has not started, as a refused call does: with
-     * {@link RejectedExecutionException} for {@link ThreadTag#GLOBAL} and {@link ThreadTag#ASYNC}, and with
-     * {@link EntityUnavailableException} for an entity tag. A task whose future is completed here never runs,
+     * {@link #repeatingAsync} with a handle: runs {@code task} on an async thread after {@code initialDelay},
+     * then every {@code period} thereafter, both passed to Paper in whole milliseconds, until the returned task
+     * is cancelled or {@link #close} runs. Returns {@code null} when the plugin is not enabled (before
+     * {@code onEnable} or once it is disabling): the task is then not scheduled, or is cancelled at once. Paper
+     * throws {@link IllegalArgumentException} for a negative initial delay or a period below one millisecond.
+     */
+    public @Nullable ScheduledTask repeatingAsyncTask(Runnable task, Duration initialDelay, Duration period) {
+        return repeating(() -> server.getAsyncScheduler().runAtFixedRate(
+            plugin, reported(ASYNC_SOURCE, task), initialDelay.toMillis(), period.toMillis(),
+            TimeUnit.MILLISECONDS));
+    }
+
+    /**
+     * Runs {@code task} once on the global region thread after {@code delay}, in ticks as the class description
+     * states. Returns {@code null} when the plugin is not enabled (before {@code onEnable} or once it is
+     * disabling): the task will never run. Paper cancels the task when the plugin disables, so one not yet due
+     * by then never runs either. What {@link #global} says about the thread on Folia holds here.
+     */
+    public @Nullable ScheduledTask delayedGlobal(Runnable task, Duration delay) {
+        return scheduled(() -> server.getGlobalRegionScheduler().runDelayed(
+            plugin, reported(GLOBAL_SOURCE, task), ticks(delay)));
+    }
+
+    /**
+     * Runs {@code task} on the global region thread after {@code initialDelay}, then every {@code period}
+     * thereafter, both in ticks as the class description states, until the returned task is cancelled or
+     * {@link #close} runs. Returns {@code null} when the plugin is not enabled (before {@code onEnable} or once
+     * it is disabling): the task is then not scheduled, or is cancelled at once. What {@link #global} says about
+     * the thread on Folia holds here.
+     */
+    public @Nullable ScheduledTask repeatingGlobal(Runnable task, Duration initialDelay, Duration period) {
+        return repeating(() -> server.getGlobalRegionScheduler().runAtFixedRate(
+            plugin, reported(GLOBAL_SOURCE, task), ticks(initialDelay), ticks(period)));
+    }
+
+    /**
+     * Runs {@code task} on the region thread owning the block of {@code location}, as soon as possible. On
+     * Paper that is the main thread. Returns {@code null} when the plugin is not enabled (before
+     * {@code onEnable} or once it is disabling): the task will never run.
+     *
+     * <p>The region is taken from the world and the block coordinates {@code location} has when the call is
+     * made, so a later change to the {@link Location} does not move the task.
+     *
+     * @throws NullPointerException when {@code task} is {@code null} or {@code location} has no world, before
+     *     anything is scheduled
+     */
+    public @Nullable ScheduledTask region(Location location, Runnable task) {
+        return scheduled(inRegion(location, task, (world, chunkX, chunkZ, run) ->
+            server.getRegionScheduler().run(plugin, world, chunkX, chunkZ, run)));
+    }
+
+    /**
+     * Runs {@code task} once on the region thread owning the block of {@code location} after {@code delay}, in
+     * ticks as the class description states. Returns {@code null} when the plugin is not enabled (before
+     * {@code onEnable} or once it is disabling): the task will never run. Paper cancels the task when the plugin
+     * disables, so one not yet due by then never runs either. The region is taken as {@link #region} takes it.
+     *
+     * @throws NullPointerException when {@code task} is {@code null} or {@code location} has no world, before
+     *     anything is scheduled
+     */
+    public @Nullable ScheduledTask delayedRegion(Location location, Runnable task, Duration delay) {
+        return scheduled(inRegion(location, task, (world, chunkX, chunkZ, run) ->
+            server.getRegionScheduler().runDelayed(plugin, world, chunkX, chunkZ, run, ticks(delay))));
+    }
+
+    /**
+     * Runs {@code task} on the region thread owning the block of {@code location} after {@code initialDelay},
+     * then every {@code period} thereafter, both in ticks as the class description states, until the returned
+     * task is cancelled or {@link #close} runs. Returns {@code null} when the plugin is not enabled (before
+     * {@code onEnable} or once it is disabling): the task is then not scheduled, or is cancelled at once. The
+     * region is taken as {@link #region} takes it.
+     *
+     * @throws NullPointerException when {@code task} is {@code null} or {@code location} has no world, before
+     *     anything is scheduled
+     */
+    public @Nullable ScheduledTask repeatingRegion(
+        Location location, Runnable task, Duration initialDelay, Duration period) {
+        return repeating(inRegion(location, task, (world, chunkX, chunkZ, run) ->
+            server.getRegionScheduler().runAtFixedRate(
+                plugin, world, chunkX, chunkZ, run, ticks(initialDelay), ticks(period))));
+    }
+
+    /**
+     * Cancels every task {@link #repeatingAsync}, {@link #repeatingAsyncTask}, {@link #repeatingGlobal},
+     * {@link #repeatingEntity} and {@link #repeatingRegion} started through this instance, whichever class
+     * started it, and completes every future {@link #dispatch} returned whose task has not started, as a refused
+     * call does: with {@link RejectedExecutionException} for {@link ThreadTag#GLOBAL} and {@link ThreadTag#ASYNC},
+     * and with {@link EntityUnavailableException} for an entity tag. A task whose future is completed here never runs,
      * also when Paper still runs what it accepted. A run already in progress finishes, and the future of a
      * dispatched task that has started completes with what the task returns or throws. Other one-shot tasks are
      * left to Paper. The owning plugin calls this while it disables, at the place the order in the package
@@ -253,6 +345,67 @@ public final class Scheduler implements Dispatcher {
             }
         }
         retired.run();
+    }
+
+    /**
+     * Runs {@code task} once on the region thread owning the entity after {@code delay}, in ticks as the class
+     * description states, or {@code retired} when the task cannot run. Paper runs {@code retired} if the entity
+     * retires (for example the player logs out) before the task runs. Returns {@code null} when the entity is
+     * already removed, or when the plugin is not enabled (before {@code onEnable} or once it is disabling): in
+     * both cases {@code retired} has run here, on the calling thread, so it must not assume a region thread.
+     *
+     * <p>At most one of the two runs. Paper cancels the task when the plugin disables, so one not yet due by
+     * then runs neither, and nor does a task whose returned handle is cancelled.
+     *
+     * @throws NullPointerException when {@code task} or {@code retired} is {@code null}, before anything is
+     *     scheduled
+     */
+    public @Nullable ScheduledTask delayedEntity(Entity entity, Runnable task, Runnable retired, Duration delay) {
+        Objects.requireNonNull(task, "task");
+        Objects.requireNonNull(retired, "retired");
+        ScheduledTask added = scheduled(() -> entity.getScheduler().runDelayed(
+            plugin, reported(ENTITY_SOURCE, task), reporting(ENTITY_SOURCE, retired), ticks(delay)));
+        if (added == null) {
+            retired.run();
+        }
+        return added;
+    }
+
+    /**
+     * Runs {@code task} on the region thread owning the entity after {@code initialDelay}, then every
+     * {@code period} thereafter, both in ticks as the class description states, until the returned task is
+     * cancelled, the entity retires or {@link #close} runs. Paper runs {@code retired} once if the entity
+     * retires (for example the player logs out) while the task repeats, and the task does not run again. Returns
+     * {@code null} when the entity is already removed, or when the plugin is not enabled (before
+     * {@code onEnable} or once it is disabling): the task is then not scheduled, or is cancelled at once, and
+     * {@code retired} has run here, on the calling thread, so it must not assume a region thread.
+     *
+     * <p>{@code retired} runs at most once. A task that is cancelled, by its handle, by {@link #close} or by
+     * Paper when the plugin disables, stops without it.
+     *
+     * @throws NullPointerException when {@code task} or {@code retired} is {@code null}, before anything is
+     *     scheduled
+     */
+    public @Nullable ScheduledTask repeatingEntity(
+        Entity entity, Runnable task, Runnable retired, Duration initialDelay, Duration period) {
+        Objects.requireNonNull(task, "task");
+        Objects.requireNonNull(retired, "retired");
+        AtomicBoolean retiredRan = new AtomicBoolean();
+        Runnable retiredByPaper = reporting(ENTITY_SOURCE, retired);
+        ScheduledTask added = repeating(() -> entity.getScheduler().runAtFixedRate(
+            plugin,
+            reported(ENTITY_SOURCE, task),
+            () -> {
+                if (retiredRan.compareAndSet(false, true)) {
+                    retiredByPaper.run();
+                }
+            },
+            ticks(initialDelay),
+            ticks(period)));
+        if (added == null && retiredRan.compareAndSet(false, true)) {
+            retired.run();
+        }
+        return added;
     }
 
     /**
@@ -360,6 +513,64 @@ public final class Scheduler implements Dispatcher {
         } catch (IllegalPluginAccessException disabling) {
             return false;
         }
+    }
+
+    /** The task {@code submission} returns, or {@code null} when the plugin is not enabled. */
+    private @Nullable ScheduledTask scheduled(Supplier<@Nullable ScheduledTask> submission) {
+        if (!plugin.isEnabled()) {
+            return null;
+        }
+        try {
+            return submission.get();
+        } catch (IllegalPluginAccessException disabling) {
+            return null;
+        }
+    }
+
+    /**
+     * The repeating task {@code submission} returns, tracked for {@link #close}, or {@code null} when it returns
+     * none or the plugin is not enabled. Each call drops the cancelled tasks from the tracked ones.
+     */
+    private @Nullable ScheduledTask repeating(Supplier<@Nullable ScheduledTask> submission) {
+        ScheduledTask added = scheduled(submission);
+        if (added == null) {
+            return null;
+        }
+        repeating.removeIf(ScheduledTask::isCancelled);
+        repeating.add(added);
+        // close() may have finished its pass before the task was tracked, so the task is cancelled directly.
+        if (!plugin.isEnabled()) {
+            repeating.remove(added);
+            added.cancel();
+            repeating.forEach(ScheduledTask::cancel);
+            return null;
+        }
+        return added;
+    }
+
+    private interface RegionSubmission {
+        ScheduledTask submit(World world, int chunkX, int chunkZ, Consumer<ScheduledTask> run);
+    }
+
+    /** A submission of {@code task} to the region owning the block {@code location} names at this call. */
+    private Supplier<@Nullable ScheduledTask> inRegion(Location location, Runnable task, RegionSubmission submission) {
+        Objects.requireNonNull(task, "task");
+        World world = Objects.requireNonNull(location.getWorld(), "location world");
+        int chunkX = location.getBlockX() >> 4;
+        int chunkZ = location.getBlockZ() >> 4;
+        return () -> submission.submit(world, chunkX, chunkZ, reported(REGION_SOURCE, task));
+    }
+
+    /** {@code duration} in server ticks of 50 ms, rounded up, and at least one. */
+    static long ticks(Duration duration) {
+        long seconds = duration.getSeconds();
+        if (seconds < 0) {
+            return 1;
+        }
+        if (seconds >= Long.MAX_VALUE / TICKS_PER_SECOND) {
+            return Long.MAX_VALUE;
+        }
+        return Math.max(1, seconds * TICKS_PER_SECOND + Math.ceilDiv(duration.getNano(), NANOS_PER_TICK));
     }
 
     private RejectedExecutionException disabling(ThreadTag tag) {

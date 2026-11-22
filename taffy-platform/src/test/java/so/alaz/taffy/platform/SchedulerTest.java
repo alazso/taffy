@@ -3,8 +3,11 @@ package so.alaz.taffy.platform;
 import io.papermc.paper.threadedregions.scheduler.AsyncScheduler;
 import io.papermc.paper.threadedregions.scheduler.EntityScheduler;
 import io.papermc.paper.threadedregions.scheduler.GlobalRegionScheduler;
+import io.papermc.paper.threadedregions.scheduler.RegionScheduler;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import org.bukkit.Location;
 import org.bukkit.Server;
+import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.IllegalPluginAccessException;
 import org.bukkit.plugin.Plugin;
@@ -16,6 +19,11 @@ import org.mockito.invocation.InvocationOnMock;
 import so.alaz.taffy.test.SimulatedClasspath;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.lang.classfile.Attributes;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.MethodModel;
+import java.lang.reflect.AccessFlag;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,6 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -57,6 +66,8 @@ final class SchedulerTest {
     private final GlobalRegionScheduler globalScheduler = mock(GlobalRegionScheduler.class);
     private final AsyncScheduler asyncScheduler = mock(AsyncScheduler.class);
     private final EntityScheduler entityScheduler = mock(EntityScheduler.class);
+    private final RegionScheduler regionScheduler = mock(RegionScheduler.class);
+    private final World world = mock(World.class);
     private final Player player = mock(Player.class);
     private final ScheduledTask scheduled = mock(ScheduledTask.class);
     private final UUID playerId = UUID.randomUUID();
@@ -73,6 +84,7 @@ final class SchedulerTest {
         when(plugin.isEnabled()).thenReturn(true);
         when(server.getGlobalRegionScheduler()).thenReturn(globalScheduler);
         when(server.getAsyncScheduler()).thenReturn(asyncScheduler);
+        when(server.getRegionScheduler()).thenReturn(regionScheduler);
         when(server.getPlayer(playerId)).thenReturn(player);
         when(player.getScheduler()).thenReturn(entityScheduler);
         when(globalScheduler.run(eq(plugin), any())).thenAnswer(this::enqueue);
@@ -90,6 +102,12 @@ final class SchedulerTest {
 
     private ScheduledTask enqueue(InvocationOnMock invocation) {
         Consumer<ScheduledTask> task = invocation.getArgument(1);
+        queued.add(() -> task.accept(scheduled));
+        return scheduled;
+    }
+
+    private ScheduledTask enqueueRegion(InvocationOnMock invocation) {
+        Consumer<ScheduledTask> task = invocation.getArgument(4);
         queued.add(() -> task.accept(scheduled));
         return scheduled;
     }
@@ -870,5 +888,435 @@ final class SchedulerTest {
 
         assertThat(result.exceptionNow()).isInstanceOf(EntityUnavailableException.class);
         assertThat(reports).isEmpty();
+    }
+
+    @Test
+    void repeatingAsyncTaskReturnsThePaperTaskOfTheAsyncFixedRateScheduler() {
+        when(asyncScheduler.runAtFixedRate(eq(plugin), any(), eq(500L), eq(1000L), eq(TimeUnit.MILLISECONDS)))
+            .thenAnswer(this::enqueue);
+
+        ScheduledTask task = scheduler.repeatingAsyncTask(
+            taskRuns::incrementAndGet, Duration.ofMillis(500), Duration.ofSeconds(1));
+
+        assertThat(task).isSameAs(scheduled);
+        verify(scheduled, never()).cancel();
+        runQueued();
+        assertThat(taskRuns).hasValue(1);
+    }
+
+    @Test
+    void closeCancelsATaskStartedByEveryRepeatingMethod() {
+        ScheduledTask async = mock(ScheduledTask.class);
+        ScheduledTask global = mock(ScheduledTask.class);
+        ScheduledTask entity = mock(ScheduledTask.class);
+        ScheduledTask region = mock(ScheduledTask.class);
+        when(asyncScheduler.runAtFixedRate(eq(plugin), any(), anyLong(), anyLong(), any())).thenReturn(async);
+        when(globalScheduler.runAtFixedRate(eq(plugin), any(), anyLong(), anyLong())).thenReturn(global);
+        when(entityScheduler.runAtFixedRate(eq(plugin), any(), any(), anyLong(), anyLong())).thenReturn(entity);
+        when(regionScheduler.runAtFixedRate(eq(plugin), eq(world), anyInt(), anyInt(), any(), anyLong(), anyLong()))
+            .thenReturn(region);
+        Duration second = Duration.ofSeconds(1);
+        assertThat(scheduler.repeatingAsyncTask(taskRuns::incrementAndGet, second, second)).isSameAs(async);
+        assertThat(scheduler.repeatingGlobal(taskRuns::incrementAndGet, second, second)).isSameAs(global);
+        assertThat(scheduler.repeatingEntity(player, taskRuns::incrementAndGet, retiredRuns::incrementAndGet,
+            second, second)).isSameAs(entity);
+        assertThat(scheduler.repeatingRegion(new Location(world, 0, 64, 0), taskRuns::incrementAndGet,
+            second, second)).isSameAs(region);
+
+        scheduler.close();
+        scheduler.close();
+
+        verify(async).cancel();
+        verify(global).cancel();
+        verify(entity).cancel();
+        verify(region).cancel();
+        assertThat(retiredRuns).hasValue(0);
+    }
+
+    @Test
+    void aCancelledRepeatingTaskIsDroppedFromTheTrackedTasksOnTheNextAdd() {
+        ScheduledTask cancelled = mock(ScheduledTask.class);
+        ScheduledTask running = mock(ScheduledTask.class);
+        when(asyncScheduler.runAtFixedRate(eq(plugin), any(), anyLong(), anyLong(), any())).thenReturn(cancelled);
+        when(globalScheduler.runAtFixedRate(eq(plugin), any(), anyLong(), anyLong())).thenReturn(running);
+        scheduler.repeatingAsyncTask(taskRuns::incrementAndGet, Duration.ZERO, Duration.ofSeconds(1));
+        when(cancelled.isCancelled()).thenReturn(true);
+
+        scheduler.repeatingGlobal(taskRuns::incrementAndGet, Duration.ofSeconds(1), Duration.ofSeconds(1));
+        scheduler.close();
+
+        verify(cancelled, never()).cancel();
+        verify(running).cancel();
+    }
+
+    @Test
+    void aDisabledPluginRefusesEveryTaskThatReturnsAHandle() {
+        when(plugin.isEnabled()).thenReturn(false);
+        Duration second = Duration.ofSeconds(1);
+        Location location = new Location(world, 0, 64, 0);
+
+        assertThat(scheduler.repeatingAsyncTask(taskRuns::incrementAndGet, second, second)).isNull();
+        assertThat(scheduler.delayedGlobal(taskRuns::incrementAndGet, second)).isNull();
+        assertThat(scheduler.repeatingGlobal(taskRuns::incrementAndGet, second, second)).isNull();
+        assertThat(scheduler.region(location, taskRuns::incrementAndGet)).isNull();
+        assertThat(scheduler.delayedRegion(location, taskRuns::incrementAndGet, second)).isNull();
+        assertThat(scheduler.repeatingRegion(location, taskRuns::incrementAndGet, second, second)).isNull();
+
+        verifyNoInteractions(asyncScheduler, globalScheduler, regionScheduler);
+        assertThat(taskRuns).hasValue(0);
+    }
+
+    @Test
+    void disablingDuringSchedulingRefusesEveryTaskThatReturnsAHandle() {
+        IllegalPluginAccessException disabled = new IllegalPluginAccessException("disabled");
+        when(asyncScheduler.runAtFixedRate(eq(plugin), any(), anyLong(), anyLong(), any())).thenThrow(disabled);
+        when(globalScheduler.runDelayed(eq(plugin), any(), anyLong())).thenThrow(disabled);
+        when(globalScheduler.runAtFixedRate(eq(plugin), any(), anyLong(), anyLong())).thenThrow(disabled);
+        when(regionScheduler.run(eq(plugin), eq(world), anyInt(), anyInt(), any())).thenThrow(disabled);
+        when(regionScheduler.runDelayed(eq(plugin), eq(world), anyInt(), anyInt(), any(), anyLong()))
+            .thenThrow(disabled);
+        when(regionScheduler.runAtFixedRate(eq(plugin), eq(world), anyInt(), anyInt(), any(), anyLong(), anyLong()))
+            .thenThrow(disabled);
+        Duration second = Duration.ofSeconds(1);
+        Location location = new Location(world, 0, 64, 0);
+
+        assertThat(scheduler.repeatingAsyncTask(taskRuns::incrementAndGet, second, second)).isNull();
+        assertThat(scheduler.delayedGlobal(taskRuns::incrementAndGet, second)).isNull();
+        assertThat(scheduler.repeatingGlobal(taskRuns::incrementAndGet, second, second)).isNull();
+        assertThat(scheduler.region(location, taskRuns::incrementAndGet)).isNull();
+        assertThat(scheduler.delayedRegion(location, taskRuns::incrementAndGet, second)).isNull();
+        assertThat(scheduler.repeatingRegion(location, taskRuns::incrementAndGet, second, second)).isNull();
+
+        assertThat(taskRuns).hasValue(0);
+    }
+
+    @Test
+    void aRepeatingGlobalTaskAddedAsThePluginStopsBeingEnabledIsCancelledAndRefused() {
+        ScheduledTask earlier = mock(ScheduledTask.class);
+        ScheduledTask late = mock(ScheduledTask.class);
+        when(globalScheduler.runAtFixedRate(eq(plugin), any(), anyLong(), anyLong())).thenReturn(earlier, late);
+        scheduler.repeatingGlobal(taskRuns::incrementAndGet, Duration.ZERO, Duration.ofSeconds(1));
+        when(plugin.isEnabled()).thenReturn(true, false);
+
+        ScheduledTask task = scheduler.repeatingGlobal(taskRuns::incrementAndGet, Duration.ZERO, Duration.ofSeconds(1));
+
+        assertThat(task).isNull();
+        verify(late).cancel();
+        verify(earlier).cancel();
+    }
+
+    @Test
+    void delayedGlobalPassesTheDelayInTicksAndReturnsThePaperTask() {
+        when(globalScheduler.runDelayed(eq(plugin), any(), eq(30L))).thenAnswer(this::enqueue);
+
+        ScheduledTask task = scheduler.delayedGlobal(taskRuns::incrementAndGet, Duration.ofMillis(1500));
+
+        assertThat(task).isSameAs(scheduled);
+        assertThat(taskRuns).hasValue(0);
+        runQueued();
+        assertThat(taskRuns).hasValue(1);
+        scheduler.close();
+        verify(scheduled, never()).cancel();
+    }
+
+    @Test
+    void repeatingGlobalPassesTheDelayAndThePeriodInTicks() {
+        when(globalScheduler.runAtFixedRate(eq(plugin), any(), eq(1L), eq(3L))).thenAnswer(this::enqueue);
+
+        ScheduledTask task = scheduler.repeatingGlobal(
+            taskRuns::incrementAndGet, Duration.ZERO, Duration.ofMillis(101));
+
+        assertThat(task).isSameAs(scheduled);
+        runQueued();
+        assertThat(taskRuns).hasValue(1);
+    }
+
+    @Test
+    void aDurationIsRoundedUpToWholeTicksAndIsAtLeastOne() {
+        assertThat(Scheduler.ticks(Duration.ZERO)).isEqualTo(1);
+        assertThat(Scheduler.ticks(Duration.ofSeconds(-3))).isEqualTo(1);
+        assertThat(Scheduler.ticks(Duration.ofMillis(-1))).isEqualTo(1);
+        assertThat(Scheduler.ticks(Duration.ofNanos(1))).isEqualTo(1);
+        assertThat(Scheduler.ticks(Duration.ofMillis(50))).isEqualTo(1);
+        assertThat(Scheduler.ticks(Duration.ofMillis(50).plusNanos(1))).isEqualTo(2);
+        assertThat(Scheduler.ticks(Duration.ofMillis(99))).isEqualTo(2);
+        assertThat(Scheduler.ticks(Duration.ofSeconds(1))).isEqualTo(20);
+        assertThat(Scheduler.ticks(Duration.ofSeconds(3).plusMillis(999))).isEqualTo(80);
+        assertThat(Scheduler.ticks(Duration.ofSeconds(Long.MAX_VALUE))).isEqualTo(Long.MAX_VALUE);
+    }
+
+    @Test
+    void delayedEntityPassesTheDelayInTicksAndHandsRetiredToPaper() {
+        ArgumentCaptor<Runnable> passed = ArgumentCaptor.forClass(Runnable.class);
+        when(entityScheduler.runDelayed(eq(plugin), any(), any(), eq(20L))).thenAnswer(this::enqueue);
+
+        ScheduledTask task = scheduler.delayedEntity(
+            player, taskRuns::incrementAndGet, retiredRuns::incrementAndGet, Duration.ofSeconds(1));
+
+        assertThat(task).isSameAs(scheduled);
+        verify(entityScheduler).runDelayed(eq(plugin), any(), passed.capture(), eq(20L));
+        assertThat(retiredRuns).hasValue(0);
+        runQueued();
+        assertThat(taskRuns).hasValue(1);
+        passed.getValue().run();
+        assertThat(retiredRuns).hasValue(1);
+    }
+
+    @Test
+    void aRemovedEntityRefusesADelayedOrRepeatingTaskAndRunsRetiredOnce() {
+        Duration second = Duration.ofSeconds(1);
+
+        assertThat(scheduler.delayedEntity(
+            player, taskRuns::incrementAndGet, retiredRuns::incrementAndGet, second)).isNull();
+        assertThat(retiredRuns).hasValue(1);
+        assertThat(scheduler.repeatingEntity(
+            player, taskRuns::incrementAndGet, retiredRuns::incrementAndGet, second, second)).isNull();
+
+        assertThat(retiredRuns).hasValue(2);
+        assertThat(taskRuns).hasValue(0);
+        verify(entityScheduler).runDelayed(eq(plugin), any(), any(), eq(20L));
+        verify(entityScheduler).runAtFixedRate(eq(plugin), any(), any(), eq(20L), eq(20L));
+    }
+
+    @Test
+    void aDisabledPluginRefusesADelayedOrRepeatingEntityTaskAndRunsRetiredWithoutTouchingTheEntity() {
+        when(plugin.isEnabled()).thenReturn(false);
+        AtomicReference<Thread> retiredThread = new AtomicReference<>();
+        Duration second = Duration.ofSeconds(1);
+
+        assertThat(scheduler.delayedEntity(player, taskRuns::incrementAndGet,
+            () -> retiredThread.set(Thread.currentThread()), second)).isNull();
+        assertThat(scheduler.repeatingEntity(
+            player, taskRuns::incrementAndGet, retiredRuns::incrementAndGet, second, second)).isNull();
+
+        assertThat(retiredThread).hasValue(Thread.currentThread());
+        assertThat(retiredRuns).hasValue(1);
+        verify(player, never()).getScheduler();
+    }
+
+    @Test
+    void disablingDuringSchedulingRefusesADelayedOrRepeatingEntityTaskAndRunsRetired() {
+        IllegalPluginAccessException disabled = new IllegalPluginAccessException("disabled");
+        when(entityScheduler.runDelayed(eq(plugin), any(), any(), anyLong())).thenThrow(disabled);
+        when(entityScheduler.runAtFixedRate(eq(plugin), any(), any(), anyLong(), anyLong())).thenThrow(disabled);
+        Duration second = Duration.ofSeconds(1);
+
+        assertThat(scheduler.delayedEntity(
+            player, taskRuns::incrementAndGet, retiredRuns::incrementAndGet, second)).isNull();
+        assertThat(scheduler.repeatingEntity(
+            player, taskRuns::incrementAndGet, retiredRuns::incrementAndGet, second, second)).isNull();
+
+        assertThat(retiredRuns).hasValue(2);
+        assertThat(taskRuns).hasValue(0);
+    }
+
+    @Test
+    void repeatingEntityPassesTicksAndPaperRunsRetiredOnce() {
+        ArgumentCaptor<Runnable> passed = ArgumentCaptor.forClass(Runnable.class);
+        when(entityScheduler.runAtFixedRate(eq(plugin), any(), any(), eq(1L), eq(5L))).thenAnswer(this::enqueue);
+
+        ScheduledTask task = scheduler.repeatingEntity(player, taskRuns::incrementAndGet,
+            retiredRuns::incrementAndGet, Duration.ofMillis(10), Duration.ofMillis(250));
+
+        assertThat(task).isSameAs(scheduled);
+        verify(entityScheduler).runAtFixedRate(eq(plugin), any(), passed.capture(), eq(1L), eq(5L));
+        runQueued();
+        assertThat(taskRuns).hasValue(1);
+        assertThat(retiredRuns).hasValue(0);
+        passed.getValue().run();
+        passed.getValue().run();
+        assertThat(retiredRuns).hasValue(1);
+    }
+
+    @Test
+    void aRepeatingEntityTaskAddedAsThePluginStopsBeingEnabledIsCancelledAndRunsRetiredOnce() {
+        ArgumentCaptor<Runnable> passed = ArgumentCaptor.forClass(Runnable.class);
+        when(entityScheduler.runAtFixedRate(eq(plugin), any(), any(), anyLong(), anyLong())).thenReturn(scheduled);
+        when(plugin.isEnabled()).thenReturn(true, false);
+
+        ScheduledTask task = scheduler.repeatingEntity(player, taskRuns::incrementAndGet,
+            retiredRuns::incrementAndGet, Duration.ofSeconds(1), Duration.ofSeconds(1));
+
+        assertThat(task).isNull();
+        verify(scheduled).cancel();
+        assertThat(retiredRuns).hasValue(1);
+        verify(entityScheduler).runAtFixedRate(eq(plugin), any(), passed.capture(), anyLong(), anyLong());
+        passed.getValue().run();
+        assertThat(retiredRuns).hasValue(1);
+    }
+
+    @Test
+    void delayedAndRepeatingEntityRefuseANullTaskOrRetiredBeforeSchedulingAnything() {
+        Duration second = Duration.ofSeconds(1);
+
+        assertThatNullPointerException()
+            .isThrownBy(() -> scheduler.delayedEntity(player, null, retiredRuns::incrementAndGet, second))
+            .withMessage("task");
+        assertThatNullPointerException()
+            .isThrownBy(() -> scheduler.delayedEntity(player, taskRuns::incrementAndGet, null, second))
+            .withMessage("retired");
+        assertThatNullPointerException()
+            .isThrownBy(() -> scheduler.repeatingEntity(player, null, retiredRuns::incrementAndGet, second, second))
+            .withMessage("task");
+        assertThatNullPointerException()
+            .isThrownBy(() -> scheduler.repeatingEntity(player, taskRuns::incrementAndGet, null, second, second))
+            .withMessage("retired");
+
+        verifyNoInteractions(entityScheduler);
+        assertThat(retiredRuns).hasValue(0);
+    }
+
+    @Test
+    void regionRunsOnTheRegionOfTheChunkHoldingTheLocation() {
+        when(regionScheduler.run(eq(plugin), eq(world), eq(2), eq(-1), any())).thenAnswer(this::enqueueRegion);
+
+        ScheduledTask task = scheduler.region(new Location(world, 47.9, 64, -0.5), taskRuns::incrementAndGet);
+
+        assertThat(task).isSameAs(scheduled);
+        assertThat(taskRuns).hasValue(0);
+        runQueued();
+        assertThat(taskRuns).hasValue(1);
+    }
+
+    @Test
+    void regionKeepsTheBlockTheLocationNamedAtTheCall() {
+        Location location = new Location(world, 16, 64, 32);
+        when(regionScheduler.run(eq(plugin), eq(world), eq(1), eq(2), any())).thenAnswer(call -> {
+            location.setX(1600);
+            return scheduled;
+        });
+
+        assertThat(scheduler.region(location, taskRuns::incrementAndGet)).isSameAs(scheduled);
+
+        verify(regionScheduler).run(eq(plugin), eq(world), eq(1), eq(2), any());
+    }
+
+    @Test
+    void delayedRegionPassesTheDelayInTicks() {
+        when(regionScheduler.runDelayed(eq(plugin), eq(world), eq(-1), eq(0), any(), eq(40L)))
+            .thenAnswer(this::enqueueRegion);
+
+        ScheduledTask task = scheduler.delayedRegion(
+            new Location(world, -1, 64, 15), taskRuns::incrementAndGet, Duration.ofSeconds(2));
+
+        assertThat(task).isSameAs(scheduled);
+        runQueued();
+        assertThat(taskRuns).hasValue(1);
+        scheduler.close();
+        verify(scheduled, never()).cancel();
+    }
+
+    @Test
+    void repeatingRegionPassesTheDelayAndThePeriodInTicks() {
+        when(regionScheduler.runAtFixedRate(eq(plugin), eq(world), eq(0), eq(0), any(), eq(1L), eq(20L)))
+            .thenAnswer(this::enqueueRegion);
+
+        ScheduledTask task = scheduler.repeatingRegion(
+            new Location(world, 0, 64, 0), taskRuns::incrementAndGet, Duration.ZERO, Duration.ofSeconds(1));
+
+        assertThat(task).isSameAs(scheduled);
+        runQueued();
+        assertThat(taskRuns).hasValue(1);
+    }
+
+    @Test
+    void theRegionTasksRefuseANullTaskOrALocationWithNoWorldBeforeSchedulingAnything() {
+        Location nowhere = new Location(null, 0, 64, 0);
+        Location somewhere = new Location(world, 0, 64, 0);
+        Duration second = Duration.ofSeconds(1);
+
+        assertThatNullPointerException()
+            .isThrownBy(() -> scheduler.region(nowhere, taskRuns::incrementAndGet))
+            .withMessage("location world");
+        assertThatNullPointerException()
+            .isThrownBy(() -> scheduler.delayedRegion(nowhere, taskRuns::incrementAndGet, second))
+            .withMessage("location world");
+        assertThatNullPointerException()
+            .isThrownBy(() -> scheduler.repeatingRegion(nowhere, taskRuns::incrementAndGet, second, second))
+            .withMessage("location world");
+        assertThatNullPointerException().isThrownBy(() -> scheduler.region(somewhere, null)).withMessage("task");
+        assertThatNullPointerException()
+            .isThrownBy(() -> scheduler.delayedRegion(somewhere, null, second))
+            .withMessage("task");
+        assertThatNullPointerException()
+            .isThrownBy(() -> scheduler.repeatingRegion(somewhere, null, second, second))
+            .withMessage("task");
+
+        verifyNoInteractions(regionScheduler);
+    }
+
+    @Test
+    void aRegionTaskReportsAThrowOnceUnderTheRegionSourceAndRethrowsIt() {
+        when(regionScheduler.run(eq(plugin), eq(world), anyInt(), anyInt(), any())).thenAnswer(this::enqueueRegion);
+        IllegalStateException failure = new IllegalStateException("region failed");
+
+        scheduler.region(new Location(world, 0, 64, 0), throwing(failure));
+
+        assertThatThrownBy(onlyQueued()::run).isSameAs(failure);
+        assertReportedOnce(Scheduler.REGION_SOURCE, failure);
+    }
+
+    @Test
+    void aDelayedGlobalTaskReportsAThrowOnceUnderTheGlobalSourceAndRethrowsIt() {
+        when(globalScheduler.runDelayed(eq(plugin), any(), anyLong())).thenAnswer(this::enqueue);
+        IllegalStateException failure = new IllegalStateException("delayed global failed");
+
+        scheduler.delayedGlobal(throwing(failure), Duration.ofSeconds(1));
+
+        assertThatThrownBy(onlyQueued()::run).isSameAs(failure);
+        assertReportedOnce(Scheduler.GLOBAL_SOURCE, failure);
+    }
+
+    @Test
+    void aDelayedEntityTaskAndARetiredCallbackPaperRunsReportUnderTheEntitySource() {
+        when(entityScheduler.runDelayed(eq(plugin), any(), any(), anyLong())).thenAnswer(this::enqueue);
+        ArgumentCaptor<Runnable> passed = ArgumentCaptor.forClass(Runnable.class);
+        IllegalStateException failure = new IllegalStateException("delayed entity failed");
+        IllegalStateException retiredFailure = new IllegalStateException("retired failed");
+
+        scheduler.delayedEntity(player, throwing(failure), throwing(retiredFailure), Duration.ofSeconds(1));
+        verify(entityScheduler).runDelayed(eq(plugin), any(), passed.capture(), anyLong());
+
+        assertThatThrownBy(onlyQueued()::run).isSameAs(failure);
+        assertReportedOnce(Scheduler.ENTITY_SOURCE, failure);
+        assertThatThrownBy(passed.getValue()::run).isSameAs(retiredFailure);
+        assertThat(reports).hasSize(2).last().satisfies(report -> {
+            assertThat(report.source()).isEqualTo(Scheduler.ENTITY_SOURCE);
+            assertThat(report.error()).isSameAs(retiredFailure);
+        });
+    }
+
+    @Test
+    void retiredOfARefusedDelayedOrRepeatingEntityTaskPassesAThrowToTheCallerWithoutAReport() {
+        IllegalStateException failure = new IllegalStateException("inline retired failed");
+        Duration second = Duration.ofSeconds(1);
+
+        assertThatThrownBy(() -> scheduler.delayedEntity(player, taskRuns::incrementAndGet, throwing(failure), second))
+            .isSameAs(failure);
+        assertThatThrownBy(() -> scheduler.repeatingEntity(
+            player, taskRuns::incrementAndGet, throwing(failure), second, second)).isSameAs(failure);
+
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
+    void theMethodsThatReportARefusalAsABooleanAreMarkedCheckReturnValue() throws IOException {
+        List<String> marked = new ArrayList<>();
+        List<String> unmarked = new ArrayList<>();
+        try (InputStream file = Scheduler.class.getResourceAsStream("Scheduler.class")) {
+            for (MethodModel method : ClassFile.of().parse(file.readAllBytes()).methods()) {
+                boolean checked = method.findAttribute(Attributes.runtimeInvisibleAnnotations()).stream()
+                    .flatMap(attribute -> attribute.annotations().stream())
+                    .anyMatch(annotation -> annotation.classSymbol().descriptorString()
+                        .equals("Lorg/jetbrains/annotations/CheckReturnValue;"));
+                if (method.flags().has(AccessFlag.PUBLIC)) {
+                    (checked ? marked : unmarked).add(method.methodName().stringValue());
+                }
+            }
+        }
+
+        assertThat(marked).containsExactlyInAnyOrder("global", "async", "delayedAsync", "repeatingAsync");
+        assertThat(unmarked).contains("repeatingAsyncTask", "delayedGlobal", "repeatingGlobal", "delayedEntity",
+            "repeatingEntity", "region", "delayedRegion", "repeatingRegion");
     }
 }

@@ -5,6 +5,38 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `Scheduler.repeatingAsyncTask(Runnable task, Duration initialDelay, Duration period)` in `taffy-platform` starts
+  the task `repeatingAsync` starts and returns Paper's own `ScheduledTask`, or `null` when the plugin is not
+  enabled. `ScheduledTask.cancel()` stops that one task, so a plugin replaces a task whose period changed on a
+  reload without `Scheduler.close()`, which stops every repeating task of the instance. `repeatingAsync` keeps
+  its `boolean`.
+- `Scheduler` schedules delayed and repeating tasks on the global region thread and on an entity's thread:
+  `delayedGlobal(Runnable task, Duration delay)`, `repeatingGlobal(Runnable task, Duration initialDelay, Duration
+  period)`, `delayedEntity(Entity entity, Runnable task, Runnable retired, Duration delay)` and
+  `repeatingEntity(Entity entity, Runnable task, Runnable retired, Duration initialDelay, Duration period)`. Each
+  returns Paper's `ScheduledTask`, or `null` when the task was refused: the plugin is not enabled, or the entity
+  is already removed. The two entity methods have then run `retired` on the calling thread. Paper runs `retired`
+  when the entity retires before a delayed task runs or while a repeating task repeats, and `retired` runs at
+  most once.
+- `Scheduler` schedules on the region thread that owns a block: `region(Location location, Runnable task)`,
+  `delayedRegion(Location location, Runnable task, Duration delay)` and `repeatingRegion(Location location,
+  Runnable task, Duration initialDelay, Duration period)`, each returning Paper's `ScheduledTask`, or `null` when
+  the plugin is not enabled. The region is taken from the world and the block coordinates of the `Location` at
+  the call. A `null` task and a `Location` with no world throw `NullPointerException`. On Paper the task runs on
+  the main thread. No `ThreadTag` names a region.
+- The global, entity and region methods above count in server ticks: a `Duration` is rounded up to whole 50 ms
+  ticks, and anything below one tick, zero and negative values included, is one tick. A task they start that
+  throws is reported once under `scheduler.global`, `scheduler.entity` or the new source `scheduler.region` and
+  rethrown, as the tasks of the other methods are.
+- `Scheduler.close()` also cancels the tasks `repeatingAsyncTask`, `repeatingGlobal`, `repeatingEntity` and
+  `repeatingRegion` started. Each new repeating task drops the cancelled ones from the tasks `close()` tracks, so
+  a plugin that cancels and restarts a task on every reload holds no more than its live tasks.
+- `Scheduler.global`, `async`, `delayedAsync` and `repeatingAsync` carry
+  `org.jetbrains.annotations.CheckReturnValue`, so IntelliJ IDEA flags a call that drops the `boolean` that
+  reports a refusal. Their signatures and behaviour are unchanged. A plugin compiles as before, with or without
+  `org.jetbrains:annotations` on its classpath.
+
 ## [0.4.3] - 2026-11-22
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

@@ -89,7 +89,9 @@
  *     if (settings.hook("vault")) {
  *         getServer().getPluginManager().registerEvents(
  *             new EconomyWatcher(() -> economy = lookUpEconomy(), getServer()::isStopping), this);
- *         scheduler.global(() -> economy = lookUpEconomy());
+ *         if (!scheduler.global(() -> economy = lookUpEconomy())) {
+ *             getLogger().warning("The economy is not looked up again on the first tick");
+ *         }
  *     }
  *     placeholders = new PlaceholderExpansionBuilder()
  *         .identifier("shop")
