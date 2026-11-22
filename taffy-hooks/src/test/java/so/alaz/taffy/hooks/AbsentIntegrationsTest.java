@@ -59,7 +59,7 @@ final class AbsentIntegrationsTest {
         "dev.lone.itemsadder.", "com.nexomc.", "io.th0rgal.oraxen.", "me.arcaniax.hdb.", "net.milkbowl.vault.",
         "net.luckperms.api.", "com.sk89q.", "me.clip.placeholderapi.", "io.github.miniplaceholders.",
         "eu.decentsoftware.holograms.", "de.oliver.fancyholograms.", "net.thenextlvl.hologram.",
-        "com.maximde.hologramlib."};
+        "com.maximde.hologramlib.", "org.geysermc."};
 
     private static final String VAULT_ECONOMY = "net.milkbowl.vault.economy.Economy";
 
@@ -73,6 +73,11 @@ final class AbsentIntegrationsTest {
         "com.sk89q.worldguard.protection.ApplicableRegionSet",
         "com.sk89q.worldguard.protection.regions.ProtectedRegion", "com.sk89q.worldedit.math.BlockVector3",
         "com.sk89q.worldedit.bukkit.BukkitAdapter"};
+
+    /** Classes the Bedrock adapters read, from the Floodgate api, Geyser api and Geyser base-api jars. */
+    private static final String[] BEDROCK_API = {
+        "org.geysermc.floodgate.api.FloodgateApi", "org.geysermc.geyser.api.GeyserApi",
+        "org.geysermc.api.GeyserApiBase"};
 
     private static final String PLACEHOLDERAPI = "me.clip.placeholderapi.expansion.PlaceholderExpansion";
 
@@ -95,8 +100,8 @@ final class AbsentIntegrationsTest {
         "me.arcaniax.hdb.api.HeadDatabaseAPI", VAULT_ECONOMY, "net.milkbowl.vault.economy.EconomyResponse", LUCKPERMS,
         "net.luckperms.api.LuckPermsProvider", "net.luckperms.api.model.user.User", "net.luckperms.api.node.NodeType",
         WORLDGUARD_API[0], WORLDGUARD_API[1], WORLDGUARD_API[2], WORLDGUARD_API[3], WORLDGUARD_API[4],
-        WORLDGUARD_API[5], PLACEHOLDER_API[0], PLACEHOLDER_API[1], PLACEHOLDER_API[2], PLACEHOLDER_API[3],
-        PLACEHOLDER_API[4], PLACEHOLDER_API[5]};
+        WORLDGUARD_API[5], BEDROCK_API[0], BEDROCK_API[1], BEDROCK_API[2], PLACEHOLDER_API[0], PLACEHOLDER_API[1],
+        PLACEHOLDER_API[2], PLACEHOLDER_API[3], PLACEHOLDER_API[4], PLACEHOLDER_API[5]};
 
     private static ClassLoader hidden() {
         return SimulatedClasspath.hiding(OWN, HIDDEN);
@@ -150,6 +155,8 @@ final class AbsentIntegrationsTest {
         probes.add(VAULT_ECONOMY);
         probes.add(LUCKPERMS);
         probes.add(WORLDGUARD);
+        probes.add(PluginBedrock.FLOODGATE_PROBE);
+        probes.add(PluginBedrock.GEYSER_PROBE);
         probes.add(PLACEHOLDERAPI);
         probes.add(MINIPLACEHOLDERS);
         for (HologramPlugin plugin : HologramPlugin.values()) {
@@ -202,8 +209,9 @@ final class AbsentIntegrationsTest {
             CustomItems.Built.class, CustomItems.Built.Reason.class, EconomyResult.class, EconomyResult.Status.class,
             EconomyProvider.class, VaultOptions.class, VaultOptions.ThreadRule.class,
             VaultOptions.FundsCheck.class, EconomyWatcher.class,
-            PermissionProvider.class, RegionProvider.class, PlaceholderExpansionBuilder.class,
-            PlaceholderRegistration.class, HologramPlugin.class, HologramProvider.class);
+            PermissionProvider.class, RegionProvider.class, BedrockProvider.class,
+            PlaceholderExpansionBuilder.class, PlaceholderRegistration.class, HologramPlugin.class,
+            HologramProvider.class);
         assertThat(exported).doesNotContain(EconomyLookup.class, Detection.class);
 
         for (Class<?> type : exported) {
@@ -582,6 +590,75 @@ final class AbsentIntegrationsTest {
             + " cannot see it, because its paper-plugin.yml does not list LuckPerms under dependencies.server.");
         assertThat(log.lines()).containsExactly("WARNING LuckPerms 5.5.17 is not visible to this plugin, so it stays"
             + " off: this plugin's paper-plugin.yml does not list LuckPerms under dependencies.server.");
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void bedrockDetectionOnTheHiddenCopyFindsFloodgateAndGeyserWithoutTheirApis() throws Throwable {
+        for (String api : BEDROCK_API) {
+            assertThatCode(() -> Class.forName(api, false, withApis()))
+                .as(api)
+                .doesNotThrowAnyException();
+        }
+        ClassLoader loader = hidden();
+        for (String api : BEDROCK_API) {
+            assertThatThrownBy(() -> Class.forName(api, false, loader))
+                .as(api)
+                .isInstanceOf(ClassNotFoundException.class);
+        }
+        PluginManager plugins = installed(pluginOn(loader, "2.2.5"), "floodgate", "Geyser-Spigot");
+        CapturedLog log = new CapturedLog();
+        List<String> reported = new ArrayList<>();
+        ErrorReports errors = new ErrorReports();
+        errors.install((source, error) -> reported.add(source));
+
+        Class<?> providerType = Class.forName(BedrockProvider.class.getName(), true, loader);
+        Class<?> detectedType = Class.forName(Detected.class.getName(), true, loader);
+        MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+        MethodHandle detect = lookup.findStatic(providerType, "detect",
+            MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class));
+        MethodHandle status = lookup.findVirtual(detectedType, "status",
+            MethodType.methodType(Class.forName(HookStatus.class.getName(), true, loader)));
+        MethodHandle provider = lookup.findVirtual(detectedType, "provider", MethodType.methodType(Object.class));
+
+        Object detected = detect.invoke(owner(plugins, log), errors, true);
+        Object found = status.invoke(detected);
+
+        assertThat(detected.getClass().getClassLoader()).isSameAs(loader);
+        assertThat(stateOf(loader, found)).isEqualTo(HookState.API_MISSING.name());
+        assertThat(read(loader, found, "describe", String.class))
+            .isEqualTo("floodgate 2.2.5 lacks the API that is read");
+        assertThat(provider.invoke(detected)).isNull();
+        assertThat(log.lines()).containsExactly(
+            "WARNING floodgate 2.2.5 lacks the API that is read, so it stays off.",
+            "WARNING Geyser-Spigot 2.2.5 lacks the API that is read, so it stays off.");
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void bedrockDetectionOnTheHiddenCopyNamesAFloodgateThePluginCannotSee() throws Throwable {
+        ClassLoader loader = hidden();
+        PluginManager plugins = installed(pluginOn(withApis(), "2.2.5"), "floodgate");
+        CapturedLog log = new CapturedLog();
+        List<String> reported = new ArrayList<>();
+        ErrorReports errors = new ErrorReports();
+        errors.install((source, error) -> reported.add(source));
+
+        Class<?> providerType = Class.forName(BedrockProvider.class.getName(), true, loader);
+        Class<?> detectedType = Class.forName(Detected.class.getName(), true, loader);
+        MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+        MethodHandle detect = lookup.findStatic(providerType, "detect",
+            MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class));
+        MethodHandle status = lookup.findVirtual(detectedType, "status",
+            MethodType.methodType(Class.forName(HookStatus.class.getName(), true, loader)));
+
+        Object found = status.invoke(detect.invoke(owner(plugins, log), errors, true));
+
+        assertThat(stateOf(loader, found)).isEqualTo(HookState.NOT_VISIBLE.name());
+        assertThat(read(loader, found, "reason", String.class)).isEqualTo("floodgate is installed, but this plugin"
+            + " cannot see it, because its paper-plugin.yml does not list floodgate under dependencies.server.");
+        assertThat(log.lines()).containsExactly("WARNING floodgate 2.2.5 is not visible to this plugin, so it stays"
+            + " off: this plugin's paper-plugin.yml does not list floodgate under dependencies.server.");
         assertThat(reported).isEmpty();
     }
 

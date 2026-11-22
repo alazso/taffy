@@ -28,6 +28,9 @@ registries:
   enginehub:
     type: maven-repository
     url: https://maven.enginehub.org/repo
+  opencollab:
+    type: maven-repository
+    url: https://repo.opencollab.dev/main
   fancyinnovations:
     type: maven-repository
     url: https://maven.fancyspaces.net/fancyinnovations/releases
@@ -67,6 +70,9 @@ updates:
           - "com.github.Arcaniax-Development:*"
           - "com.sk89q.worldguard:*"
           - "com.sk89q.worldedit:*"
+          - "org.geysermc.floodgate:*"
+          - "org.geysermc.geyser:*"
+          - "org.geysermc.api:*"
           - "com.github.decentsoftware-eu:*"
           - "de.oliver:*"
           - "net.thenextlvl:*"

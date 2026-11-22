@@ -5,6 +5,23 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `BedrockProvider` in `taffy-hooks` tells which players joined from Minecraft Bedrock Edition.
+  `BedrockProvider.detect(Plugin owner, ErrorReports errors, boolean switchedOn)` returns a
+  `Detected<BedrockProvider>` on Floodgate when Floodgate can be read, and otherwise on Geyser, which is looked at
+  only when Floodgate did not turn on. With neither on, the result has no provider and the status of Floodgate, or
+  of Geyser when Floodgate is not installed and Geyser is. `boolean bedrock(UUID player)` answers `false` for a
+  player who is not online, while the Bedrock plugin is disabled, and when the check throws; a failed check is
+  logged at most once a minute and reported under `hook.floodgate` or `hook.geyser-spigot`. A plugin lists
+  `floodgate` and `Geyser-Spigot` in its `paper-plugin.yml` under `dependencies.server` with `load: BEFORE` and
+  `required: false`. `taffy-hooks` does not depend on `taffy-gui`, so a plugin passes `provider::bedrock` to
+  `new Prompts(...)` as its `BedrockPlayers`.
+- The catalog holds `alaz.floodgate.api` (`org.geysermc.floodgate:api` 2.2.5-SNAPSHOT), `alaz.geyser.api`
+  (`org.geysermc.geyser:api` 2.12.1-SNAPSHOT) and `alaz.geyser.base.api` (`org.geysermc.api:base-api` 1.0.3), which
+  `taffy-hooks` compiles against and does not ship. Floodgate and Geyser publish their APIs as snapshots only.
+  `so.alaz.taffy.repositories` declares the `opencollab` repository, `https://repo.opencollab.dev/main/`, after
+  `enginehub`, for the groups `org.geysermc.floodgate`, `org.geysermc.geyser` and `org.geysermc.api`.
+
 ## [0.4.2] - 2026-11-21
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

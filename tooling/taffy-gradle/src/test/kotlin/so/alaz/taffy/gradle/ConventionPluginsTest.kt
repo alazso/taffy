@@ -24,7 +24,8 @@ class ConventionPluginsTest {
 
     private val repositoryNames = listOf(
         "MavenRepo", "papermc", "alazso", "alazsoSnapshots", "placeholderapi", "faststats", "vaultunlocked",
-        "playerpoints", "oraxen", "nexo", "enginehub", "fancyinnovations", "thenextlvl", "packetevents", "jitpack",
+        "playerpoints", "oraxen", "nexo", "enginehub", "opencollab", "fancyinnovations", "thenextlvl", "packetevents",
+        "jitpack",
     )
 
     /**
@@ -34,7 +35,8 @@ class ConventionPluginsTest {
     private val filterGroups = listOf(
         "io.papermc", "com.mojang", "net.md-5", "so.alaz", "me.clip", "dev.faststats.metrics", "net.milkbowl.vault",
         "org.black_ixx", "io.th0rgal", "md.thomas.hopper", "com.nexomc", "com.tcoded", "me.gabytm.util",
-        "team.unnamed", "com.sk89q", "org.enginehub", "de.oliver", "net.thenextlvl", "com.github.retrooper",
+        "team.unnamed", "com.sk89q", "org.enginehub", "org.geysermc.floodgate", "org.geysermc.geyser",
+        "org.geysermc.api", "de.oliver", "net.thenextlvl", "com.github.retrooper",
         "com.github.MilkBowl", "com.github.Arcaniax-Development", "com.github.decentsoftware-eu",
         "com.github.HologramLib", "com.github.maximjsx.EntityLib", "org.example",
     )
@@ -1874,6 +1876,8 @@ class ConventionPluginsTest {
                 "groups=[com.nexomc, com.tcoded, me.gabytm.util, team.unnamed]",
             "repository enginehub https://maven.enginehub.org/repo/ versions=any " +
                 "groups=[com.sk89q, com.sk89q.sub, org.enginehub, org.enginehub.sub]",
+            "repository opencollab https://repo.opencollab.dev/main/ versions=any " +
+                "groups=[org.geysermc.floodgate, org.geysermc.geyser, org.geysermc.api]",
             "repository fancyinnovations https://maven.fancyspaces.net/fancyinnovations/releases versions=any " +
                 "groups=[de.oliver]",
             "repository thenextlvl https://repo.thenextlvl.net/releases versions=any groups=[net.thenextlvl]",
@@ -1935,6 +1939,10 @@ class ConventionPluginsTest {
                 "team.unnamed:missing:1.0",
                 "com.sk89q.worldguard:missing:1.0",
                 "org.enginehub.lin-bus:missing:1.0",
+                "org.geysermc.floodgate:missing:1.0",
+                "org.geysermc.geyser:missing:1.0",
+                "org.geysermc.api:missing:1.0",
+                "org.geysermc.cumulus:missing:1.0",
                 "de.oliver:missing:1.0",
                 "net.thenextlvl:missing:1.0",
                 "com.github.retrooper:missing:1.0",
@@ -1983,6 +1991,10 @@ class ConventionPluginsTest {
             "asked team.unnamed:missing:1.0=[MavenRepo, nexo]",
             "asked com.sk89q.worldguard:missing:1.0=[MavenRepo, enginehub]",
             "asked org.enginehub.lin-bus:missing:1.0=[MavenRepo, enginehub]",
+            "asked org.geysermc.floodgate:missing:1.0=[MavenRepo, opencollab]",
+            "asked org.geysermc.geyser:missing:1.0=[MavenRepo, opencollab]",
+            "asked org.geysermc.api:missing:1.0=[MavenRepo, opencollab]",
+            "asked org.geysermc.cumulus:missing:1.0=[MavenRepo]",
             "asked de.oliver:missing:1.0=[MavenRepo, fancyinnovations]",
             "asked net.thenextlvl:missing:1.0=[MavenRepo, thenextlvl]",
             "asked com.github.retrooper:missing:1.0=[MavenRepo, packetevents]",

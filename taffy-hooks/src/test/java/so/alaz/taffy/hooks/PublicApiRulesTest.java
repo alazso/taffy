@@ -19,7 +19,8 @@ class PublicApiRulesTest {
                 EconomyProvider.class, VaultOptions.class, VaultOptions.ThreadRule.class,
                 VaultOptions.FundsCheck.class, Emulated.class, VaultEconomy.class, MissingEconomy.class,
                 EconomyLookup.class, EconomyWatcher.class, PermissionProvider.class, LuckPermsPermissions.class,
-                RegionProvider.class, WorldGuardRegions.class, PlaceholderExpansionBuilder.class,
+                RegionProvider.class, WorldGuardRegions.class, BedrockProvider.class, PluginBedrock.class,
+                FloodgateBedrock.class, GeyserBedrock.class, PlaceholderExpansionBuilder.class,
                 PlaceholderRegistration.class, PapiExpansion.class, MiniExpansion.class)
             .allSatisfy(type -> assertThat(type.getPackageName()).startsWith(getClass().getPackageName()));
     }
