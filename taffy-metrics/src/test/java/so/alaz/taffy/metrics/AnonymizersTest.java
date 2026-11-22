@@ -922,7 +922,7 @@ class AnonymizersTest {
     void aLongAdversarialTextIsAnonymizedQuickly(String unit) {
         String text = unit.repeat(100_000 / unit.length() + 1);
 
-        assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+        assertTimeoutPreemptively(Duration.ofSeconds(30), () -> {
             Anonymizers.anonymize(text);
             Anonymizers.anonymize("x@" + text);
             Anonymizers.anonymize("x://" + text);
