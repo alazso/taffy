@@ -78,6 +78,10 @@
  * keys the plugin's menus read with no other text to fall back to, and {@link so.alaz.taffy.gui.Prompts#KEYS} the
  * keys of the prompts, so a plugin test can check its bundled English file against both.
  *
+ * <p>{@link so.alaz.taffy.gui.MenuTesting} builds the menus and chat prompts for a plugin's tests, which run with no
+ * server: over fake menu inventories that record the icon of each slot and a time source the test moves, with the
+ * events passed to the listeners by the test.
+ *
  * <p>On reload, {@code Messages.reload} (or new text behind the plugin's own
  * {@link so.alaz.taffy.gui.TextSource}) brings new text to every menu and prompt drawn afterwards,
  * {@link so.alaz.taffy.gui.Menus#reload(java.util.Map)} new layouts to every menu opened afterwards, and a new map

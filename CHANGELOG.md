@@ -25,6 +25,17 @@ All notable changes to Taffy are documented here. This project follows
   password)` of such a data source calls the same method of the wrapped one, and `unwrap` and `isWrapperFor`
   also answer for the wrapped data source. A kill closes neither the wrapped data source nor its connections.
   `new FaultyDataSource(String url, Properties properties)` behaves as before.
+- `MenuTesting` in `taffy-gui` builds a `Menus` for a plugin's menu tests, which run with no server:
+  `new MenuTesting(parts).menus()` over the plugin's own `Menus.Parts`. Its menu inventories are fakes that
+  record what each slot shows: `icon(Inventory inventory, int slot)` gives the `Icon`, `title(Inventory
+  inventory)` the title and `inventories()` every inventory created. Its time source stands still until
+  `advance(Duration step)` moves it, so a test steps over the click debounce window, and `owned(Predicate<Player>
+  owned)` sets which players the calling thread owns. `deliver` passes an `InventoryClickEvent`, an
+  `InventoryDragEvent`, an `InventoryCloseEvent` or a `PlayerQuitEvent` to the listeners of the menus and their
+  prompts by priority, as a server does. `prompts(BiConsumer<Runnable, Duration> timer)` builds chat `Prompts`
+  over the menus on the same time source, and `chat(Player player, String line)` passes a chat line to them and
+  tells whether a prompt took it. The test mocks the plugin and the players itself. The class uses no Mockito and
+  adds nothing to `Menus.Parts`.
 
 ## [0.4.4] - 2026-11-22
 

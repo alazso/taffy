@@ -25,7 +25,7 @@ class PublicApiRulesTest {
                 Answer.Accept.class, Answer.Retry.class, Answer.Later.class, CancelLink.class, BedrockPlayers.class,
                 Pending.class, Prompts.class, PaperCancelLink.class, AnvilInput.class,
                 AnvilInput.Open.class, PaperPromptListener.class, TextRequest.class, Ask.class, Dialogs.class,
-                Dialogs.Form.class, DialogPrompt.class, PaperDialogs.class)
+                Dialogs.Form.class, DialogPrompt.class, PaperDialogs.class, MenuTesting.class)
             .allSatisfy(type -> assertThat(type.getPackageName()).startsWith(getClass().getPackageName()));
     }
 
@@ -36,7 +36,7 @@ class PublicApiRulesTest {
             .map(Class::getSimpleName))
             .containsExactlyInAnyOrder("Answer", "BedrockPlayers", "Click", "ClickGuard", "ClickHandler",
                 "Cue", "Frame", "Icon", "ItemLayout", "Menu", "MenuKind", "MenuLayout", "MenuSession",
-                "MenuSettings", "MenuText", "Menus", "Pager", "PagerLayout", "PromptEnd", "PromptMode",
+                "MenuSettings", "MenuTesting", "MenuText", "Menus", "Pager", "PagerLayout", "PromptEnd", "PromptMode",
                 "PromptRequest", "Prompts", "Route", "TextRequest", "TextSource", "ViewMemory");
     }
 
