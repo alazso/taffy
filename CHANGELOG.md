@@ -50,6 +50,52 @@ All notable changes to Taffy are documented here. This project follows
   literal `null` as the request, or as the first constructor argument, needs a cast to compile. Each threw
   `NullPointerException` before and still does.
 
+### Fixed
+- The error reports of `taffy-metrics` hide more of a message. Each of these was sent before:
+  - the name of an email address before a `+`: `john+tag@sub.example.co.uk` was sent as `john+[email hidden]` and
+    is now `[email hidden]`;
+  - a Unix path with a space in a folder name: `/home/john smith/server/x` was sent as
+    `[path hidden] smith/server/x` and is now `[path hidden]`. Each folder name after the first holds up to
+    three single spaces between words of letters, digits, `_`, `.` and `-`, and a space ends the path as it ends
+    a Windows path, so `/home/mc/x.yml is not valid/readable` is sent as `[path hidden] is not valid/readable`,
+    as before. A path without a file extension takes up to three following words with it when a slash comes
+    after them: `Saved /srv/data and logs/x now` was sent as `Saved [path hidden] and logs/x now` and is now
+    `Saved [path hidden] now`;
+  - a UNC path, such as `\\fileserver\share\John Smith\x.yml`, and a relative Windows path from its `Users`
+    folder on: `..\Users\John\Desktop\x.yml` was sent whole and is now `..\[path hidden]`. Any other relative
+    path is still sent;
+  - the list items on the lines below a secret key: `tokens:`, a line break and `- abc123` was sent as
+    `tokens:`, the line break and `[redacted] abc123`. The items, each on a line that starts with `-` and a
+    space, are now sent as one `[redacted]`;
+  - the words after the first of a password that starts its line: `password: my pass word` was sent as
+    `password: [redacted] pass word` and is now `password: [redacted]`. This holds for a key that ends in
+    `password`, `passwd`, `pwd` or `passphrase` and starts its line, also after the `-` of a list item, when the
+    value starts with no quote. Inside a sentence, as in `Login failed with password: my pass word`, the value
+    is still one word;
+  - a GitHub token (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` or `github_pat_` and 8 or more characters), a Slack
+    token (`xoxb-` and the other `xox` prefixes), a Stripe live key (`sk_live_` or `rk_live_`) and a JSON Web
+    Token, each now sent as `[token hidden]`, and the credentials after `Authorization: Basic`, now sent as
+    `Authorization: Basic [token hidden]`;
+  - the value of a `passphrase` or `license-key` key (also `license_key`, `licenseKey` and the spelling
+    `licence`) before a `=` or `:`, and of a key that ends in `pass` with no letter before it, such as `pass=`
+    or `db_pass=`, before a `=`. Each is now sent as `[redacted]`. `bypass=true` and `Battle pass: 3 of 5` are
+    sent as written;
+  - the id and token of a Discord webhook URL on `http://`, now sent as
+    `http://[host hidden]/api/webhooks/[id hidden]/[token hidden]`;
+  - the single-quoted database name of MySQL and MariaDB: `Unknown database 'survival_prod'` is now
+    `Unknown database [database hidden]`.
+
+  There are 19 rules: the bare tokens are the new rule 19, and the others are changes to rules 3, 4, 10, 12, 13,
+  14 and 16. Reports whose messages differ only in a value these rules hide now merge into one kind.
+- The SQL rule of the `taffy-metrics` error reports leaves an ordinary sentence as written.
+  `Please select a kit from the list` was sent as `Please [sql hidden]`, and `Could not delete from the cache`
+  and `Failed to insert into the database` were cut the same way; each is now sent whole. A `FROM` or `INTO`
+  starts no statement when `the`, `an`, `this`, `that`, `these`, `those`, `your`, `my`, `our` or `their` follows
+  it, unless one of `, ; ( ) = *`, `WHERE` or `VALUES (` comes after that word. After `SELECT` this holds only
+  when 1 to 8 words of letters stand between it and `FROM`, so `SELECT * FROM the list` is still hidden. Every
+  other statement is hidden as before, and so is a sentence without such a word, such as
+  `Could not delete from disk cache`, sent as `Could not [sql hidden]`.
+
 ## [0.4.2] - 2026-11-21
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

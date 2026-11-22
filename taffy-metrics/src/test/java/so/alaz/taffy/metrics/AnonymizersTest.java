@@ -32,13 +32,14 @@ class AnonymizersTest {
     private static final int DATABASE = 15;
     private static final int URI_HOST = 16;
     private static final int NAMED_HOST = 17;
+    private static final int TOKEN = 18;
 
     private static final String WEBHOOK_ID = "123456789012345678";
     private static final String WEBHOOK_TOKEN = "abcDEF-ghi_JKL";
 
     @Test
-    void thereAreEighteenRulesOfAPatternAndAReplacement() {
-        assertThat(Anonymizers.RULES).hasDimensions(18, 2);
+    void thereAreNineteenRulesOfAPatternAndAReplacement() {
+        assertThat(Anonymizers.RULES).hasDimensions(19, 2);
     }
 
     @Test
@@ -188,6 +189,16 @@ class AnonymizersTest {
     }
 
     @Test
+    void anEmailAddressWithAPlusInItsNameIsHiddenWhole() throws ReflectiveOperationException {
+        assertThat(apply(EMAIL, "mail to john+tag@sub.example.co.uk failed"))
+            .isEqualTo("mail to [email hidden] failed");
+        assertThat(apply(EMAIL, "a+b=c and x+@y")).isEqualTo("a+b=c and x+@y");
+        assertThat(Anonymizers.anonymize("mail to john+tag@sub.example.co.uk failed"))
+            .isEqualTo("mail to [email hidden] failed");
+        assertThat(sent("mail to john+tag@sub.example.co.uk failed")).isEqualTo("mail to [email hidden] failed");
+    }
+
+    @Test
     void anAtSignWithoutADottedDomainIsLeftAsWritten() {
         assertThat(apply(EMAIL, "ping @everyone at 5@once")).isEqualTo("ping @everyone at 5@once");
         assertThat(apply(EMAIL, "y@a.b.c")).isEqualTo("y@a.b.c");
@@ -198,6 +209,26 @@ class AnonymizersTest {
         assertThat(apply(BEARER, "Authorization: Bearer abc.DEF-123_~+/="))
             .isEqualTo("Authorization: Bearer [token hidden]");
         assertThat(apply(BEARER, "the bearer of the item")).isEqualTo("the bearer of the item");
+    }
+
+    @Test
+    void theCredentialsOfABasicAuthorizationAreHidden() throws ReflectiveOperationException {
+        assertThat(apply(BEARER, "Authorization: Basic dXNlcjpodW50ZXIy sent"))
+            .isEqualTo("Authorization: Basic [token hidden] sent");
+        assertThat(apply(BEARER, "headers {\"authorization\": \"Basic dXNlcjpodW50ZXIy\"}"))
+            .isEqualTo("headers {\"authorization\": \"Basic [token hidden]\"}");
+        assertThat(apply(BEARER, "Authorization=Basic dXNlcjpodW50ZXIy="))
+            .isEqualTo("Authorization=Basic [token hidden]");
+        assertThat(Anonymizers.anonymize("Authorization: Basic dXNlcjpodW50ZXIy sent"))
+            .isEqualTo("Authorization: Basic [token hidden] sent");
+        assertThat(sent("Authorization: Basic dXNlcjpodW50ZXIy sent")).doesNotContain("dXNlcjpodW50ZXIy");
+    }
+
+    @Test
+    void theWordBasicWithoutAnAuthorizationKeyIsLeftAsWritten() {
+        assertThat(apply(BEARER, "Basic kit and basic auth failed")).isEqualTo("Basic kit and basic auth failed");
+        assertThat(apply(BEARER, "Authorization: failed for Basic kit"))
+            .isEqualTo("Authorization: failed for Basic kit");
     }
 
     @Test
@@ -416,6 +447,64 @@ class AnonymizersTest {
     }
 
     @Test
+    void theValueOfAPassphraseALicenseKeyOrAPassKeyIsRedacted() throws ReflectiveOperationException {
+        assertThat(apply(SECRET_KEY, "Wrong passphrase: hunter2 and license-key: ABCD-1234-EFGH"))
+            .isEqualTo("Wrong passphrase: [redacted] and license-key: [redacted]");
+        assertThat(apply(SECRET_KEY, "Invalid licenseKey=ABCD-1234 or LICENCE_KEY: x"))
+            .isEqualTo("Invalid licenseKey=[redacted] or LICENCE_KEY: [redacted]");
+        assertThat(apply(SECRET_KEY, "login with pass=hunter2 and db_pass = hunter2, MYSQL_PASS=hunter2"))
+            .isEqualTo("login with pass=[redacted] and db_pass = [redacted], MYSQL_PASS=[redacted]");
+        assertThat(sent("login with pass=hunter2")).isEqualTo("login with pass=[redacted]");
+        assertThat(sent("Wrong passphrase: hunter2")).isEqualTo("Wrong passphrase: [redacted]");
+        assertThat(sent("Invalid license-key: ABCD-1234-EFGH")).isEqualTo("Invalid license-key: [redacted]");
+    }
+
+    @Test
+    void aLongerWordThatEndsInPassOrAPassBeforeAColonIsLeftAsWritten() {
+        assertThat(apply(SECRET_KEY, "bypass=true compass=north")).isEqualTo("bypass=true compass=north");
+        assertThat(apply(SECRET_KEY, "Battle pass: 3 of 5")).isEqualTo("Battle pass: 3 of 5");
+        assertThat(apply(SECRET_KEY, "passenger=Steve")).isEqualTo("passenger=Steve");
+    }
+
+    @Test
+    void aPasswordThatStartsItsLineIsRedactedToTheEndOfTheLine() throws ReflectiveOperationException {
+        assertThat(apply(SECRET_KEY, "password: my pass word")).isEqualTo("password: [redacted]");
+        assertThat(apply(SECRET_KEY, "while parsing a block mapping\n  db-password: my pass word\n  port: 3306"))
+            .isEqualTo("while parsing a block mapping\n  db-password: [redacted]\n  port: 3306");
+        assertThat(apply(SECRET_KEY, "password=my pass word")).isEqualTo("password=[redacted]");
+        assertThat(apply(SECRET_KEY, "- passphrase: correct horse battery staple"))
+            .isEqualTo("- passphrase: [redacted]");
+        assertThat(apply(SECRET_KEY, "PWD = my pass word\npasswd:my pass word"))
+            .isEqualTo("PWD = [redacted]\npasswd:[redacted]");
+        assertThat(sent("password: my pass word")).isEqualTo("password: [redacted]");
+    }
+
+    @Test
+    void aQuotedPasswordOrAYesThatStartsItsLineIsReadAsBefore() {
+        assertThat(apply(SECRET_KEY, "password: \"my pass\" word")).isEqualTo("password: [redacted] word");
+        assertThat(apply(SECRET_KEY, "password: YES")).isEqualTo("password: YES");
+        assertThat(apply(SECRET_KEY, "password:   no")).isEqualTo("password:   no");
+        assertThat(apply(SECRET_KEY, "tokenValue: abc123 rejected")).isEqualTo("tokenValue: [redacted] rejected");
+    }
+
+    @Test
+    void aPasswordInsideALineIsRedactedForOneWord() {
+        assertThat(apply(SECRET_KEY, "Login failed with password: my pass word"))
+            .isEqualTo("Login failed with password: [redacted] pass word");
+    }
+
+    @Test
+    void theListItemsBelowASecretKeyAreRedactedAsOneValue() throws ReflectiveOperationException {
+        assertThat(apply(SECRET_KEY, "while parsing\ntokens:\n  - abc123\n  - def456\nport: 25565"))
+            .isEqualTo("while parsing\ntokens:\n  [redacted]\nport: 25565");
+        assertThat(apply(SECRET_KEY, "tokens:\n  - abc123")).isEqualTo("tokens:\n  [redacted]");
+        assertThat(apply(SECRET_KEY, "secrets:\n- \"abc\" extra\nnext: 1")).isEqualTo("secrets:\n[redacted]\nnext: 1");
+        assertThat(apply(SECRET_KEY, "api-key:\n  - k-1\n  - k-2")).isEqualTo("api-key:\n  [redacted]");
+        assertThat(apply(SECRET_KEY, "tokens: - abc123")).isEqualTo("tokens: [redacted]");
+        assertThat(sent("tokens:\n  - abc123\n  - def456")).doesNotContain("abc123", "def456");
+    }
+
+    @Test
     void aSecretWordWithoutAValueIsLeftAsWritten() {
         assertThat(apply(SECRET_KEY, "Access denied for user (using password: YES)"))
             .isEqualTo("Access denied for user (using password: YES)");
@@ -455,8 +544,69 @@ class AnonymizersTest {
 
     @Test
     void aSentenceThatHoldsTheStartOfAStatementIsHiddenFromThatWordOn() {
-        assertThat(apply(SQL, "Please select a kit from the list")).isEqualTo("Please [sql hidden]");
         assertThat(apply(SQL, "Could not delete from disk cache")).isEqualTo("Could not [sql hidden]");
+        assertThat(apply(SQL, "Please select a kit from kits")).isEqualTo("Please [sql hidden]");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Please select a kit from the list",
+        "Please select a kit from the list.",
+        "select one of the three kits from the list of 5",
+        "Select an item from your inventory, then run /kit",
+        "Could not delete from the cache",
+        "Failed to insert into the database: timeout",
+        "Cannot merge into this stack or replace into that slot",
+    })
+    void aSentenceWithADeterminerAfterFromOrIntoIsLeftAsWritten(String line) throws ReflectiveOperationException {
+        assertThat(apply(SQL, line)).isEqualTo(line);
+        assertThat(Anonymizers.anonymize(line)).isEqualTo(line);
+        assertThat(sent(line)).isEqualTo(line);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "SELECT * FROM the list",
+        "SELECT name, uuid FROM the WHERE id = 5",
+        "SELECT name FROM their WHERE id = 5",
+        "select a kit from the_table where pin = 1234",
+        "select a kit from the.players where pin = 1234",
+        "select a kit from the, players where pin = 1234",
+        "INSERT INTO the (name, pin) VALUES ('John', 1234)",
+        "insert into the VALUES ('John', 1234)",
+        "DELETE FROM the WHERE name = 'John'",
+        "delete from their;",
+    })
+    void aStatementWithADeterminerAsItsTableIsHidden(String statement) {
+        assertThat(apply(SQL, "failed: " + statement + "\nnext")).isEqualTo("failed: [sql hidden]\nnext");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "SELECT name FROM players WHERE name = 'John'",
+        "select p.name from players p where p.pin = 1234",
+        "select name from players p",
+        "SELECT name FROM players",
+        "SELECT COUNT(*) FROM players",
+        "select name from players, bans where players.pin = 1234",
+        "SELECT name FROM players ORDER BY name LIMIT 5",
+        "INSERT INTO players (name, pin) VALUES ('John', 1234)",
+        "UPDATE players SET name = 'John' WHERE pin = 1234",
+        "DELETE FROM players WHERE name = 'John'",
+    })
+    void aStatementOfADriverMessageIsHiddenWithItsValues(String statement) throws ReflectiveOperationException {
+        String message = "Table \"PLAYERS\" not found; SQL statement:\n" + statement + " [42102-224]";
+
+        assertThat(apply(SQL, message)).isEqualTo("Table \"PLAYERS\" not found; SQL statement:\n[sql hidden]");
+        assertThat(sent(message)).doesNotContain("John", "1234", "pin");
+    }
+
+    @Test
+    void aStatementAfterASentenceOfTheSameLineIsHidden() {
+        assertThat(apply(SQL, "select a kit from the list or SELECT x FROM y WHERE z = 1"))
+            .isEqualTo("select a kit from the list or [sql hidden]");
+        assertThat(apply(SQL, "merge into the main branch failed; DELETE FROM balances WHERE shop = 12"))
+            .isEqualTo("merge into the main branch failed; [sql hidden]");
     }
 
     @Test
@@ -549,6 +699,45 @@ class AnonymizersTest {
         assertThat(apply(WINDOWS_PATH, "Could not delete file: missing")).isEqualTo("Could not delete file: missing");
     }
 
+    @Test
+    void aUncPathIsHidden() throws ReflectiveOperationException {
+        assertThat(apply(WINDOWS_PATH, "Cannot read \\\\fileserver\\share\\Users\\john\\x.yml now"))
+            .isEqualTo("Cannot read [path hidden] now");
+        assertThat(apply(WINDOWS_PATH, "Cannot read \\\\fileserver\\Mc Share\\John Smith\\x.yml now"))
+            .isEqualTo("Cannot read [path hidden] now");
+        assertThat(apply(WINDOWS_PATH, "Cannot read '\\\\fileserver\\share'")).isEqualTo("Cannot read '[path hidden]'");
+        assertThat(Anonymizers.anonymize("Cannot read \\\\fileserver\\share\\Users\\john\\x.yml now"))
+            .isEqualTo("Cannot read [path hidden] now");
+        assertThat(sent("Cannot read \\\\fileserver\\Mc Share\\John Smith\\x.yml now"))
+            .isEqualTo("Cannot read [path hidden] now");
+    }
+
+    @Test
+    void twoBackslashesWithoutAServerNameAndAFurtherBackslashAreLeftAsWritten() {
+        assertThat(apply(WINDOWS_PATH, "Illegal escape \\\\d in pattern and a\\\\b"))
+            .isEqualTo("Illegal escape \\\\d in pattern and a\\\\b");
+    }
+
+    @Test
+    void aRelativeWindowsPathIsHiddenFromItsUsersFolderOn() throws ReflectiveOperationException {
+        assertThat(apply(WINDOWS_PATH, "Cannot read Users\\John\\Desktop\\x.yml now"))
+            .isEqualTo("Cannot read [path hidden] now");
+        assertThat(apply(WINDOWS_PATH, "Cannot read ..\\..\\Users\\John Smith\\Desktop\\x.yml now"))
+            .isEqualTo("Cannot read ..\\..\\[path hidden] now");
+        assertThat(apply(WINDOWS_PATH, "Cannot read \\users\\john\\x.yml and plugins\\Shop\\data.db"))
+            .isEqualTo("Cannot read \\[path hidden] and plugins\\Shop\\data.db");
+        assertThat(Anonymizers.anonymize("Cannot read ..\\..\\Users\\John Smith\\Desktop\\x.yml now"))
+            .isEqualTo("Cannot read ..\\..\\[path hidden] now");
+        assertThat(sent("Cannot read ..\\..\\Users\\John Smith\\Desktop\\x.yml now"))
+            .isEqualTo("Cannot read ..\\..\\[path hidden] now");
+    }
+
+    @Test
+    void theWordUsersWithoutABackslashOrInsideALongerWordStartsNoPath() {
+        assertThat(apply(WINDOWS_PATH, "3 Users of a\\b and powerusers\\x"))
+            .isEqualTo("3 Users of a\\b and powerusers\\x");
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
         "Read profile:/home/x done",
@@ -588,6 +777,29 @@ class AnonymizersTest {
     }
 
     @Test
+    void aUnixPathWithASpaceInAFolderNameIsHiddenWhole() throws ReflectiveOperationException {
+        assertThat(apply(UNIX_PATH, "cannot read /home/john smith/server/x now"))
+            .isEqualTo("cannot read [path hidden] now");
+        assertThat(apply(UNIX_PATH, "Cannot read /srv/My Mc Server/plugins/Shop/config.yml"))
+            .isEqualTo("Cannot read [path hidden]");
+        assertThat(Anonymizers.anonymize("cannot read /home/john smith/server/x now"))
+            .isEqualTo("cannot read [path hidden] now");
+        assertThat(sent("cannot read /home/john smith/server/x now")).isEqualTo("cannot read [path hidden] now");
+    }
+
+    @Test
+    void aSpaceEndsAUnixPathAsItEndsAWindowsPath() {
+        assertThat(apply(UNIX_PATH, "cannot read /home/mc/x.yml is not valid/readable"))
+            .isEqualTo("cannot read [path hidden] is not valid/readable");
+        assertThat(apply(UNIX_PATH, "copy /a/b to /c/d failed"))
+            .isEqualTo("copy [path hidden] to [path hidden] failed");
+        assertThat(apply(UNIX_PATH, "cannot read /home/john smith")).isEqualTo("cannot read [path hidden] smith");
+        assertThat(apply(UNIX_PATH, "Saved /srv/data and logs/x now")).isEqualTo("Saved [path hidden] now");
+        assertThat(apply(UNIX_PATH, "run /shop open first and/or close"))
+            .isEqualTo("run /shop open first and/or close");
+    }
+
+    @Test
     void aSlashThatStartsNoAbsolutePathIsLeftAsWritten() {
         assertThat(apply(UNIX_PATH, "TPS 20/20, read/write and/or 2026/11/19"))
             .isEqualTo("TPS 20/20, read/write and/or 2026/11/19");
@@ -609,6 +821,20 @@ class AnonymizersTest {
             .isEqualTo("POST https://CANARY.discord.com/api/webhooks/[id hidden]/[token hidden] failed");
         assertThat(apply(DISCORD_WEBHOOK, "POST https://ptb.discord.com/api/" + path + "/slack failed"))
             .isEqualTo("POST https://ptb.discord.com/api/webhooks/[id hidden]/[token hidden]/slack failed");
+    }
+
+    @Test
+    void theIdAndTokenOfADiscordWebhookUrlWithoutTlsAreHidden() throws ReflectiveOperationException {
+        String path = "webhooks/" + WEBHOOK_ID + "/" + WEBHOOK_TOKEN;
+
+        assertThat(apply(DISCORD_WEBHOOK, "POST http://discord.com/api/" + path + " failed"))
+            .isEqualTo("POST http://discord.com/api/webhooks/[id hidden]/[token hidden] failed");
+        assertThat(apply(DISCORD_WEBHOOK, "POST HTTP://canary.discordapp.com/api/v10/" + path + "?wait=true failed"))
+            .isEqualTo("POST HTTP://canary.discordapp.com/api/v10/webhooks/[id hidden]/[token hidden] failed");
+        assertThat(Anonymizers.anonymize("POST http://discord.com/api/" + path + " failed"))
+            .isEqualTo("POST http://[host hidden]/api/webhooks/[id hidden]/[token hidden] failed");
+        assertThat(sent("POST http://discord.com/api/" + path + " failed"))
+            .isEqualTo("POST http://[host hidden]/api/webhooks/[id hidden]/[token hidden] failed");
     }
 
     @Test
@@ -687,6 +913,16 @@ class AnonymizersTest {
                 + " database [database hidden], no encryption");
         assertThat(apply(DATABASE, "FATAL: DATABASE \"survival_prod\" does not exist"))
             .isEqualTo("FATAL: DATABASE [database hidden] does not exist");
+    }
+
+    @Test
+    void theSingleQuotedNameAfterDatabaseIsHidden() throws ReflectiveOperationException {
+        assertThat(apply(DATABASE, "Unknown database 'survival_prod'")).isEqualTo("Unknown database [database hidden]");
+        assertThat(apply(DATABASE, "the database 'went away' again and database ''"))
+            .isEqualTo("the database 'went away' again and database ''");
+        assertThat(Anonymizers.anonymize("Access denied for user 'mc_prod'@'%' to database 'survival_prod'"))
+            .isEqualTo("Access denied for user [user hidden]@[host hidden] to database [database hidden]");
+        assertThat(sent("Unknown database 'survival_prod'")).isEqualTo("Unknown database [database hidden]");
     }
 
     @ParameterizedTest
@@ -856,6 +1092,45 @@ class AnonymizersTest {
     }
 
     @Test
+    void aBareTokenIsHidden() throws ReflectiveOperationException {
+        String github = "ghp_" + "a1B2".repeat(9);
+        String slack = "xoxb-123456789012-1234567890123-" + "a1B2".repeat(6);
+        String stripe = "sk_live_" + "a1B2".repeat(6);
+
+        assertThat(apply(TOKEN, "push failed for " + github + " now")).isEqualTo("push failed for [token hidden] now");
+        assertThat(apply(TOKEN, "Slack said " + slack + " is invalid"))
+            .isEqualTo("Slack said [token hidden] is invalid");
+        assertThat(apply(TOKEN, "Stripe key '" + stripe + "' rejected"))
+            .isEqualTo("Stripe key '[token hidden]' rejected");
+        assertThat(apply(TOKEN, "github_pat_" + "a1B2_".repeat(6) + " and gho_" + "a1B2".repeat(9)))
+            .isEqualTo("[token hidden] and [token hidden]");
+        assertThat(Anonymizers.anonymize("push failed for " + github + " now"))
+            .isEqualTo("push failed for [token hidden] now");
+        assertThat(Anonymizers.anonymize("Slack said " + slack + " is invalid"))
+            .isEqualTo("Slack said [token hidden] is invalid");
+        assertThat(Anonymizers.anonymize("Stripe key '" + stripe + "' rejected"))
+            .isEqualTo("Stripe key '[token hidden]' rejected");
+        assertThat(sent(github + " " + slack + " " + stripe)).isEqualTo("[token hidden] [token hidden] [token hidden]");
+    }
+
+    @Test
+    void aJsonWebTokenIsHidden() throws ReflectiveOperationException {
+        String jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+
+        assertThat(apply(TOKEN, "bad jwt " + jwt + " here")).isEqualTo("bad jwt [token hidden] here");
+        assertThat(apply(TOKEN, "bad jwt eyJhbGciOiJub25lIn0.eyJzdWIiOiJhIn0. here"))
+            .isEqualTo("bad jwt [token hidden] here");
+        assertThat(Anonymizers.anonymize("bad jwt " + jwt + " here")).isEqualTo("bad jwt [token hidden] here");
+        assertThat(sent("bad jwt " + jwt + " here")).isEqualTo("bad jwt [token hidden] here");
+    }
+
+    @Test
+    void aTokenPrefixWithoutATokenIsLeftAsWritten() {
+        assertThat(apply(TOKEN, "key ghp_short and sk_live_ only, eyJabc.def and task_live_abcdefgh"))
+            .isEqualTo("key ghp_short and sk_live_ only, eyJabc.def and task_live_abcdefgh");
+    }
+
+    @Test
     void theRulesTogetherHideEachPartOfAConnectionString() {
         assertThat(Anonymizers.anonymize("redis://default:hunter2@cache.examplecraft.net:6379 refused"))
             .isEqualTo("redis://[credentials hidden]@[host hidden]:6379 refused");
@@ -918,6 +1193,9 @@ class AnonymizersTest {
         "connect to a.", "://", "localhost", "host=", "host=a.", "address=(host=a.b)", "(a). ", "refused: a.",
         "jdbc:a:/", "jdbc:a:C:\\a ", "jdbc:a:/a a/", "a.yml ", "C:/a.b a/", ", token", ",        ", "x://a:1,",
         "x://a:1/", "://a:", "a.B", "a.yml", "a.b(",
+        "a+", "/a/a a/", "/a/a.b a/", "\\\\a\\", "Users\\a ", "tokens:\n- ", "password: a ", "\npassword: ", "pass=",
+        "ghp_", "xoxb-a", "eyJaaaaa.", "Authorization: Basic ", "http://discord.com/api/webhooks/1/", "database '",
+        "select a from the ", "delete from the ",
     })
     void aLongAdversarialTextIsAnonymizedQuickly(String unit) {
         String text = unit.repeat(100_000 / unit.length() + 1);
