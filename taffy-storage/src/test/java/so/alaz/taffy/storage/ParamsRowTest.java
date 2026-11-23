@@ -224,6 +224,40 @@ final class ParamsRowTest {
             .hasCauseInstanceOf(NumberFormatException.class);
     }
 
+    @Test
+    void intsAndBooleansAreStoredAsWholeNumbersAndNullsReadAsNull() throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE flags (id INTEGER PRIMARY KEY, enabled BOOLEAN, level INTEGER)");
+        }
+        String insert = "INSERT INTO flags (id, enabled, level) VALUES (?, ?, ?)";
+        update(insert, params -> params.intValue(1).bool(true).intValue(Integer.MIN_VALUE));
+        update(insert, params -> params.intValue(2).bool(Boolean.FALSE).intValue(Integer.valueOf(Integer.MAX_VALUE)));
+        update(insert, params -> params.intValue(3).bool((Boolean) null).intValue((Integer) null));
+
+        List<List<Object>> rows = query("SELECT * FROM flags ORDER BY id", params -> { },
+            row -> Arrays.<Object>asList(row.intValue("id"), row.bool("enabled"), row.intValue("level"),
+                row.integer("enabled")));
+
+        assertThat(rows).containsExactly(
+            Arrays.<Object>asList(1, true, Integer.MIN_VALUE, 1L),
+            Arrays.<Object>asList(2, false, Integer.MAX_VALUE, 0L),
+            Arrays.<Object>asList(3, null, null, null));
+    }
+
+    @Test
+    void aNumberOutsideAnIntAndOneThatIsNeitherZeroNorOneAreRefused() throws SQLException {
+        UUID id = UUID.randomUUID();
+        update("INSERT INTO probe (id, amount, at) VALUES (?, ?, ?)",
+            params -> params.uuid(id).integer(Integer.MIN_VALUE - 1L).integer(2));
+
+        assertThatThrownBy(() -> query("SELECT amount FROM probe", params -> { }, row -> row.intValue("amount")))
+            .isInstanceOf(SQLException.class)
+            .hasMessage("amount holds -2147483649, which does not fit an int");
+        assertThatThrownBy(() -> query("SELECT at FROM probe", params -> { }, row -> row.bool("at")))
+            .isInstanceOf(SQLException.class)
+            .hasMessage("at holds 2, which is neither 0 nor 1");
+    }
+
     private void insert(UUID id, @Nullable String state, @Nullable BigDecimal amount, @Nullable Instant at,
         @Nullable String doc, byte @Nullable [] data) throws SQLException {
         update("INSERT INTO probe (id, state, amount, at, doc, data) VALUES (?, ?, ?, ?, ?, ?)",

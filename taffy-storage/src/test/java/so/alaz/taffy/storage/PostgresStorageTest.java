@@ -299,6 +299,53 @@ final class PostgresStorageTest extends StorageContract {
     }
 
     @Test
+    void aSameNameTakeoverThatFailsAfterItsRenameIsRolledBackAndTheNextStartCompletesIt() throws Exception {
+        String prefix = "adopted_";
+        String versionTable = prefix + "schema_version";
+        Baseline baseline = Baseline.versionTable(versionTable).takeOverSameName();
+        Map<String, String> scripts = ProbeSchema.scripts(Dialect.POSTGRES);
+        StorageSettings.Server server = server(prefix);
+        Properties credentials = new Properties();
+        credentials.setProperty("user", server.user());
+        credentials.setProperty("password", server.password());
+        FaultyDataSource faulty = new FaultyDataSource(Storage.serverUrl(Dialect.POSTGRES, server), credentials);
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            try {
+                new Migrator(Dialect.POSTGRES, prefix, CLOCK, Logger.getAnonymousLogger(),
+                    ProbeSchema.MIGRATIONS.subList(0, 2), ProbeSchema.source(scripts)).migrate(connection, null);
+                statement.execute("DROP TABLE " + versionTable);
+                statement.execute("CREATE TABLE " + versionTable + " (version INTEGER NOT NULL PRIMARY KEY)");
+                statement.execute("INSERT INTO " + versionTable + " VALUES (2)");
+                faulty.faults().failMatching("CREATE TABLE IF NOT EXISTS " + versionTable, 1);
+
+                try (Connection failing = faulty.getConnection()) {
+                    assertThatThrownBy(() -> new Migrator(Dialect.POSTGRES, prefix, CLOCK,
+                        Logger.getAnonymousLogger(), ProbeSchema.MIGRATIONS, ProbeSchema.source(scripts), baseline)
+                        .migrate(failing, null))
+                        .isInstanceOf(SQLException.class)
+                        .hasMessage("injected failure of CREATE TABLE IF NOT EXISTS " + versionTable);
+                    assertThat(failing.getAutoCommit()).isTrue();
+                }
+
+                assertThat(ProbeSchema.tables(connection, Dialect.POSTGRES, prefix))
+                    .containsExactly(prefix + "alpha", prefix + "beta", versionTable);
+                assertThat(columns(connection, versionTable)).containsExactly("version");
+                assertThat(ProbeSchema.ids(connection, versionTable, "version")).containsExactly(2);
+
+                start(server, ProbeSchema.MIGRATIONS, scripts, baseline).join().close(Duration.ofSeconds(5));
+                start(server, ProbeSchema.MIGRATIONS, scripts, baseline).join().close(Duration.ofSeconds(5));
+
+                assertThat(ProbeSchema.tables(connection, Dialect.POSTGRES, prefix)).containsExactly(prefix + "alpha",
+                    prefix + "beta", prefix + "gamma", versionTable, versionTable + "_baseline");
+                assertThat(ProbeSchema.versions(connection, prefix)).containsExactly(1, 2, 3);
+                assertThat(ProbeSchema.ids(connection, versionTable + "_baseline", "version")).containsExactly(2);
+            } finally {
+                ProbeSchema.drop(connection, Dialect.POSTGRES, prefix);
+            }
+        }
+    }
+
+    @Test
     void aSerializableCommitThatFailsWith40001IsRetriedAndBothTransactionsCommitOnce() throws Exception {
         String table = "skew_duty";
         try (Connection connection = connect(); Statement statement = connection.createStatement()) {

@@ -84,7 +84,9 @@ import java.util.stream.Stream;
  *
  * <p>With a {@link Baseline}, no version table and no earlier version table, the database is first taken over from
  * the old version table, as {@link Baseline} describes, after every script is read and before the first pending
- * migration runs.
+ * migration runs. A baseline from {@link Baseline#takeOverSameName} also takes over a table that has the name of
+ * the version table in another layout, in place of stopping the migration, and one from
+ * {@link Baseline#checkSchema} first compares the database with the scripts it records as applied.
  */
 final class Migrator {
 
@@ -141,8 +143,11 @@ final class Migrator {
     private record Pending(Migration migration, String checksum, List<String> statements, int from) {
     }
 
-    /** The old version table, the free name it is renamed to, and the highest version it records. */
-    private record Takeover(String source, String renameTo, int version) {
+    /**
+     * The old version table, the free name it is renamed to, the highest version it records, and whether it has the
+     * name of the version table.
+     */
+    private record Takeover(String source, String renameTo, int version, boolean sameName) {
     }
 
     /**
@@ -249,10 +254,17 @@ final class Migrator {
     private void migrateLocked(Connection connection, @Nullable Backup backup, List<String> tables)
         throws SQLException, StorageException {
         boolean existing = tables.contains(versionTable);
+        boolean adopted = false;
         if (existing && !layoutMatches(connection, versionTable)) {
-            throw new StorageException("the database holds a table named " + versionTable + " that storage did not"
-                + " create, so it cannot record migrations there; rename or remove that table, or on MySQL, MariaDB"
-                + " and PostgreSQL set another table prefix");
+            if (!adoptsVersionTable()) {
+                throw otherLayout();
+            }
+            adopted = true;
+            existing = false;
+        } else if (!existing) {
+            @Nullable String declared = tables.stream().filter(table -> sameTable(table, versionTable)).findFirst()
+                .orElse(null);
+            adopted = declared != null && adoptsVersionTable() && !layoutMatches(connection, declared);
         }
         List<Script> scripts = new ArrayList<>();
         for (Migration migration : migrations) {
@@ -262,6 +274,9 @@ final class Migrator {
                 earlierChecksums(script)));
         }
         @Nullable String earlier = existing ? null : earlierVersionTable(connection, tables, scripts);
+        if (adopted && earlier != null) {
+            throw otherLayout();
+        }
         String recorded = earlier == null ? versionTable : earlier;
         Map<Integer, Applied> applied = existing || earlier != null ? applied(connection, recorded) : Map.of();
         String legacy = prefix + StorageSettings.LEGACY_VERSION_TABLE;
@@ -273,7 +288,7 @@ final class Migrator {
                 .filter(table -> table.startsWith(prefix) && table.endsWith(tail)).toList(), legacy, applied, scripts);
         }
         @Nullable Takeover takeover = existing || earlier != null || baseline == null ? null
-            : takeover(connection, tables, baseline);
+            : takeover(connection, tables, baseline, adopted);
         if (!existing && earlier == null) {
             warnAboutOtherPrefixes(connection, tables, scripts);
         }
@@ -315,6 +330,9 @@ final class Migrator {
         }
         if (pending.isEmpty() && takeover == null && earlier == null) {
             return;
+        }
+        if (takeover != null && baseline != null && baseline.schemaChecked()) {
+            checkSchema(connection, tables, takeover, baselined);
         }
         if (!tables.isEmpty() && backup != null && (!pending.isEmpty() || takeover != null)) {
             backup.run(connection);
@@ -504,7 +522,75 @@ final class Migrator {
             + " from now on. " + earlier + " stays as it was and is no longer read.");
     }
 
-    private @Nullable Takeover takeover(Connection connection, List<String> tables, Baseline from)
+    private StorageException otherLayout() {
+        return new StorageException("the database holds a table named " + versionTable + " that storage did not"
+            + " create, so it cannot record migrations there; rename or remove that table, or on MySQL, MariaDB"
+            + " and PostgreSQL set another table prefix");
+    }
+
+    private boolean adoptsVersionTable() {
+        return baseline != null && baseline.sameName() && baseline.table().equals(versionTable);
+    }
+
+    /**
+     * Stops the start when the database lacks a table or a column that the statements of the scripts recorded as
+     * applied leave, as {@link Baseline#checkSchema} describes.
+     */
+    private void checkSchema(Connection connection, List<String> tables, Takeover takeover, List<Pending> baselined)
+        throws SQLException, StorageException {
+        ScriptSchema expected = new ScriptSchema(dialect);
+        for (Pending step : baselined) {
+            for (String statement : step.statements()) {
+                expected.apply(statement.replace(PREFIX_TOKEN, prefix));
+            }
+        }
+        List<String> missing = expected.missingFrom(columns(connection, tables, expected.tables()));
+        if (!missing.isEmpty()) {
+            throw new StorageException("the table " + takeover.source() + " records schema version "
+                + takeover.version() + ", but the database lacks " + String.join(", ", missing) + ", which the"
+                + " migrations up to that version create; restore a backup of the database, or install the plugin"
+                + " version that set it up and let it finish its own upgrade");
+        }
+    }
+
+    // The columns of each of the wanted tables that exists, with table and column names in lowercase.
+    private Map<String, Set<String>> columns(Connection connection, List<String> tables, Set<String> wanted)
+        throws SQLException {
+        Map<String, Set<String>> columns = new HashMap<>();
+        if (dialect == Dialect.SQLITE) {
+            try (PreparedStatement statement = connection.prepareStatement("SELECT name FROM pragma_table_info(?)")) {
+                for (String table : tables) {
+                    String key = table.toLowerCase(Locale.ROOT);
+                    if (!wanted.contains(key)) {
+                        continue;
+                    }
+                    statement.setString(1, table);
+                    try (ResultSet result = statement.executeQuery()) {
+                        Set<String> names = columns.computeIfAbsent(key, absent -> new LinkedHashSet<>());
+                        while (result.next()) {
+                            names.add(result.getString(1).toLowerCase(Locale.ROOT));
+                        }
+                    }
+                }
+            }
+            return columns;
+        }
+        String schema = dialect == Dialect.POSTGRES ? "current_schema()" : "DATABASE()";
+        try (Statement statement = connection.createStatement();
+             ResultSet result = statement.executeQuery("SELECT table_name, column_name FROM"
+                 + " information_schema.columns WHERE table_schema = " + schema)) {
+            while (result.next()) {
+                String key = result.getString(1).toLowerCase(Locale.ROOT);
+                if (wanted.contains(key)) {
+                    columns.computeIfAbsent(key, absent -> new LinkedHashSet<>())
+                        .add(result.getString(2).toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        return columns;
+    }
+
+    private @Nullable Takeover takeover(Connection connection, List<String> tables, Baseline from, boolean sameName)
         throws SQLException, StorageException {
         String old = from.table();
         @Nullable String source = tables.contains(old) ? old
@@ -517,7 +603,7 @@ final class Migrator {
         for (int suffix = 2; taken(tables, free); suffix++) {
             free = renamed + suffix;
         }
-        return new Takeover(source, free, highest(connection, source));
+        return new Takeover(source, free, highest(connection, source), sameName);
     }
 
     private boolean taken(List<String> tables, String name) {
@@ -564,18 +650,25 @@ final class Migrator {
 
     // Creating the version table, recording the versions and renaming the old table take effect together: in one
     // transaction where DDL is transactional, and otherwise through a staging table that one RENAME TABLE moves into
-    // place with the old table. Every step before that rename is rerunnable.
+    // place with the old table. Every step before that rename is rerunnable. An old table that has the name of the
+    // version table is renamed before the version table takes its name.
     private void takeOver(Connection connection, Takeover takeover, List<Pending> baselined)
         throws SQLException, StorageException {
         long now = clock.millis();
         String renameTo = takeover.renameTo();
         if (dialect.transactionalDdl()) {
+            String rename = "ALTER TABLE " + takeover.source() + " RENAME TO " + renameTo;
             transaction(connection, () -> {
+                if (takeover.sameName()) {
+                    execute(connection, rename);
+                }
                 execute(connection, versionTableDdl(versionTable));
                 for (Pending step : baselined) {
                     record(connection, versionTable, step.migration(), step.checksum(), step.from(), now);
                 }
-                execute(connection, "ALTER TABLE " + takeover.source() + " RENAME TO " + renameTo);
+                if (!takeover.sameName()) {
+                    execute(connection, rename);
+                }
             });
         } else {
             String staging = versionTable + TAKEOVER_SUFFIX;
@@ -585,8 +678,9 @@ final class Migrator {
             for (Pending step : baselined) {
                 record(connection, staging, step.migration(), step.checksum(), step.from(), now);
             }
-            execute(connection, "RENAME TABLE " + staging + " TO " + versionTable + ", " + takeover.source()
-                + " TO " + renameTo);
+            String old = takeover.source() + " TO " + renameTo;
+            String placed = staging + " TO " + versionTable;
+            execute(connection, "RENAME TABLE " + (takeover.sameName() ? old + ", " + placed : placed + ", " + old));
         }
         logger.info("Took over schema version " + takeover.version() + " from " + takeover.source()
             + ", now renamed to " + renameTo + ".");

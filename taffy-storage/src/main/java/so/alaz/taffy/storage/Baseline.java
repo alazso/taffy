@@ -40,19 +40,27 @@ import java.util.regex.Pattern;
  *
  * <p>Once storage's version table exists the baseline is ignored, so it may stay in the plugin's start for good.
  *
- * <p>Storage does not check that the database matches the scripts up to N: they are recorded as applied on the
- * plugin's word, and a database that differs from them stays different. An old table whose name is storage's own
- * version table is not a baseline: storage refuses a version table in another layout and stops the start. An old
- * table under any other name is not noticed by storage, so a plugin whose database may hold one passes it here.
+ * <p>Unless {@link #checkSchema()} asks for it, storage does not check that the database matches the scripts up to
+ * N: they are recorded as applied on the plugin's word, and a database that differs from them stays different.
+ *
+ * <p>Unless {@link #takeOverSameName()} asks for it, an old table whose name is storage's own version table is not
+ * a baseline: storage refuses a version table in another layout and stops the start. An old table under any other
+ * name is not noticed by storage, so a plugin whose database may hold one passes it here.
+ *
+ * <p>Instances are immutable: {@link #takeOverSameName()} and {@link #checkSchema()} each return a new baseline.
  */
 public final class Baseline {
 
     private static final Pattern TABLE = Pattern.compile("[a-z_][a-z0-9_]{0,31}");
 
     private final String table;
+    private final boolean sameName;
+    private final boolean schemaChecked;
 
-    private Baseline(String table) {
+    private Baseline(String table, boolean sameName, boolean schemaChecked) {
         this.table = table;
+        this.sameName = sameName;
+        this.schemaChecked = schemaChecked;
     }
 
     /**
@@ -71,10 +79,68 @@ public final class Baseline {
             throw new IllegalArgumentException("the version table is \"" + table + "\"; use 1 to 32 lowercase"
                 + " letters, digits and underscores, starting with a letter or underscore");
         }
-        return new Baseline(table);
+        return new Baseline(table, false, false);
+    }
+
+    /**
+     * A baseline that also takes the old table over when it has the name of storage's own version table, such as
+     * an old table named {@code schema_version} on SQLite, or {@code <prefix>schema_version} on a server whose
+     * version table {@link StorageSettings#versionTable(String)} gives that name.
+     *
+     * <p>When a table of the version table's name exists in another layout than storage's and this baseline names
+     * it, the start reads N from it and takes the database over as the class description states, with one
+     * difference in order: the old table is renamed to {@code <table>_baseline} first, and storage's version table
+     * is then created under the name that became free. On SQLite and PostgreSQL both happen in one transaction with
+     * the recording of the versions. On MySQL and MariaDB one statement renames the old table and
+     * {@code <version table>_takeover} into place. The old table is renamed, never dropped or rewritten, and a
+     * takeover that fails leaves the old table under its name with its rows, so the next start takes over again.
+     * On SQLite the old table is found in whatever case its name was declared.
+     *
+     * <p>A table of the version table's name in storage's layout is storage's version table, and the baseline is
+     * ignored. When a version table 0.1.0 to 0.3.2 wrote for this plugin also exists, the start stops as it does
+     * without this call.
+     *
+     * @return a baseline that takes over an old table named as storage's version table
+     */
+    public Baseline takeOverSameName() {
+        return new Baseline(table, true, schemaChecked);
+    }
+
+    /**
+     * A baseline that compares the database with the scripts it records as applied before it changes anything, and
+     * stops the start when the database lacks a table or a column they create.
+     *
+     * <p>The expected tables and columns are read from the statements of the migration scripts up to N, in order,
+     * after {@code ${prefix}} is replaced: {@code CREATE TABLE} with its column list, {@code ALTER TABLE} with
+     * {@code ADD}, {@code DROP} and {@code RENAME} of a column, {@code CHANGE} of a column on MySQL and MariaDB,
+     * {@code ALTER TABLE ... RENAME TO}, {@code RENAME TABLE} and {@code DROP TABLE}. A temporary table and every
+     * other statement, such as {@code CREATE INDEX}, {@code INSERT} or {@code CREATE VIEW}, are not read. A table
+     * created without a column list, as with {@code CREATE TABLE ... AS SELECT}, is expected to exist with any
+     * columns.
+     *
+     * <p>Names are compared without regard to case and without their quotes. Column types, constraints, indexes
+     * and rows are not compared, and tables and columns the scripts do not create are allowed, so the database
+     * may hold more than the scripts describe. With N at 0 no script is recorded as applied and nothing is
+     * compared.
+     *
+     * <p>A mismatch completes the future of the start exceptionally with a {@link StorageException} that names the
+     * missing tables and columns, before the SQLite backup is taken and with the old version table left as it was.
+     *
+     * @return a baseline that checks the tables and columns of the database
+     */
+    public Baseline checkSchema() {
+        return new Baseline(table, sameName, true);
     }
 
     String table() {
         return table;
+    }
+
+    boolean sameName() {
+        return sameName;
+    }
+
+    boolean schemaChecked() {
+        return schemaChecked;
     }
 }

@@ -266,6 +266,50 @@ abstract class CheckpointedStorageContract extends StorageContract {
     }
 
     @Test
+    void aSameNameTakeoverInterruptedAtItsRenameLeavesTheOldTableAndTheNextStartCompletesIt() throws Exception {
+        String prefix = "adopted_";
+        String versionTable = prefix + "schema_version";
+        String staging = versionTable + "_takeover";
+        Baseline baseline = Baseline.versionTable(versionTable).takeOverSameName();
+        Map<String, String> scripts = ProbeSchema.scripts(dialect());
+        StorageSettings.Server server = server(prefix);
+        Properties credentials = new Properties();
+        credentials.setProperty("user", server.user());
+        credentials.setProperty("password", server.password());
+        FaultyDataSource faulty = new FaultyDataSource(Storage.serverUrl(dialect(), server), credentials);
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            try {
+                migrator(prefix, ProbeSchema.MIGRATIONS.subList(0, 2), scripts).migrate(connection, null);
+                statement.execute("DROP TABLE " + versionTable);
+                statement.execute("CREATE TABLE " + versionTable + " (version INT NOT NULL)");
+                statement.execute("INSERT INTO " + versionTable + " VALUES (2)");
+                faulty.faults().failMatching("RENAME TABLE", 1);
+
+                try (Connection failing = faulty.getConnection()) {
+                    assertThatThrownBy(() -> new Migrator(dialect(), prefix, CLOCK, Logger.getAnonymousLogger(),
+                        ProbeSchema.MIGRATIONS, ProbeSchema.source(scripts), baseline).migrate(failing, null))
+                        .isInstanceOf(SQLException.class).hasMessage("injected failure of RENAME TABLE");
+                }
+
+                assertThat(ProbeSchema.tables(connection, dialect(), prefix))
+                    .containsExactly(prefix + "alpha", prefix + "beta", versionTable, staging);
+                assertThat(columns(connection, versionTable)).containsExactly("version");
+                assertThat(ProbeSchema.ids(connection, versionTable, "version")).containsExactly(2);
+
+                starting(prefix, ProbeSchema.MIGRATIONS, scripts, baseline).join().close(Duration.ofSeconds(5));
+                starting(prefix, ProbeSchema.MIGRATIONS, scripts, baseline).join().close(Duration.ofSeconds(5));
+
+                assertThat(ProbeSchema.tables(connection, dialect(), prefix)).containsExactly(prefix + "alpha",
+                    prefix + "beta", prefix + "gamma", versionTable, versionTable + "_baseline");
+                assertThat(ProbeSchema.versions(connection, prefix)).containsExactly(1, 2, 3);
+                assertThat(ProbeSchema.ids(connection, versionTable + "_baseline", "version")).containsExactly(2);
+            } finally {
+                ProbeSchema.drop(connection, dialect(), prefix);
+            }
+        }
+    }
+
+    @Test
     void aDataStatementWhoseProgressRecordFailsIsRolledBackAndRunsOnceOnTheNextStart() throws Exception {
         String prefix = "atomic_";
         Migration scale = new Migration(4, "scale");

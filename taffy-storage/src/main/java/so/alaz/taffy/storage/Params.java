@@ -80,6 +80,67 @@ public final class Params {
     }
 
     /**
+     * Binds a whole number that fits an {@code int}, for a column declared {@code INTEGER} or {@code INT}.
+     * {@link Row#intValue} reads it.
+     *
+     * @param value the number
+     * @return this instance
+     * @throws SQLException if the driver refuses the value
+     */
+    public Params intValue(int value) throws SQLException {
+        statement.setInt(++index, value);
+        return this;
+    }
+
+    /**
+     * Binds a whole number that fits an {@code int}, or {@code NULL} typed as {@code INTEGER}.
+     *
+     * @param value the number, or {@code null}
+     * @return this instance
+     * @throws SQLException if the driver refuses the value
+     */
+    public Params intValue(@Nullable Integer value) throws SQLException {
+        if (value == null) {
+            statement.setNull(++index, Types.INTEGER);
+            return this;
+        }
+        return intValue(value.intValue());
+    }
+
+    /**
+     * Binds a boolean as the driver binds one: the whole number 1 for {@code true} and 0 for {@code false} on
+     * SQLite, MySQL and MariaDB, and a native {@code boolean} value on PostgreSQL. {@link Row#bool} reads it.
+     *
+     * <p>The column is declared in the migration script of each database. {@code BOOLEAN} fits all four: on MySQL
+     * and MariaDB it is {@code TINYINT(1)}, and on SQLite it holds the whole number. On SQLite, MySQL and MariaDB
+     * any whole-number column holds the value as well. PostgreSQL refuses a boolean for a whole-number column, so
+     * a PostgreSQL column that holds 0 and 1 as numbers is bound with {@link #intValue(int)}.
+     *
+     * @param value the boolean
+     * @return this instance
+     * @throws SQLException if the driver refuses the value
+     */
+    public Params bool(boolean value) throws SQLException {
+        statement.setBoolean(++index, value);
+        return this;
+    }
+
+    /**
+     * Binds a boolean as {@link #bool(boolean)} does, or {@code NULL} typed as {@code BOOLEAN}.
+     *
+     * @param value the boolean, or {@code null}
+     * @return this instance
+     * @throws SQLException if the driver refuses the value
+     */
+    public Params bool(@Nullable Boolean value) throws SQLException {
+        if (value == null) {
+            statement.setNull(++index, Types.BOOLEAN);
+            return this;
+        }
+        return bool(value.booleanValue());
+    }
+
+    /**
      * Binds an amount of money as a whole number at {@value MoneyColumn#SCALE} decimal places, encoded by
      * {@link MoneyColumn#toStored}. An amount whose magnitude is below {@code 0.0001} is bound as 0 whatever its
      * sign.

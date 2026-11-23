@@ -60,6 +60,50 @@ public final class Row {
     }
 
     /**
+     * Reads a whole number that fits an {@code int}, such as one {@link Params#intValue(int)} bound.
+     *
+     * @param column the column name
+     * @return the number, or {@code null} if the column holds SQL {@code NULL}
+     * @throws SQLException if the column cannot be read as a number, or holds a number below
+     *     {@link Integer#MIN_VALUE} or above {@link Integer#MAX_VALUE}
+     */
+    public @Nullable Integer intValue(String column) throws SQLException {
+        long value = result.getLong(column);
+        if (result.wasNull()) {
+            return null;
+        }
+        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
+            throw new SQLException(column + " holds " + value + ", which does not fit an int");
+        }
+        return (int) value;
+    }
+
+    /**
+     * Reads a boolean bound by {@link Params#bool(boolean)}. On SQLite, MySQL and MariaDB the column holds a whole
+     * number: 1 reads as {@code true} and 0 as {@code false}. On PostgreSQL the column is read as the driver reads
+     * a boolean, which covers a {@code boolean} column and a whole-number column that holds 0 or 1.
+     *
+     * @param column the column name
+     * @return the boolean, or {@code null} if the column holds SQL {@code NULL}
+     * @throws SQLException if the column cannot be read, on SQLite, MySQL and MariaDB holds a number other than 0
+     *     and 1, or on PostgreSQL holds a value the driver does not read as a boolean
+     */
+    public @Nullable Boolean bool(String column) throws SQLException {
+        if (dialect == Dialect.POSTGRES) {
+            boolean value = result.getBoolean(column);
+            return result.wasNull() ? null : value;
+        }
+        long value = result.getLong(column);
+        if (result.wasNull()) {
+            return null;
+        }
+        if (value != 0 && value != 1) {
+            throw new SQLException(column + " holds " + value + ", which is neither 0 nor 1");
+        }
+        return value == 1;
+    }
+
+    /**
      * Reads an amount of money stored as a whole number at {@value MoneyColumn#SCALE} decimal places, decoded by
      * {@link MoneyColumn#fromStored}.
      *

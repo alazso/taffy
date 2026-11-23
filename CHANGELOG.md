@@ -3,6 +3,49 @@
 All notable changes to Taffy are documented here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## [Unreleased]
+
+### Added
+- `Tx.batch(String sql, List<Tx.Binder> binders)` runs one `INSERT`, `UPDATE` or `DELETE` once for each binder
+  as a JDBC batch inside the transaction, and returns one count for each binder, in order. An empty list runs
+  nothing and returns an empty array. When a run fails, it throws what the driver threw, usually a
+  `BatchUpdateException`: the runs before it stay in the open transaction and are rolled back with it when the
+  work throws. On PostgreSQL a failed statement ends the transaction, so the work can only throw. MySQL
+  connections are now opened with `rewriteBatchedStatements=true`, so the driver sends a batch in one packet
+  and reports `Statement.SUCCESS_NO_INFO` in place of the count of a rewritten row. No other statement is
+  affected by that property.
+- `Params.intValue(int)`, `Params.intValue(Integer)` and `Row.intValue(String)` bind and read a whole number
+  that fits an `int`. A `null` `Integer` binds `NULL` typed `INTEGER`, `Row.intValue` returns `null` for `NULL`,
+  and it throws `SQLException` for a number outside the range of an `int` on every database, in place of the
+  cut or the driver's own failure a narrowing read gives.
+- `Params.bool(boolean)`, `Params.bool(Boolean)` and `Row.bool(String)` bind and read a boolean: the whole
+  number 1 or 0 on SQLite, MySQL and MariaDB, and a native `boolean` on PostgreSQL. A column declared `BOOLEAN`
+  fits all four. A `null` `Boolean` binds `NULL` typed `BOOLEAN`, and `Row.bool` returns `null` for `NULL`. On
+  SQLite, MySQL and MariaDB it throws `SQLException` for a number other than 0 and 1. PostgreSQL refuses a
+  boolean for a whole-number column, so such a column there is bound with `intValue`.
+- `Storage.backup(String label, int keep)` copies a running SQLite database to
+  `backups/manual-<label>-<UTC yyyyMMdd-HHmmss>.db` and completes its future with that file. The copy is taken
+  with `VACUUM INTO` on the writer thread, behind the writes submitted before it, so it holds each of them in
+  full and nothing of a later one, and reads keep running. It is written as `<name>.tmp` and moved into place
+  in one step. The label is 1 to 64 ASCII letters, digits, dots, underscores and hyphens, and `keep` is 1 or
+  more: the newest `keep` files named `manual-<label>-<time>.db` are kept, whatever their label. The copies a
+  start takes before a migration and `StorageSettings.backupKeep()` are untouched. On MySQL, MariaDB and
+  PostgreSQL, and on storage from `Storage.over`, the future fails with a `StorageException`. The package
+  documentation gains the restore sequence: close storage, replace the database file and remove its `-wal` and
+  `-shm` files, start storage again.
+- `Baseline.takeOverSameName()` returns a baseline that also takes over an old version table that has the name
+  of storage's own version table, such as a hand-rolled `schema_version` on SQLite or
+  `provouchers_schema_version` on a server. The old table is renamed to `<table>_baseline` first and storage's
+  table is created under the freed name: in one transaction on SQLite and PostgreSQL, and with one
+  `RENAME TABLE` on MySQL and MariaDB. A takeover that fails leaves the old table under its name with its rows.
+  `Baseline.versionTable(String)` alone still stops the start for such a table.
+- `Baseline.checkSchema()` returns a baseline that, before it records scripts as applied, compares the database
+  with the tables and columns those scripts create, read from their `CREATE TABLE`, `ALTER TABLE`,
+  `RENAME TABLE` and `DROP TABLE` statements. A missing table or column stops the start with a
+  `StorageException` that names each one, before the SQLite backup and with the old version table left as it
+  was. Names are compared ignoring case; types, constraints, indexes and extra tables and columns are not
+  compared.
+
 ## [0.4.8] - 2026-11-23
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

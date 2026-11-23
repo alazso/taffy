@@ -34,6 +34,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Pattern;
 import javax.sql.DataSource;
 
 /**
@@ -58,7 +59,8 @@ import javax.sql.DataSource;
  * transaction begins deferred.
  *
  * <p>MySQL and MariaDB connections are opened with {@code useAffectedRows=true}, so an {@code UPDATE} counts only
- * the rows whose values it changed (see {@link Tx#update}). Every server connection has the socket timeout of
+ * the rows whose values it changed (see {@link Tx#update}), and MySQL connections with
+ * {@code rewriteBatchedStatements=true} (see {@link Tx#batch}). Every server connection has the socket timeout of
  * {@link StorageSettings.Server#socketTimeout()} during normal work, 30 seconds unless the plugin set another: a
  * statement that waits longer for the server, a lock wait included, fails and its connection is closed. Migrations
  * run without that timeout. The {@link StorageSettings.Server#properties()} are handed to the driver with every
@@ -89,6 +91,10 @@ public final class Storage {
 
     private static final String HIKARI_CLASS = "com.zaxxer.hikari.HikariDataSource";
 
+    private static final String BACKUPS = "backups";
+
+    private static final Pattern BACKUP_LABEL = Pattern.compile("[A-Za-z0-9._-]{1,64}");
+
     private final Dialect dialect;
     private final String prefix;
     private final Logger logger;
@@ -100,13 +106,15 @@ public final class Storage {
     private final List<HikariDataSource> pools;
     private final Clock clock;
     private final Set<Thread> threads;
+    private final @Nullable Path backups;
     private final ThreadLocal<@Nullable ArrayDeque<Job>> handedOn = new ThreadLocal<>();
     private volatile boolean stopping;
     private volatile boolean poolsClosing;
 
     private Storage(Dialect dialect, String prefix, Logger logger, ErrorReports errors,
                     Workers workers, DataSource writer, DataSource reader, List<HikariDataSource> pools,
-                    Clock clock) {
+                    Clock clock, @Nullable Path backups) {
+        this.backups = backups;
         this.dialect = dialect;
         this.prefix = prefix;
         this.logger = logger;
@@ -190,7 +198,9 @@ public final class Storage {
      *     {@link #start(Plugin, ErrorReports, StorageSettings, List, Clock)} does, and also with a
      *     {@link StorageException} when the old version table records a version higher than the highest of
      *     {@code migrations}, has no {@code version} column, holds a version that is not a whole number of 0 or
-     *     more, or records a version of 1 or more that no migration in {@code migrations} has
+     *     more, or records a version of 1 or more that no migration in {@code migrations} has, or when a baseline
+     *     from {@link Baseline#checkSchema} finds that the database lacks a table or a column of the scripts it
+     *     records as applied
      * @throws NullPointerException if an argument is {@code null}, or the plugin's name, version, data path or
      *     logger is {@code null}
      * @throws IllegalArgumentException if the plugin's name is blank, the versions of {@code migrations} are not
@@ -235,7 +245,7 @@ public final class Storage {
                     case MYSQL, MARIADB, POSTGRES -> server(settings, name, logger, errors, workers, pools, clock);
                 };
                 Migrator.Backup backup = settings.dialect() == Dialect.SQLITE
-                    ? new SqliteBackup(dataFolder.resolve("backups"), version, settings.backupKeep(), clock, logger)
+                    ? new SqliteBackup(dataFolder.resolve(BACKUPS), version, settings.backupKeep(), clock, logger)
                     : null;
                 try (Connection connection = storage.writer.getConnection()) {
                     migrator.migrate(connection, backup);
@@ -305,7 +315,7 @@ public final class Storage {
         String name = requireName(plugin.getName());
         Logger logger = Objects.requireNonNull(plugin.getLogger(), "logger");
         return new Storage(dialect, prefix, logger, errors, workers(name, 1, false), source, source, List.of(),
-            clock);
+            clock, null);
     }
 
     /**
@@ -451,6 +461,84 @@ public final class Storage {
     }
 
     /**
+     * Copies the SQLite database of storage from {@link #start} into the {@code backups} folder of the plugin's
+     * data path while the plugin runs, as {@code manual-<label>-<UTC yyyyMMdd-HHmmss>.db}, with the time of the
+     * storage clock.
+     *
+     * <p>The copy is taken on the writer thread, behind the writes submitted before it, with
+     * {@code VACUUM INTO} on the writer connection outside a transaction, so it holds every write that committed
+     * before it and no part of a later one, and reads keep running while it is taken. It is one complete database
+     * file with no {@code -wal} or {@code -shm} file beside it. It is written as the file's name followed by
+     * {@code .tmp} and moved into place in one step, so a file named {@code manual-...db} is never a partial copy;
+     * a copy taken in the same second under the same label replaces the earlier one.
+     *
+     * <p>After the copy, the newest {@code keep} files named {@code manual-<label>-<time>.db} are kept by
+     * modification time, whatever their label, the new copy among them, and the older ones are deleted, as are
+     * {@code .tmp} files an interrupted copy left. The copies a start takes before a migration, named
+     * {@code data-<version>-<time>.db}, and files of any other name are left alone, and
+     * {@link StorageSettings#backupKeep()} does not count these copies.
+     *
+     * <p>The returned future completes on one of the read threads, as the future of {@link #async} does. Work on
+     * the writer thread must not wait for it, as it must not wait for another write. Restoring a copy is done by
+     * the owner with storage closed, as the package documentation describes.
+     *
+     * @param label the middle part of the file name: 1 to 64 ASCII letters, digits, dots, underscores and hyphens
+     * @param keep how many of these copies to keep, 1 or more
+     * @return a future that completes with the file of the copy, or completes exceptionally: with a
+     *     {@link StorageException} on MySQL, MariaDB and PostgreSQL and on storage from {@link #over}, which have
+     *     no database file to copy, and when the backups folder or the file cannot be written, with an
+     *     {@link SQLException} when SQLite refuses the copy, or with {@link RejectedExecutionException} when
+     *     storage is closed
+     * @throws NullPointerException if the label is {@code null}
+     * @throws IllegalArgumentException if the label is out of its range or {@code keep} is below 1
+     */
+    public CompletableFuture<Path> backup(String label, int keep) {
+        Objects.requireNonNull(label, "label");
+        if (!BACKUP_LABEL.matcher(label).matches()) {
+            throw new IllegalArgumentException("the backup label is \"" + label + "\"; use 1 to 64 ASCII letters,"
+                + " digits, dots, underscores and hyphens");
+        }
+        if (keep < 1) {
+            throw new IllegalArgumentException("keep is " + keep + "; a backup keeps at least 1 copy");
+        }
+        CompletableFuture<Path> result = new CompletableFuture<>();
+        Path folder = backups;
+        if (dialect != Dialect.SQLITE || folder == null) {
+            result.completeExceptionally(new StorageException(dialect == Dialect.SQLITE
+                ? "storage over a data source has no database file of its own to copy; back the file up with the"
+                    + " tool that owns it"
+                : "a backup copies a SQLite database file, and this storage runs on " + dialect.id()
+                    + "; back the database up with the tools of the database server"));
+            return result;
+        }
+        Job job = new Job(result, () -> {
+            Path copy = null;
+            Throwable failure = null;
+            try (Connection connection = writer.getConnection()) {
+                copy = SqliteBackup.manual(connection, folder, label, keep, clock, logger);
+            } catch (Throwable thrown) {
+                failure = stopping ? new RejectedExecutionException("storage closed before this backup ran", thrown)
+                    : thrown;
+            }
+            Path taken = copy;
+            Throwable failed = failure;
+            settle(executor, writes, () -> {
+                if (failed == null) {
+                    result.complete(taken);
+                } else {
+                    result.completeExceptionally(failed);
+                }
+            });
+        });
+        try {
+            writes.execute(job);
+        } catch (RejectedExecutionException closed) {
+            result.completeExceptionally(closed);
+        }
+        return result;
+    }
+
+    /**
      * Stops the database threads and closes the connection pools, waiting on the calling thread for the work
      * already queued to finish.
      *
@@ -558,8 +646,9 @@ public final class Storage {
         StorageSettings.SslMode ssl = server.sslMode();
         // useAffectedRows makes an UPDATE count only the rows it changed, so a conditional update must change a
         // column, and an insert that meets an existing key counts as 0. socketTimeout ends a call on a dead
-        // connection. Without TLS, which PREFER may end in, MySQL 8's caching_sha2_password needs the server key,
-        // which allowPublicKeyRetrieval lets the driver fetch.
+        // connection. rewriteBatchedStatements lets the MySQL driver send a batch in one packet. Without TLS, which
+        // PREFER may end in, MySQL 8's caching_sha2_password needs the server key, which allowPublicKeyRetrieval
+        // lets the driver fetch.
         Duration socketTimeout = server.socketTimeout();
         String publicKey = ssl == StorageSettings.SslMode.DISABLE || ssl == StorageSettings.SslMode.PREFER
             ? "&allowPublicKeyRetrieval=true" : "";
@@ -572,7 +661,7 @@ public final class Storage {
                     case VERIFY_FULL -> "VERIFY_IDENTITY";
                 };
                 yield "jdbc:mysql://" + address + "?sslMode=" + mode + "&useAffectedRows=true&socketTimeout="
-                    + socketTimeout.toMillis() + publicKey;
+                    + socketTimeout.toMillis() + "&rewriteBatchedStatements=true" + publicKey;
             }
             case MARIADB -> {
                 // The MariaDB driver has no mode that encrypts without a certificate check only when the server
@@ -840,7 +929,7 @@ public final class Storage {
             pool.maxSize(), pool.minIdle(), pool.connectionTimeout(), null, null, "PRAGMA query_only = ON");
         pools.add(reader);
         return new Storage(Dialect.SQLITE, "", logger, errors, workers, writer, reader, List.copyOf(pools),
-            clock);
+            clock, dataFolder.resolve(BACKUPS));
     }
 
     private static Storage server(StorageSettings settings, String name, Logger logger, ErrorReports errors,
@@ -854,7 +943,7 @@ public final class Storage {
             pool.maxSize(), pool.minIdle(), pool.connectionTimeout(), server.user(), server.password(), null);
         pools.add(shared);
         return new Storage(dialect, server.tablePrefix(), logger, errors, workers, shared, shared,
-            List.copyOf(pools), clock);
+            List.copyOf(pools), clock, null);
     }
 
     private static HikariDataSource pool(String name, String driver, String url, Properties properties, int maxSize,

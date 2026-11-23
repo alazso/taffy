@@ -385,6 +385,100 @@ final class BaselineTest {
     }
 
     @Test
+    void anOldTableDeclaredInAnotherCaseOfTheVersionTablesNameIsTakenOverWhenTheBaselineAsksForIt() throws Exception {
+        sql("CREATE TABLE Schema_Version (version INTEGER NOT NULL)",
+            "INSERT INTO Schema_Version VALUES (2)",
+            "CREATE TABLE alpha (id INTEGER PRIMARY KEY)",
+            "INSERT INTO alpha VALUES (7)",
+            "CREATE TABLE beta (id INTEGER PRIMARY KEY)");
+        Baseline baseline = Baseline.versionTable("schema_version").takeOverSameName().checkSchema();
+
+        start(baseline, SCRIPTS, StorageContract.CLOCK);
+        start(baseline, SCRIPTS, LATER);
+
+        try (Connection connection = connect()) {
+            assertThat(tables(connection)).containsExactly("alpha", "beta", "gamma", "schema_version",
+                "schema_version_baseline");
+            assertThat(ProbeSchema.versions(connection, "")).containsExactly(1, 2, 3);
+            assertThat(ProbeSchema.appliedAt(connection, "", 3)).isEqualTo(StorageContract.NOW.toEpochMilli());
+            assertThat(ProbeSchema.ids(connection, "alpha", "id")).containsExactly(7);
+            assertThat(ProbeSchema.ids(connection, "schema_version_baseline", "version")).containsExactly(2);
+        }
+        assertThat(backups()).hasSize(1);
+        assertThat(log.lines()).containsExactly(
+            "INFO Copied the database to backups/data-9.9.9-20261102-101530.db before upgrading its layout.",
+            "INFO Took over schema version 2 from Schema_Version, now renamed to schema_version_baseline.",
+            "INFO Applied database migration V3__gamma.");
+    }
+
+    @Test
+    void aSameNameTakeoverOfATableWithNoVersionColumnStopsTheStartAndLeavesTheTable() throws Exception {
+        sql("CREATE TABLE schema_version (applied INTEGER NOT NULL)", "INSERT INTO schema_version VALUES (2)");
+
+        assertThatThrownBy(() -> start(Baseline.versionTable("schema_version").takeOverSameName(), SCRIPTS,
+            StorageContract.CLOCK))
+            .isInstanceOf(CompletionException.class)
+            .cause().isInstanceOf(StorageException.class)
+            .hasMessage("the table schema_version has no version column, so storage cannot read the schema version"
+                + " from it");
+
+        try (Connection connection = connect()) {
+            assertThat(tables(connection)).containsExactly("schema_version");
+            assertThat(ProbeSchema.ids(connection, "schema_version", "applied")).containsExactly(2);
+        }
+        assertThat(backups()).isEmpty();
+    }
+
+    @Test
+    void aBaselineForAnotherTableDoesNotTakeOverATableNamedAsTheVersionTable() throws Exception {
+        sql("CREATE TABLE schema_version (version INTEGER NOT NULL)", "INSERT INTO schema_version VALUES (2)");
+
+        assertThatThrownBy(() -> start(BASELINE.takeOverSameName(), SCRIPTS, StorageContract.CLOCK))
+            .isInstanceOf(CompletionException.class)
+            .cause().isInstanceOf(StorageException.class)
+            .hasMessageStartingWith("the database holds a table named schema_version that storage did not create");
+
+        try (Connection connection = connect()) {
+            assertThat(tables(connection)).containsExactly("schema_version");
+        }
+    }
+
+    @Test
+    void aSchemaCheckPassesADatabaseThatHoldsMoreThanTheScriptsCreate() throws Exception {
+        sql("CREATE TABLE " + LEGACY + " (version INTEGER NOT NULL)",
+            "INSERT INTO " + LEGACY + " VALUES (2)",
+            "CREATE TABLE Alpha (ID INTEGER PRIMARY KEY, note TEXT)",
+            "CREATE TABLE beta (id INTEGER PRIMARY KEY)",
+            "CREATE TABLE owner_notes (id INTEGER)");
+
+        start(BASELINE.checkSchema(), SCRIPTS, StorageContract.CLOCK);
+
+        try (Connection connection = connect()) {
+            assertThat(ProbeSchema.versions(connection, "")).containsExactly(1, 2, 3);
+        }
+    }
+
+    @Test
+    void aSchemaCheckNamesWhatTheDatabaseLacksBeforeTheBackupAndTheTakeover() throws Exception {
+        sql("CREATE TABLE " + LEGACY + " (version INTEGER NOT NULL)",
+            "INSERT INTO " + LEGACY + " VALUES (2)",
+            "CREATE TABLE alpha (other INTEGER PRIMARY KEY)");
+
+        assertThatThrownBy(() -> start(BASELINE.checkSchema(), SCRIPTS, StorageContract.CLOCK))
+            .isInstanceOf(CompletionException.class)
+            .cause().isInstanceOf(StorageException.class)
+            .hasMessage("the table " + LEGACY + " records schema version 2, but the database lacks alpha.id, beta,"
+                + " which the migrations up to that version create; restore a backup of the database, or install"
+                + " the plugin version that set it up and let it finish its own upgrade");
+
+        try (Connection connection = connect()) {
+            assertThat(tables(connection)).containsExactly("alpha", LEGACY);
+        }
+        assertThat(backups()).isEmpty();
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
     void startRefusesANullBaseline() {
         assertThatThrownBy(() -> Storage.start(TestPlugins.plugin(NAME, folder, log.logger), new ErrorReports(),
             SqliteStartTest.settings(5), MIGRATIONS, (Baseline) null, StorageContract.CLOCK))

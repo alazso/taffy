@@ -150,6 +150,51 @@ final class TxTest {
     }
 
     @Test
+    void aBatchCountsEachRunAndAnEmptyOneTouchesNoStatement() throws SQLException {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+
+        int[] inserted = tx.batch("INSERT INTO p_probe (id, state) VALUES (?, ?)",
+            List.of(params -> params.uuid(first).text("A"), params -> params.uuid(second).text("B")));
+        int[] changed = tx.batch("UPDATE p_probe SET state = ? WHERE id = ?",
+            List.of(params -> params.text("C").uuid(second), params -> params.text("C").uuid(UUID.randomUUID())));
+        int[] none = tx.batch("this is not SQL", List.of());
+
+        assertThat(inserted).containsExactly(1, 1);
+        assertThat(changed).containsExactly(1, 0);
+        assertThat(none).isEmpty();
+        assertThat(tx.query("SELECT state FROM p_probe ORDER BY state", Tx.Binder.NONE, row -> row.text("state")))
+            .containsExactly("A", "C");
+    }
+
+    @Test
+    void aBatchKeepsTheRunsBeforeAFailingOneInTheOpenTransaction() throws SQLException {
+        UUID first = UUID.randomUUID();
+        connection.setAutoCommit(false);
+
+        assertThatThrownBy(() -> tx.batch("INSERT INTO p_probe (id, state) VALUES (?, ?)",
+            List.of(params -> params.uuid(first).text("A"), params -> params.uuid(first).text("B"))))
+            .isInstanceOf(SQLException.class);
+
+        assertThat(tx.query("SELECT state FROM p_probe", Tx.Binder.NONE, row -> row.text("state")))
+            .containsExactly("A");
+        connection.rollback();
+        assertThat(tx.query("SELECT state FROM p_probe", Tx.Binder.NONE, row -> row.text("state"))).isEmpty();
+    }
+
+    @Test
+    void aBatchRefusesANullBinderAndAnEndedTransaction() {
+        List<Tx.Binder> withNull = new ArrayList<>();
+        withNull.add(null);
+
+        assertThatThrownBy(() -> tx.batch("DELETE FROM p_probe", withNull)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> tx.batch("DELETE FROM p_probe", null)).isInstanceOf(NullPointerException.class);
+        tx.close();
+        assertThatThrownBy(() -> tx.batch("DELETE FROM p_probe", List.of()))
+            .isInstanceOf(IllegalStateException.class).hasMessage("this transaction has ended");
+    }
+
+    @Test
     void aFailingStatementPassesTheDriverFailureOn() {
         assertThatThrownBy(() -> tx.execute("SELECT * FROM p_missing"))
             .isInstanceOf(SQLException.class)

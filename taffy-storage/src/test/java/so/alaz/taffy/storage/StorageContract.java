@@ -648,6 +648,269 @@ abstract class StorageContract {
     }
 
     @Test
+    void aBaselineThatTakesOverTheSameNameAdoptsTheVersionTableOfProVouchers() throws Exception {
+        String old = ProVouchersDatabase.VERSION_TABLE;
+        @Nullable String named = dialect() == Dialect.SQLITE ? old : null;
+        Baseline baseline = Baseline.versionTable(old).takeOverSameName().checkSchema();
+        List<Migration> migrations = ProVouchersDatabase.MIGRATIONS;
+        Map<String, String> scripts = ProVouchersDatabase.scripts(dialect());
+        try (Connection connection = connect()) {
+            try {
+                ProVouchersDatabase.create(connection);
+                Map<String, List<String>> before = new HashMap<>();
+                for (String table : ProVouchersDatabase.TABLES) {
+                    before.put(table, ProbeSchema.rows(connection, table));
+                }
+
+                startingAs("ProVouchers", "", named, migrations, scripts, baseline).join()
+                    .close(Duration.ofSeconds(5));
+                startingAs("ProVouchers", "", named, migrations, scripts, baseline).join()
+                    .close(Duration.ofSeconds(5));
+
+                List<String> recorded = new ArrayList<>();
+                for (Migration migration : migrations) {
+                    int version = migration.version();
+                    recorded.add(version + "|" + migration.name() + "|"
+                        + FirstRelease.sha256(ProVouchersDatabase.script(version)) + "|"
+                        + ProVouchersDatabase.statements(version) + "|" + NOW.toEpochMilli());
+                }
+                assertThat(ProbeSchema.rows(connection, old)).containsExactlyElementsOf(recorded);
+                assertThat(ProbeSchema.rows(connection, old + "_baseline")).containsExactly("5");
+                List<String> tables = new ArrayList<>(ProVouchersDatabase.TABLES);
+                tables.add(old);
+                tables.add(old + "_baseline");
+                assertThat(ProbeSchema.tables(connection, dialect(), "provouchers_"))
+                    .containsExactlyInAnyOrderElementsOf(tables);
+                for (String table : ProVouchersDatabase.TABLES) {
+                    assertThat(ProbeSchema.rows(connection, table)).as("rows of %s", table)
+                        .isEqualTo(before.get(table));
+                }
+            } finally {
+                ProbeSchema.drop(connection, dialect(), "provouchers_");
+            }
+        }
+    }
+
+    @Test
+    void aSameNameTakeoverOfAVersionNoMigrationHasLeavesTheDatabaseAsItWas() throws Exception {
+        String old = ProVouchersDatabase.VERSION_TABLE;
+        @Nullable String named = dialect() == Dialect.SQLITE ? old : null;
+        Baseline baseline = Baseline.versionTable(old).takeOverSameName();
+        Map<String, String> scripts = ProVouchersDatabase.scripts(dialect());
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            try {
+                ProVouchersDatabase.create(connection);
+                statement.execute("UPDATE " + old + " SET version = 9");
+                List<String> tables = ProbeSchema.tables(connection, dialect(), "");
+
+                assertThatThrownBy(() -> startingAs("ProVouchers", "", named, ProVouchersDatabase.MIGRATIONS, scripts,
+                    baseline).join())
+                    .isInstanceOf(CompletionException.class)
+                    .cause().isInstanceOf(StorageException.class)
+                    .hasMessage("the table " + old + " records schema version 9, but this version of the plugin"
+                        + " knows schema versions up to 5; install the plugin version that set up the database, or"
+                        + " restore a backup of the database");
+
+                assertThat(ProbeSchema.tables(connection, dialect(), "")).isEqualTo(tables);
+                assertThat(columns(connection, old)).containsExactly("version");
+                assertThat(ProbeSchema.rows(connection, old)).containsExactly("9");
+                assertNoBackup();
+            } finally {
+                ProbeSchema.drop(connection, dialect(), "provouchers_");
+            }
+        }
+    }
+
+    @Test
+    void aBaselineThatChecksTheSchemaStopsTheStartOnADatabaseBehindItsRecordedVersion() throws Exception {
+        String old = ProVouchersDatabase.VERSION_TABLE;
+        @Nullable String named = dialect() == Dialect.SQLITE ? null : "provouchers_migrations";
+        Baseline baseline = Baseline.versionTable(old).checkSchema();
+        Map<String, String> scripts = ProVouchersDatabase.scripts(dialect());
+        try (Connection connection = connect(); Statement statement = connection.createStatement()) {
+            try {
+                ProVouchersDatabase.create(connection);
+                statement.execute("DROP TABLE provouchers_use_totals");
+                statement.execute("ALTER TABLE provouchers_stash DROP COLUMN arg");
+                List<String> tables = ProbeSchema.tables(connection, dialect(), "");
+
+                assertThatThrownBy(() -> startingAs("ProVouchers", "", named, ProVouchersDatabase.MIGRATIONS, scripts,
+                    baseline).join())
+                    .isInstanceOf(CompletionException.class)
+                    .cause().isInstanceOf(StorageException.class)
+                    .hasMessage("the table " + old + " records schema version 5, but the database lacks"
+                        + " provouchers_stash.arg, provouchers_use_totals, which the migrations up to that version"
+                        + " create; restore a backup of the database, or install the plugin version that set it up"
+                        + " and let it finish its own upgrade");
+
+                assertThat(ProbeSchema.tables(connection, dialect(), "")).isEqualTo(tables);
+                assertThat(ProbeSchema.rows(connection, old)).containsExactly("5");
+                assertNoBackup();
+            } finally {
+                ProbeSchema.drop(connection, dialect(), "provouchers_");
+            }
+        }
+    }
+
+    @Test
+    void intsAndBooleansRoundTripAndNullsReadAsNull() {
+        String flags = storage().table("flags");
+        storage().async(tx -> {
+            tx.execute("DROP TABLE IF EXISTS " + flags);
+            tx.execute("CREATE TABLE " + flags + " (id INTEGER NOT NULL PRIMARY KEY, enabled BOOLEAN, level INTEGER,"
+                + " big BIGINT)");
+            return null;
+        }).join();
+        try {
+            String insert = "INSERT INTO " + flags + " (id, enabled, level, big) VALUES (?, ?, ?, ?)";
+            storage().async(tx -> {
+                tx.update(insert, params -> params.intValue(1).bool(true).intValue(Integer.MIN_VALUE)
+                    .integer(Integer.MAX_VALUE + 1L));
+                tx.update(insert, params -> params.intValue(2).bool(Boolean.FALSE)
+                    .intValue(Integer.valueOf(Integer.MAX_VALUE)).integer(7));
+                tx.update(insert, params -> params.intValue(3).bool((Boolean) null).intValue((Integer) null)
+                    .integer((Long) null));
+                return null;
+            }).join();
+
+            List<List<Object>> rows = storage().read(tx -> tx.query(
+                "SELECT id, enabled, level FROM " + flags + " ORDER BY id", Tx.Binder.NONE,
+                row -> java.util.Arrays.<Object>asList(row.intValue("id"), row.bool("enabled"),
+                    row.intValue("level")))).join();
+            List<Integer> enabled = storage().read(tx -> tx.query(
+                "SELECT id FROM " + flags + " WHERE enabled = ?", params -> params.bool(true),
+                row -> row.intValue("id"))).join();
+
+            assertThat(rows).containsExactly(
+                java.util.Arrays.<Object>asList(1, true, Integer.MIN_VALUE),
+                java.util.Arrays.<Object>asList(2, false, Integer.MAX_VALUE),
+                java.util.Arrays.<Object>asList(3, null, null));
+            assertThat(enabled).containsExactly(1);
+            assertThatThrownBy(() -> storage().read(tx -> tx.queryOne(
+                "SELECT big FROM " + flags + " WHERE id = 1", Tx.Binder.NONE, row -> row.intValue("big"))).join())
+                .hasRootCauseInstanceOf(SQLException.class)
+                .hasRootCauseMessage("big holds 2147483648, which does not fit an int");
+        } finally {
+            storage().async(tx -> {
+                tx.execute("DROP TABLE IF EXISTS " + flags);
+                return null;
+            }).join();
+        }
+    }
+
+    @Test
+    void aBatchRunsTheStatementOncePerBinderInsideTheTransaction() {
+        List<UUID> ids = List.of(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID());
+        String insert = "INSERT INTO " + probe() + " (id, state) VALUES (?, ?)";
+        List<Tx.Binder> binders = new ArrayList<>();
+        for (UUID id : ids) {
+            binders.add(params -> params.uuid(id).text("B" + ids.indexOf(id)));
+        }
+
+        int[] counts = storage().async(tx -> tx.batch(insert, binders)).join();
+        int[] none = storage().async(tx -> tx.batch(insert, List.of())).join();
+        int[] changed = storage().async(tx -> tx.batch("UPDATE " + probe() + " SET state = ? WHERE id = ?",
+            List.of(params -> params.text("C").uuid(ids.get(0)),
+                params -> params.text("C").uuid(UUID.randomUUID())))).join();
+
+        assertThat(counts).hasSize(3);
+        assertThat(java.util.Arrays.stream(counts).boxed())
+            .allMatch(count -> count == 1 || count == Statement.SUCCESS_NO_INFO);
+        if (dialect() != Dialect.MYSQL) {
+            assertThat(counts).containsExactly(1, 1, 1);
+            assertThat(changed).containsExactly(1, 0);
+        }
+        assertThat(none).isEmpty();
+        assertThat(changed).hasSize(2);
+        assertThat(ids.stream().map(this::state)).containsExactly("C", "B1", "B2");
+    }
+
+    @Test
+    void aBatchThatFailsMidwayThrowsAndTheWorkThatLetsItThroughWritesNothing() {
+        UUID kept = UUID.randomUUID();
+        UUID first = UUID.randomUUID();
+        UUID before = UUID.randomUUID();
+        insert(kept, "A", null, null, null, null);
+        String insert = "INSERT INTO " + probe() + " (id, state) VALUES (?, ?)";
+
+        assertThatThrownBy(() -> storage().async(tx -> {
+            tx.update(insert, params -> params.uuid(before).text("A"));
+            return tx.batch(insert, List.of(
+                params -> params.uuid(first).text("B"),
+                params -> params.uuid(kept).text("B"),
+                params -> params.uuid(UUID.randomUUID()).text("B")));
+        }).join()).isInstanceOf(CompletionException.class).cause().isInstanceOf(SQLException.class);
+
+        assertThat(count()).isEqualTo(1);
+        assertThat(state(kept)).isEqualTo("A");
+    }
+
+    @Test
+    void aBackupIsTakenOnSqliteAndRefusedOnAServer() {
+        if (dialect() == Dialect.SQLITE) {
+            insert(UUID.randomUUID(), "A", null, null, null, null);
+
+            assertThat(storage().backup("contract", 1).join()).isRegularFile()
+                .hasFileName("manual-contract-20261102-101530.db");
+            return;
+        }
+        assertThatThrownBy(() -> storage().backup("contract", 1).join())
+            .isInstanceOf(CompletionException.class)
+            .cause().isInstanceOf(StorageException.class)
+            .hasMessage("a backup copies a SQLite database file, and this storage runs on " + dialect().id()
+                + "; back the database up with the tools of the database server");
+    }
+
+    @Test
+    void theStoreOfProVouchersPortedOntoTxKeepsItsClaimsCooldownsAndCaps() throws Exception {
+        PortedVoucherStore store = new PortedVoucherStore(storage());
+        UUID steve = UUID.fromString("8667ba71-b85a-4004-af54-457a9734eed7");
+        UUID alex = UUID.fromString("ec561538-f3fd-461d-aff5-086b22154bce");
+        try (Connection connection = connect()) {
+            try {
+                ProVouchersDatabase.create(connection);
+
+                assertThat(store.recordUse("uid-1", steve, 100L).join()).isTrue();
+                assertThat(store.recordUse("uid-1", steve, 100L).join()).isTrue();
+                assertThat(store.recordUse("uid-1", alex, 100L).join()).isFalse();
+                assertThat(store.recordUseAndWait("uid-2", alex, 200L)).isTrue();
+
+                store.setCooldown(steve, "gold", 1_790_000_600_000L).join();
+                store.setCooldown(steve, "gold", 1_790_000_900_000L).join();
+                store.setCooldown(steve, "rank", 5L).join();
+                assertThat(store.activeCooldowns(steve, 1_790_000_000_000L).join())
+                    .containsExactly(Map.entry("gold", 1_790_000_900_000L));
+
+                assertThat(store.reserveUses("KIT", steve, 3, 2, 3).join()).isEqualTo(2);
+                assertThat(store.reserveUses("KIT", alex, 3, 2, 3).join()).isEqualTo(1);
+                assertThat(store.reserveUses("KIT", alex, 1, 2, 3).join()).isZero();
+                assertThat(store.addUses("KIT", alex, 1, 2, 3).join()).isFalse();
+                assertThat(ProbeSchema.rows(connection, "provouchers_use_totals")).contains("KIT|3");
+                assertThat(uses(connection, "KIT", alex)).isEqualTo(1);
+
+                assertThat(store.reserveUsesOptimistically("PASS", steve, 2, 5, 3).join()).isEqualTo(2);
+                assertThat(store.reserveUsesOptimistically("PASS", alex, 2, 5, 3).join()).isEqualTo(1);
+                assertThat(ProbeSchema.rows(connection, "provouchers_use_totals")).contains("PASS|3");
+                assertThat(uses(connection, "PASS", steve)).isEqualTo(2);
+            } finally {
+                ProbeSchema.drop(connection, dialect(), "provouchers_");
+            }
+        }
+    }
+
+    private static int uses(Connection connection, String key, UUID player) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT uses FROM provouchers_code_uses WHERE code = ? AND player_uuid = ?")) {
+            statement.setString(1, key);
+            statement.setString(2, player.toString());
+            try (ResultSet result = statement.executeQuery()) {
+                assertThat(result.next()).as("a count of %s for %s", key, player).isTrue();
+                return result.getInt(1);
+            }
+        }
+    }
+
+    @Test
     void queryOneRefusesSeveralRows() {
         insert(UUID.randomUUID(), "A", null, null, null, null);
         insert(UUID.randomUUID(), "A", null, null, null, null);

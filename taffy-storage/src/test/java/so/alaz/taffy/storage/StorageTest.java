@@ -67,10 +67,10 @@ final class StorageTest {
 
     @ParameterizedTest
     @CsvSource(delimiter = '|', textBlock = """
-        MYSQL    | DISABLE     | jdbc:mysql://db.example:3307/app?sslMode=DISABLED&useAffectedRows=true&socketTimeout=30000&allowPublicKeyRetrieval=true
-        MYSQL    | PREFER      | jdbc:mysql://db.example:3307/app?sslMode=PREFERRED&useAffectedRows=true&socketTimeout=30000&allowPublicKeyRetrieval=true
-        MYSQL    | TRUST       | jdbc:mysql://db.example:3307/app?sslMode=REQUIRED&useAffectedRows=true&socketTimeout=30000
-        MYSQL    | VERIFY_FULL | jdbc:mysql://db.example:3307/app?sslMode=VERIFY_IDENTITY&useAffectedRows=true&socketTimeout=30000
+        MYSQL    | DISABLE     | jdbc:mysql://db.example:3307/app?sslMode=DISABLED&useAffectedRows=true&socketTimeout=30000&rewriteBatchedStatements=true&allowPublicKeyRetrieval=true
+        MYSQL    | PREFER      | jdbc:mysql://db.example:3307/app?sslMode=PREFERRED&useAffectedRows=true&socketTimeout=30000&rewriteBatchedStatements=true&allowPublicKeyRetrieval=true
+        MYSQL    | TRUST       | jdbc:mysql://db.example:3307/app?sslMode=REQUIRED&useAffectedRows=true&socketTimeout=30000&rewriteBatchedStatements=true
+        MYSQL    | VERIFY_FULL | jdbc:mysql://db.example:3307/app?sslMode=VERIFY_IDENTITY&useAffectedRows=true&socketTimeout=30000&rewriteBatchedStatements=true
         MARIADB  | DISABLE     | jdbc:mariadb://db.example:3307/app?sslMode=disable&useAffectedRows=true&socketTimeout=30000&allowPublicKeyRetrieval=true
         MARIADB  | PREFER      | jdbc:mariadb://db.example:3307/app?sslMode=disable&useAffectedRows=true&socketTimeout=30000&allowPublicKeyRetrieval=true
         MARIADB  | TRUST       | jdbc:mariadb://db.example:3307/app?sslMode=trust&useAffectedRows=true&socketTimeout=30000
@@ -86,7 +86,7 @@ final class StorageTest {
 
     @ParameterizedTest
     @CsvSource(delimiter = '|', textBlock = """
-        MYSQL    | jdbc:mysql://db.example:3307/app?sslMode=REQUIRED&useAffectedRows=true&socketTimeout=90000
+        MYSQL    | jdbc:mysql://db.example:3307/app?sslMode=REQUIRED&useAffectedRows=true&socketTimeout=90000&rewriteBatchedStatements=true
         MARIADB  | jdbc:mariadb://db.example:3307/app?sslMode=trust&useAffectedRows=true&socketTimeout=90000
         POSTGRES | jdbc:postgresql://db.example:3307/app?sslmode=require&socketTimeout=90
         """)

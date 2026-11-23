@@ -37,5 +37,24 @@
  *
  * <p>A plugin that disables while the future of {@link so.alaz.taffy.storage.Storage#start} is still pending may
  * cancel that future: the storage that start then builds closes its pools and threads itself.
+ *
+ * <h2>Backing up and restoring a SQLite database</h2>
+ *
+ * <p>Storage opens a SQLite database in WAL mode, so the newest commits of a running database are in the file
+ * named after the database with {@code -wal} at its end, and a copy of the database file alone misses them. A
+ * backup of a running server is therefore taken with {@link so.alaz.taffy.storage.Storage#backup}, which writes
+ * one complete file into the {@code backups} folder. The copies a start takes before a migration are complete
+ * files of the same kind.
+ *
+ * <p>Storage has no restore call, because a database file cannot be replaced while a pool holds it open. A
+ * restore is this sequence, done by the owner with the server stopped, or by the plugin itself:
+ * <ol>
+ *   <li>Close storage with {@link so.alaz.taffy.storage.Storage#close} and wait for it to return, so no
+ *       connection holds the file.</li>
+ *   <li>Replace the database file with the copy, and remove the files named after the database with {@code -wal}
+ *       and {@code -shm} at their end when they exist: they belong to the database that was replaced.</li>
+ *   <li>Start storage again with {@link so.alaz.taffy.storage.Storage#start}, which runs the migrations the copy
+ *       does not record.</li>
+ * </ol>
  */
 package so.alaz.taffy.storage;

@@ -121,6 +121,47 @@ public final class Tx {
     }
 
     /**
+     * Runs one {@code INSERT}, {@code UPDATE} or {@code DELETE} statement once for each binder, as a JDBC batch
+     * inside this transaction, so a server receives the rows in fewer round trips than one {@link #update} for
+     * each. An empty list runs nothing and returns an empty array.
+     *
+     * <p>Each binder binds every placeholder of the statement. The result holds one element for each binder, in
+     * the order of the list: the count {@link #update} gives for that run of the statement, or
+     * {@link Statement#SUCCESS_NO_INFO} where the driver ran the row and does not know its count. MySQL connections
+     * are opened with {@code rewriteBatchedStatements=true}, so the driver sends a batch as one multi-row statement
+     * or as several statements in one packet, and reports {@link Statement#SUCCESS_NO_INFO} for the rows of a
+     * rewritten batch. Work that needs the count of every row on MySQL runs {@link #update} for each.
+     *
+     * <p>When a run of the statement fails, the method throws what the driver threw, usually a
+     * {@link java.sql.BatchUpdateException}. The runs before the failing one stay part of this transaction, like
+     * every statement before them: they are written only when the work returns and its transaction commits, and
+     * are rolled back with the rest when the work throws. On PostgreSQL a failed statement ends the transaction,
+     * so the work can only throw; on the other databases, work that catches the exception and returns commits what
+     * the earlier runs and statements wrote.
+     *
+     * @param sql the statement, with a {@code ?} for each value
+     * @param binders binds the values of one run of the statement each
+     * @return the count of each run, in order, as described above
+     * @throws SQLException if a binder or a run of the statement fails
+     * @throws NullPointerException if the list or one of its binders is {@code null}
+     * @throws IllegalStateException if called from another thread or after the work has returned
+     */
+    public int[] batch(String sql, List<Binder> binders) throws SQLException {
+        check();
+        List<Binder> runs = List.copyOf(binders);
+        if (runs.isEmpty()) {
+            return new int[0];
+        }
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            for (Binder binder : runs) {
+                binder.bind(new Params(statement, dialect));
+                statement.addBatch();
+            }
+            return statement.executeBatch();
+        }
+    }
+
+    /**
      * Runs a query and maps every row of its result, in the order the result returns them.
      *
      * @param <T> the type of a mapped row

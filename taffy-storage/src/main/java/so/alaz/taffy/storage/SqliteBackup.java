@@ -3,7 +3,9 @@ package so.alaz.taffy.storage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Clock;
@@ -20,11 +22,19 @@ import java.util.stream.Stream;
  * a digit, a dot, an underscore or a hyphen is written as an underscore, and keeps the newest {@code keep} copies
  * of that pattern by modification time, the new copy among them. Files of another name in the folder are left
  * alone. With {@code keep} 0 it takes no copy.
+ *
+ * <p>{@link #manual} takes the copy a plugin asks for, under a pattern of its own.
  */
 final class SqliteBackup implements Migrator.Backup {
 
     private static final DateTimeFormatter BACKUP_STAMP =
         DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC);
+
+    private static final String MIGRATION_COPIES = "data-.+-\\d{8}-\\d{6}\\.db";
+
+    private static final String MANUAL_COPIES = "manual-.+-\\d{8}-\\d{6}\\.db";
+
+    private static final String PARTIAL = ".tmp";
 
     private final Path folder;
     private final String version;
@@ -58,14 +68,73 @@ final class SqliteBackup implements Migrator.Backup {
         }
         logger.info("Copied the database to " + folder.getFileName() + "/" + target.getFileName()
             + " before upgrading its layout.");
+        prune(folder, target, MIGRATION_COPIES, false, keep, logger);
+    }
+
+    /**
+     * Copies the database of {@code connection}, which must be in autocommit mode, into {@code folder} as
+     * {@code manual-<label>-<UTC yyyyMMdd-HHmmss>.db} and keeps the newest {@code keep} files of that pattern by
+     * modification time, whatever their label, the new copy among them. The copy is written under the name of the
+     * file followed by {@code .tmp} and moved into place in one step, so a file of the pattern is always a complete
+     * database. A file that already has the name is replaced. Files of the pattern followed by {@code .tmp} that an
+     * interrupted copy left behind are removed.
+     *
+     * @return the file of the copy
+     */
+    static Path manual(Connection connection, Path folder, String label, int keep, Clock clock, Logger logger)
+        throws SQLException, StorageException {
+        Path target = folder.resolve("manual-" + label + "-" + BACKUP_STAMP.format(clock.instant()) + ".db");
+        Path partial = folder.resolve(target.getFileName() + PARTIAL);
+        try {
+            Files.createDirectories(folder);
+            Files.deleteIfExists(partial);
+        } catch (IOException failure) {
+            throw new StorageException("cannot prepare " + partial + " for the database backup", failure);
+        }
+        try (PreparedStatement statement = connection.prepareStatement("VACUUM INTO ?")) {
+            statement.setString(1, partial.toString());
+            statement.execute();
+        } catch (SQLException | RuntimeException failure) {
+            discard(partial, failure);
+            throw failure;
+        }
+        try {
+            Files.move(partial, target, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException failure) {
+            discard(partial, failure);
+            throw new StorageException("cannot move the database backup to " + target, failure);
+        }
+        logger.info("Copied the database to " + folder.getFileName() + "/" + target.getFileName() + ".");
+        prune(folder, target, MANUAL_COPIES, true, keep, logger);
+        return target;
+    }
+
+    private static void discard(Path partial, Throwable failure) {
+        try {
+            Files.deleteIfExists(partial);
+        } catch (IOException undeleted) {
+            failure.addSuppressed(undeleted);
+        }
+    }
+
+    // Keeps the newest keep files of the pattern, the target among them. With partials, it also removes the files
+    // of the pattern followed by .tmp: one copy is written at a time, so each is what an interrupted copy left.
+    private static void prune(Path folder, Path target, String pattern, boolean partials, int keep, Logger logger) {
         try (Stream<Path> files = Files.list(folder)) {
-            List<Path> backups = files
-                .filter(path -> !path.equals(target))
-                .filter(path -> path.getFileName().toString().matches("data-.+-\\d{8}-\\d{6}\\.db"))
+            List<Path> others = files.filter(path -> !path.equals(target)).toList();
+            List<Path> backups = others.stream()
+                .filter(path -> path.getFileName().toString().matches(pattern))
                 .sorted(Comparator.comparing(SqliteBackup::modified).reversed())
                 .toList();
             for (Path old : backups.subList(Math.min(keep - 1, backups.size()), backups.size())) {
                 Files.deleteIfExists(old);
+            }
+            for (Path other : others) {
+                String name = other.getFileName().toString();
+                if (partials && name.endsWith(PARTIAL)
+                    && name.substring(0, name.length() - PARTIAL.length()).matches(pattern)) {
+                    Files.deleteIfExists(other);
+                }
             }
         } catch (IOException | RuntimeException failure) {
             logger.warning("Could not remove old database backups in " + folder + ": " + failure);
