@@ -156,8 +156,9 @@ public final class ItemBuilder {
     }
 
     /**
-     * Adds an enchantment through {@link ItemMeta#addEnchant(Enchantment, int, boolean)}, with no limit on the
-     * level. A second call for the same enchantment replaces its level.
+     * Adds an enchantment through {@link ItemMeta#addEnchant(Enchantment, int, boolean)}, which takes a level
+     * above the maximum of the enchantment. The server stores a level above 255 as 255 and stores no
+     * enchantment for a level below 1. A second call for the same enchantment replaces its level.
      */
     public ItemBuilder enchant(Enchantment enchantment, int level) {
         enchantments.put(Objects.requireNonNull(enchantment, "enchantment"), level);
@@ -170,7 +171,14 @@ public final class ItemBuilder {
         return this;
     }
 
-    /** Sets the damage through {@link Damageable#setDamage(int)}. An item that cannot be damaged ignores it. */
+    /**
+     * Sets the damage through {@link Damageable#setDamage(int)} on an item that can be damaged: one whose type
+     * has a max durability, or one that carries a max damage component. Any other item ignores it and gets no
+     * damage component.
+     *
+     * <p>For an item that can be damaged, {@link #build()} throws the {@link IllegalArgumentException} of the
+     * server for a damage below zero or above the max damage component the item carries.
+     */
     public ItemBuilder damage(int damage) {
         this.damage = damage;
         return this;
@@ -223,14 +231,14 @@ public final class ItemBuilder {
         } else {
             item = new ItemStack(material, amount != null ? amount : 1);
         }
-        item.editMeta(this::apply);
+        item.editMeta(meta -> apply(meta, item));
         if (!customModelData.isEmpty()) {
             modelData.apply(item, customModelData, customModelDataLogger);
         }
         return item;
     }
 
-    private void apply(ItemMeta meta) {
+    private void apply(ItemMeta meta, ItemStack item) {
         if (name != null) {
             meta.displayName(name.decoration(TextDecoration.ITALIC, false));
         }
@@ -249,7 +257,7 @@ public final class ItemBuilder {
         if (unbreakable != null) {
             meta.setUnbreakable(unbreakable);
         }
-        if (damage != null && meta instanceof Damageable damageable) {
+        if (damage != null && meta instanceof Damageable damageable && canBeDamaged(damageable, item)) {
             damageable.setDamage(damage);
         }
         if (trim != null && meta instanceof ArmorMeta armor) {
@@ -262,6 +270,11 @@ public final class ItemBuilder {
             applyColor(meta, color);
         }
         tags.forEach(tag -> tag.accept(meta));
+    }
+
+    // Every ItemMeta of a Paper server is a Damageable, and setDamage writes a damage component on any item.
+    private static boolean canBeDamaged(Damageable meta, ItemStack item) {
+        return meta.hasMaxDamage() || item.getType().getMaxDurability() > 0;
     }
 
     @SuppressWarnings("deprecation")
@@ -280,13 +293,20 @@ public final class ItemBuilder {
         meta.setEnchantmentGlintOverride(true);
     }
 
-    /** Makes an item glint in the given style. */
+    /**
+     * Makes an item glint in the given style.
+     *
+     * @throws NullPointerException if {@code style} is {@code null}
+     */
     public static void applyGlow(ItemMeta meta, GlowStyle style) {
-        if (style == GlowStyle.GLINT_OVERRIDE) {
-            applyGlow(meta);
-        } else if (!meta.hasEnchants()) {
-            meta.addEnchant(Enchantment.UNBREAKING, 1, true);
-            meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+        switch (Objects.requireNonNull(style, "style")) {
+            case GLINT_OVERRIDE -> applyGlow(meta);
+            case HIDDEN_ENCHANTMENT -> {
+                if (!meta.hasEnchants()) {
+                    meta.addEnchant(Enchantment.UNBREAKING, 1, true);
+                    meta.addItemFlags(ItemFlag.HIDE_ENCHANTS);
+                }
+            }
         }
     }
 
@@ -321,8 +341,11 @@ public final class ItemBuilder {
                 return null;
             }
             float value = values.getFirst();
-            int whole = (int) value;
-            return whole == value ? whole : null;
+            // A cast of 2147483648f to int gives 2147483647, which compares equal to it as a float.
+            if (value != Math.rint(value) || value < Integer.MIN_VALUE || value >= 2147483648f) {
+                return null;
+            }
+            return (int) value;
         }
 
         @SuppressWarnings("deprecation")

@@ -92,6 +92,7 @@ class ItemBuilderTest {
     class Build {
 
         private ItemMeta meta = mock(ItemMeta.class);
+        private final Material type = mock();
         private final List<List<?>> constructorArguments = new ArrayList<>();
         private MockedConstruction<ItemStack> stacks;
 
@@ -100,6 +101,7 @@ class ItemBuilderTest {
         void interceptNewStacks() {
             stacks = mockConstruction(ItemStack.class, (stack, context) -> {
                 constructorArguments.add(context.arguments());
+                when(stack.getType()).thenReturn(type);
                 when(stack.editMeta(any())).thenAnswer(call -> {
                     Consumer<ItemMeta> edit = call.getArgument(0);
                     edit.accept(meta);
@@ -261,14 +263,36 @@ class ItemBuilderTest {
         }
 
         @Test
-        void damageReachesAnItemThatCanBeDamaged() {
+        void damageReachesAnItemWhoseTypeHasAMaxDurability() {
             Damageable damageable = mock();
             meta = damageable;
+            when(type.getMaxDurability()).thenReturn((short) 1561);
 
             new ItemBuilder(Material.DIAMOND_SWORD).damage(12).build();
 
             verify(damageable).setDamage(12);
-            verifyNoMoreInteractions(damageable);
+        }
+
+        @Test
+        void damageReachesAnItemThatCarriesAMaxDamageComponent() {
+            Damageable damageable = mock();
+            meta = damageable;
+            when(damageable.hasMaxDamage()).thenReturn(true);
+
+            new ItemBuilder(Material.STONE).damage(12).build();
+
+            verify(damageable).setDamage(12);
+        }
+
+        @Test
+        void damageIsNotSetOnAnItemThatCannotBeDamaged() {
+            Damageable damageable = mock();
+            meta = damageable;
+
+            new ItemBuilder(Material.STONE).damage(3).build();
+            new ItemBuilder(Material.STONE).damage(0).build();
+
+            verify(damageable, never()).setDamage(anyInt());
         }
 
         @Test
@@ -404,13 +428,29 @@ class ItemBuilderTest {
         }
 
         @Test
+        void theSmallestAndTheLargestWholeNumberAFloatHoldsInAnIntFallBackToTheMeta() {
+            ItemBuilder.ModelData modelData = new ItemBuilder.ModelData((item, values) -> {
+                throw new NoSuchMethodError("setData");
+            });
+
+            new ItemBuilder(Material.STONE, modelData).customModelData(List.of(-2147483648f), mock()).build();
+            new ItemBuilder(Material.STONE, modelData).customModelData(List.of(2147483520f), mock()).build();
+
+            verify(meta).setCustomModelData(Integer.MIN_VALUE);
+            verify(meta).setCustomModelData(2147483520);
+            verifyNoMoreInteractions(meta);
+        }
+
+        @Test
         void anyOtherListIsLeftOutWhenTheComponentCannotBeLinked() {
             ItemBuilder.ModelData modelData = new ItemBuilder.ModelData((item, values) -> {
                 throw new NoSuchMethodError("setData");
             });
             Logger logger = mock();
 
-            for (List<Float> values : List.of(List.of(1.5f), List.of(1f, 2f), List.of(Float.NaN), List.of(1e20f))) {
+            for (List<Float> values : List.of(List.of(1.5f), List.of(1f, 2f), List.of(Float.NaN), List.of(1e20f),
+                List.of(2147483648f), List.of(-2147483904f), List.of(Float.POSITIVE_INFINITY),
+                List.of(Float.NEGATIVE_INFINITY))) {
                 new ItemBuilder(Material.STONE, modelData).customModelData(values, logger).build();
             }
 
@@ -610,6 +650,16 @@ class ItemBuilderTest {
         verify(plain, never()).setEnchantmentGlintOverride(any());
         verify(enchanted).hasEnchants();
         verifyNoMoreInteractions(enchanted);
+    }
+
+    @Test
+    void applyGlowWithoutAStyleThrowsAndLeavesTheMetaAlone() {
+        ItemMeta meta = mock(ItemMeta.class);
+
+        assertThatThrownBy(() -> ItemBuilder.applyGlow(meta, null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("style");
+        verifyNoInteractions(meta);
     }
 
     @Test

@@ -10,11 +10,17 @@ All notable changes to Taffy are documented here. This project follows
   `ItemStack.clone()` as it is at that call and never changes `base`, and the copy keeps the amount, name, lore,
   glint and every other property that no setter was called for. An empty lore and `glow(false)` count as not
   called. `new ItemBuilder(Material)` builds what it built before.
-- `ItemBuilder` has the setters `itemModel(NamespacedKey)`, `enchant(Enchantment, int level)`, which sets no
-  limit on the level, `unbreakable(boolean)`, `damage(int)`, `trim(ArmorTrim)`, `hideTooltip(boolean)`,
-  `color(Color)` for leather armour, a potion and a map, and `tag(PdcKey<P, C>, C)`, each applied in `build()`
-  through `ItemMeta`. An item that cannot be damaged, is not armour or has no colour ignores `damage`, `trim` or
-  `color`. From Paper 26.3 a map has no colour: `MapMeta.setColor` does nothing there.
+- `ItemBuilder` has the setters `itemModel(NamespacedKey)`, `enchant(Enchantment, int level)`, which takes a
+  level above the maximum of the enchantment, `unbreakable(boolean)`, `damage(int)`, `trim(ArmorTrim)`,
+  `hideTooltip(boolean)`, `color(Color)` for leather armour, a potion and a map, and `tag(PdcKey<P, C>, C)`,
+  each applied in `build()` through `ItemMeta`. An item that cannot be damaged, is not armour or has no colour
+  ignores `damage`, `trim` or `color`. From Paper 26.3 a map has no colour: `MapMeta.setColor` does nothing
+  there.
+- `ItemBuilder.damage(int)` is set only on an item whose type has a max durability or that carries a max damage
+  component, so any other item gets no damage component and still stacks with an ordinary one. For an item that
+  can be damaged, `build()` throws the server's `IllegalArgumentException` for a damage below zero or above the
+  max damage component of the item. The server stores an `enchant` level above 255 as 255 and stores no
+  enchantment for a level below 1.
 - `ItemBuilder.customModelData(List<Float> values, Logger logger)` sets the floats through the
   `CUSTOM_MODEL_DATA` data component. When the data component API of the server cannot be linked, a list of one
   whole number is set through `ItemMeta.setCustomModelData` and any other list is left out, with one warning to
@@ -23,7 +29,7 @@ All notable changes to Taffy are documented here. This project follows
   the default and what `glow` did before, or `GlowStyle.HIDDEN_ENCHANTMENT`, which adds `UNBREAKING` 1 with
   `ItemFlag.HIDE_ENCHANTS` and leaves an item that already has an enchantment as it is, for a plugin whose
   glowing items in players' hands were built that way. `ItemBuilder.applyGlow(ItemMeta, GlowStyle)` does the
-  same for an item meta.
+  same for an item meta, and throws `NullPointerException` for a `null` style.
 - `ItemBuilder.deserializeAnyOrThrow(String reference)` reads a `serialized:<base64>` reference as
   `deserializeOrThrow` does, and also the bare base64 of `ItemStack.serializeAsBytes()` with no prefix. Without
   the prefix, a reference that `Material.matchMaterial` finds is never decoded, so a material name that is also
@@ -36,7 +42,9 @@ All notable changes to Taffy are documented here. This project follows
   `format(BigDecimal, Locale)` writes the symbol directly before it. Without a pattern the number is grouped
   with exactly `scale` decimal places. With one it has the decimal places of the pattern, or `scale` when that
   is more. An amount with more decimal places is rounded half-even, and one that rounds to zero has no minus
-  sign. The amount is never read as a `double`, and one `AmountFormat` can be used from any thread.
+  sign. The amount is never read as a `double`, and one `AmountFormat` can be used from any thread. The text is
+  for display: `Amounts.parse` does not read its grouping separators, nor the digits and the minus sign of a
+  locale that has its own, such as `ar-SA`.
 - `AmountFormat.checkPattern(String)` checks a pattern an owner wrote, such as `#,##0.00`. It refuses a blank
   pattern, one `DecimalFormat` refuses and one that holds a percent sign, a per mille sign, the currency sign or
   `E`, with `IllegalArgumentException` and the message `invalid number pattern '<value>': expected ` followed by
@@ -47,6 +55,11 @@ All notable changes to Taffy are documented here. This project follows
   rounded, or an `Amounts.Refused` with an `Amounts.Reason`: `EMPTY`, `TOO_LONG` (over `Amounts.MAX_LENGTH`, 64
   characters), `NOT_A_NUMBER`, `GROUPING_SEPARATOR`, `NEGATIVE` or `OVER_MAXIMUM`. A plus sign, an exponent such
   as `1e9`, a second suffix, a space before the suffix and digits other than `0` to `9` are `NOT_A_NUMBER`.
+  Where the locale groups with a space, a no-break space or a narrow no-break space, such as `fr-FR` and `sv-SE`,
+  each of the three between two digits is `GROUPING_SEPARATOR`, so `1 000` typed with an ordinary space is. An
+  amount above zero can round to zero at the scale of the currency, such as `0.004` at two places, and
+  `EconomyProvider.withdraw` and `deposit` throw for it, so check `signum()` after rounding.
+  `new Amounts.Amount(BigDecimal)` throws `IllegalArgumentException` for a value below zero.
 
 ## [0.4.5] - 2026-11-22
 

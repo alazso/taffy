@@ -6,6 +6,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Locale;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -105,6 +106,32 @@ final class AmountsTest {
         assertThat(parse("-1,000", Locale.US)).isEqualTo(grouping);
     }
 
+    @Test
+    void aSpaceBetweenDigitsIsAGroupingSeparatorWhereTheLocaleGroupsWithASpace() {
+        Amounts.Result grouping = refused(Amounts.Reason.GROUPING_SEPARATOR);
+        Amounts.Result notANumber = refused(Amounts.Reason.NOT_A_NUMBER);
+        Locale swedish = Locale.forLanguageTag("sv-SE");
+
+        for (String space : List.of(" ", "\u00a0", "\u202f")) {
+            assertThat(parse("1" + space + "000", Locale.FRANCE)).isEqualTo(grouping);
+            assertThat(parse("1" + space + "000", swedish)).isEqualTo(grouping);
+            assertThat(parse("-1" + space + "000" + space + "000,5k", Locale.FRANCE)).isEqualTo(grouping);
+        }
+        assertThat(parse(" 1 000 ", Locale.FRANCE)).isEqualTo(grouping);
+        assertThat(parse("1 k", Locale.FRANCE)).isEqualTo(notANumber);
+        assertThat(parse("1 000 k", Locale.FRANCE)).isEqualTo(notANumber);
+        assertThat(parse("- 1", swedish)).isEqualTo(notANumber);
+        assertThat(parse("1 000", Locale.US)).isEqualTo(notANumber);
+        assertThat(parse("1 000", Locale.GERMANY)).isEqualTo(notANumber);
+    }
+
+    @Test
+    void twoFullStopsAreGroupingSeparatorsWhereTheLocaleGroupsWithOne() {
+        assertThat(parse("1.5.5k", Locale.GERMANY)).isEqualTo(refused(Amounts.Reason.GROUPING_SEPARATOR));
+        assertThat(parse("1.5.5k", TURKISH)).isEqualTo(refused(Amounts.Reason.GROUPING_SEPARATOR));
+        assertThat(parse("1.5.5k", Locale.US)).isEqualTo(refused(Amounts.Reason.NOT_A_NUMBER));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"1e9", "1E9", "1e-2", "1.5.5k", "1.5.5", "1kk", "1km", "0x10", "0b1", "+1", "+1k",
         "+0", "k", "m", "b", "K", "-k", "-", "+", ".", "-.", ".k", "1 k", "1 000", "1_000", "1t", "1T", "1q",
@@ -197,9 +224,19 @@ final class AmountsTest {
         assertThatThrownBy(() -> Amounts.parse("1", null, MAXIMUM))
             .isInstanceOf(NullPointerException.class)
             .hasMessage("locale");
-        assertThatThrownBy(() -> Amounts.parse("1", Locale.US, null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> Amounts.parse("1", Locale.US, null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("maximum");
         assertThatThrownBy(() -> new Amounts.Amount(null)).isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> new Amounts.Refused(null)).isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void anAmountBelowZeroCannotBeMade() {
+        assertThatThrownBy(() -> new Amounts.Amount(new BigDecimal("-0.01")))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("value must not be below zero: -0.01");
+        assertThat(new Amounts.Amount(BigDecimal.ZERO).value()).isEqualTo(BigDecimal.ZERO);
     }
 
     @Test

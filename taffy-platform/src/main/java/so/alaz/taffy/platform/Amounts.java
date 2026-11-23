@@ -16,6 +16,10 @@ import java.util.regex.Pattern;
  * player's locale, and a full stop is read as one too unless it is the grouping separator of that locale. A
  * plus sign, an exponent, a space before the suffix, two suffixes and digits other than {@code 0} to {@code 9}
  * are not accepted.
+ *
+ * <p>{@link #parse} is not the inverse of {@link AmountFormat#number}: it refuses the grouping separators that
+ * method writes, and the digits and the minus sign it writes in a locale that has its own, such as
+ * {@code ar-SA} or {@code fa-IR}.
  */
 public final class Amounts {
 
@@ -38,8 +42,8 @@ public final class Amounts {
     /**
      * The amount the input stands for.
      *
-     * @param value the amount, zero or more, exact and not rounded, with no trailing zero among its decimal
-     *     places and a scale of zero or more
+     * @param value the amount, zero or more. One that {@link Amounts#parse} returns is exact and not rounded,
+     *     with no trailing zero among its decimal places and a scale of zero or more.
      */
     public record Amount(BigDecimal value) implements Result {
 
@@ -47,9 +51,13 @@ public final class Amounts {
          * Checks the value.
          *
          * @throws NullPointerException if {@code value} is {@code null}
+         * @throws IllegalArgumentException if {@code value} is below zero
          */
         public Amount {
             Objects.requireNonNull(value, "value");
+            if (value.signum() < 0) {
+                throw new IllegalArgumentException("value must not be below zero: " + value);
+            }
         }
     }
 
@@ -88,7 +96,9 @@ public final class Amounts {
         /**
          * The input would be in the accepted form without its grouping separators: the grouping separator of
          * the locale, a comma that is not the decimal separator of the locale, or a full stop where the locale
-         * groups with one. {@code 1,000} is a thousand in one locale and one in another, so it is never guessed.
+         * groups with one. Where the locale groups with a space, a no-break space (U+00A0) or a narrow no-break
+         * space (U+202F), each of the three between two digits is a grouping separator too. {@code 1,000} is a
+         * thousand in one locale and one in another, so it is never guessed.
          */
         GROUPING_SEPARATOR,
 
@@ -105,7 +115,9 @@ public final class Amounts {
      * <p>The amount is exact: the digits are read into a {@link BigDecimal}, multiplied by the suffix and
      * compared with {@code maximum}, with no {@code double} and no rounding, so {@code 0.0001k} is {@code 0.1}
      * and an amount keeps every decimal place the player typed. The caller rounds it to the scale of its
-     * currency. An input equal to {@code maximum} is accepted.
+     * currency. An amount above zero can round to zero there, such as {@code 0.004} at two decimal places, so
+     * a caller that needs an amount above zero checks {@link BigDecimal#signum()} after it rounds. An input
+     * equal to {@code maximum} is accepted.
      *
      * <p>The reasons are checked in the order {@link Reason#EMPTY}, {@link Reason#TOO_LONG},
      * {@link Reason#NOT_A_NUMBER}, {@link Reason#GROUPING_SEPARATOR}, {@link Reason#NEGATIVE},
@@ -121,6 +133,7 @@ public final class Amounts {
     public static Result parse(String input, Locale locale, BigDecimal maximum) {
         Objects.requireNonNull(input, "input");
         Objects.requireNonNull(locale, "locale");
+        Objects.requireNonNull(maximum, "maximum");
         if (maximum.signum() < 0) {
             throw new IllegalArgumentException("maximum must not be below zero: " + maximum);
         }
@@ -143,6 +156,7 @@ public final class Amounts {
         DecimalFormatSymbols symbols = DecimalFormatSymbols.getInstance(locale);
         char decimal = symbols.getDecimalSeparator();
         char grouping = symbols.getGroupingSeparator();
+        boolean spaceGroups = isSpace(grouping);
         StringBuilder number = new StringBuilder(end);
         boolean grouped = false;
         for (int i = negative ? 1 : 0; i < end; i++) {
@@ -150,6 +164,9 @@ public final class Amounts {
             if (ch == decimal) {
                 number.append('.');
             } else if (ch == grouping || ch == ',') {
+                grouped = true;
+            } else if (spaceGroups && isSpace(ch) && i > 0 && i + 1 < end
+                && isDigit(text.charAt(i - 1)) && isDigit(text.charAt(i + 1))) {
                 grouped = true;
             } else {
                 number.append(ch);
@@ -172,5 +189,13 @@ public final class Amounts {
             value = value.stripTrailingZeros();
         }
         return new Amount(value.scale() < 0 ? value.setScale(0) : value);
+    }
+
+    private static boolean isSpace(char ch) {
+        return ch == ' ' || ch == '\u00a0' || ch == '\u202f';
+    }
+
+    private static boolean isDigit(char ch) {
+        return ch >= '0' && ch <= '9';
     }
 }

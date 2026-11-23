@@ -90,6 +90,11 @@ public record AmountFormat(String symbol, @Nullable String pattern, int scale) {
      * decimal places than that is rounded with {@link RoundingMode#HALF_EVEN}, and an amount that rounds to zero
      * is written as zero without a minus sign. The amount is never read as a {@code double}.
      *
+     * <p>The text is for display. A rounded number differs from the amount by up to half a unit of its last
+     * decimal place, and {@link Amounts#parse} does not read the grouping separators written here, nor the
+     * digits and the minus sign of a locale that has its own, such as {@code ar-SA} or {@code fa-IR}. The amount
+     * to charge is the {@link BigDecimal}, rounded by the caller, and never a reading of this text.
+     *
      * @throws NullPointerException if {@code amount} or {@code locale} is {@code null}
      */
     public String number(BigDecimal amount, Locale locale) {
