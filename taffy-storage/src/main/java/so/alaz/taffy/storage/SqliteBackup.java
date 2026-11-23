@@ -14,6 +14,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
 import java.util.logging.Logger;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -31,8 +32,6 @@ final class SqliteBackup implements Migrator.Backup {
         DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC);
 
     private static final String MIGRATION_COPIES = "data-.+-\\d{8}-\\d{6}\\.db";
-
-    private static final String MANUAL_COPIES = "manual-.+-\\d{8}-\\d{6}\\.db";
 
     private static final String PARTIAL = ".tmp";
 
@@ -73,11 +72,11 @@ final class SqliteBackup implements Migrator.Backup {
 
     /**
      * Copies the database of {@code connection}, which must be in autocommit mode, into {@code folder} as
-     * {@code manual-<label>-<UTC yyyyMMdd-HHmmss>.db} and keeps the newest {@code keep} files of that pattern by
-     * modification time, whatever their label, the new copy among them. The copy is written under the name of the
+     * {@code manual-<label>-<UTC yyyyMMdd-HHmmss>.db} and keeps the newest {@code keep} files of that label by
+     * modification time, the new copy among them. Copies under another label are left alone. The copy is written under the name of the
      * file followed by {@code .tmp} and moved into place in one step, so a file of the pattern is always a complete
      * database. A file that already has the name is replaced. Files of the pattern followed by {@code .tmp} that an
-     * interrupted copy left behind are removed.
+     * interrupted copy of that label left behind are removed.
      *
      * @return the file of the copy
      */
@@ -105,7 +104,8 @@ final class SqliteBackup implements Migrator.Backup {
             throw new StorageException("cannot move the database backup to " + target, failure);
         }
         logger.info("Copied the database to " + folder.getFileName() + "/" + target.getFileName() + ".");
-        prune(folder, target, MANUAL_COPIES, true, keep, logger);
+        String copies = "manual-" + Pattern.quote(label) + "-\\d{8}-\\d{6}\\.db";
+        prune(folder, target, copies, true, keep, logger);
         return target;
     }
 

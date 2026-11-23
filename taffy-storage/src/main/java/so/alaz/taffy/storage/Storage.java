@@ -472,9 +472,9 @@ public final class Storage {
      * {@code .tmp} and moved into place in one step, so a file named {@code manual-...db} is never a partial copy;
      * a copy taken in the same second under the same label replaces the earlier one.
      *
-     * <p>After the copy, the newest {@code keep} files named {@code manual-<label>-<time>.db} are kept by
-     * modification time, whatever their label, the new copy among them, and the older ones are deleted, as are
-     * {@code .tmp} files an interrupted copy left. The copies a start takes before a migration, named
+     * <p>After the copy, the newest {@code keep} files named {@code manual-<label>-<time>.db} with this label are
+     * kept by modification time, the new copy among them, and the older ones are deleted, as are {@code .tmp} files
+     * an interrupted copy under this label left. Copies under another label, the copies a start takes before a migration, named
      * {@code data-<version>-<time>.db}, and files of any other name are left alone, and
      * {@link StorageSettings#backupKeep()} does not count these copies.
      *

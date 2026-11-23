@@ -95,18 +95,21 @@ final class StorageBackupTest {
         Path backups = Files.createDirectories(folder.resolve("backups"));
         for (int day = 1; day <= 3; day++) {
             Path old = Files.writeString(
-                backups.resolve("manual-label" + day + "-2026010" + day + "-000000.db"), "old");
+                backups.resolve("manual-nightly-2026010" + day + "-000000.db"), "old");
             Files.setLastModifiedTime(old, FileTime.fromMillis(day * 86_400_000L));
         }
         for (String other : List.of("data-9.9.9-20260101-000000.db", "manual-notes.txt", "manual-by-hand.db",
-            "manual-nightly-20260101-000000.db.tmp")) {
+            "manual-import-20260101-000000.db", "manual-nightly-20260102-000000-20260101-000000.db",
+            "manual-import-20260101-000000.db.tmp", "manual-nightly-20260109-000000.db.tmp")) {
             Files.writeString(backups.resolve(other), "other");
         }
 
         storage.backup("nightly", 2).join();
 
-        assertThat(names()).containsExactly("data-9.9.9-20260101-000000.db", "manual-by-hand.db",
-            "manual-label3-20260103-000000.db", COPY, "manual-notes.txt");
+        assertThat(names()).containsExactlyInAnyOrder("data-9.9.9-20260101-000000.db", "manual-by-hand.db",
+            "manual-import-20260101-000000.db", "manual-import-20260101-000000.db.tmp",
+            "manual-nightly-20260102-000000-20260101-000000.db", "manual-nightly-20260103-000000.db", COPY,
+            "manual-notes.txt");
     }
 
     @Test
