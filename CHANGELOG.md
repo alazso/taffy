@@ -3,7 +3,9 @@
 All notable changes to Taffy are documented here. This project follows
 [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [0.4.9] - 2026-11-23
+
+Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.
 
 ### Added
 - `Tx.batch(String sql, List<Tx.Binder> binders)` runs one `INSERT`, `UPDATE` or `DELETE` once for each binder
@@ -35,8 +37,8 @@ All notable changes to Taffy are documented here. This project follows
   with `VACUUM INTO` on the writer thread, behind the writes submitted before it, so it holds each of them in
   full and nothing of a later one, and reads keep running. It is written as `<name>.tmp` and moved into place
   in one step. The label is 1 to 64 ASCII letters, digits, dots, underscores and hyphens, and `keep` is 1 or
-  more: the newest `keep` files named `manual-<label>-<time>.db` are kept, whatever their label. The copies a
-  start takes before a migration and `StorageSettings.backupKeep()` are untouched. On MySQL, MariaDB and
+  more: the newest `keep` files named `manual-<label>-<time>.db` with that label are kept. Copies under another
+  label, the copies a start takes before a migration and `StorageSettings.backupKeep()` are untouched. On MySQL, MariaDB and
   PostgreSQL, and on storage from `Storage.over`, the future fails with a `StorageException`. The package
   documentation gains the restore sequence: close storage, replace the database file and remove its `-wal` and
   `-shm` files, start storage again.
