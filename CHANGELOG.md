@@ -3,7 +3,9 @@
 All notable changes to Taffy are documented here. This project follows
 [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [0.4.10] - 2026-11-23
+
+Built against paper-api 26.3.build.256-stable and tested with FastStats 0.33.0 and bStats 3.2.1.
 
 ### Added
 - `HookStatus.line()` and `ComfiConfStatus.line()` return the owner's line of a status: `describe()` alone when
