@@ -2,7 +2,7 @@
  * Integrations with other Paper plugins: custom item plugins, a Vault economy, PlayerPoints points, LuckPerms
  * permissions, WorldGuard regions, Bedrock players through Floodgate and Geyser, placeholder expansions for
  * PlaceholderAPI and MiniPlaceholders, and text holograms through DecentHolograms, FancyHolograms, Holograms and
- * HologramLib.
+ * HologramLib, or as display entities with no hologram plugin.
  *
  * <p>The module compiles against each integration's API but ships none of them, and its published metadata names
  * none of them. Floodgate and Geyser are the exception: they are read through method handles, so the module compiles
@@ -185,7 +185,8 @@
  * java.util.Set, java.util.function.Consumer)} throws, such as {@code hook.nexo}; {@code hook.luckperms} and
  * {@code hook.worldguard} for every failed call; {@code hook.floodgate} or {@code hook.geyser-spigot} for every
  * failed check of a Bedrock player; and {@code hook.decentholograms}, {@code hook.fancyholograms},
- * {@code hook.holograms} or {@code hook.hologramlib} for every failed hologram call. Reading an item's id and
+ * {@code hook.holograms} or {@code hook.hologramlib} for every failed hologram call, and {@code hook.displays}
+ * for a failed spawn of a display hologram. Reading an item's id and
  * resolving a placeholder log a failure and do not report it.
  *
  * <p>A {@code null} argument throws {@link java.lang.NullPointerException}, except where a parameter is marked

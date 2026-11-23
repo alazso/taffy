@@ -217,7 +217,8 @@ final class AbsentIntegrationsTest {
             PermissionProvider.class, RegionProvider.class, BedrockProvider.class,
             PlaceholderExpansionBuilder.class, PlaceholderRegistration.class, PlaceholderCache.class,
             HologramPlugin.class,
-            HologramProvider.class);
+            HologramProvider.class,
+            DisplayHolograms.class);
         assertThat(exported).doesNotContain(EconomyLookup.class, Detection.class, PlayerPointsEconomy.class);
 
         for (Class<?> type : exported) {

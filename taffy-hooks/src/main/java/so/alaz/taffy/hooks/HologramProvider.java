@@ -4,6 +4,7 @@ import org.bukkit.Location;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.ErrorReports;
+import so.alaz.taffy.platform.Scheduler;
 
 import java.util.List;
 import java.util.Objects;
@@ -11,7 +12,9 @@ import java.util.Set;
 
 /**
  * Temporary text holograms, each named by an id the owner chooses. A provider from {@link #detect} places them
- * through a hologram plugin.
+ * through a hologram plugin. A provider from {@link #displays} places them as display entities with no hologram
+ * plugin: {@link DisplayHolograms} states where it differs from what follows, in its ids, its threads, its
+ * placeholders and what happens at disable.
  *
  * <p>An id is 1 to 48 of {@code a-z}, {@code 0-9}, {@code _} and {@code -}. A hologram is stored under its id after a
  * prefix made from the owner's name, in lower case with every character outside {@code a-z}, {@code 0-9} and
@@ -86,6 +89,28 @@ public interface HologramProvider {
                 case HOLOGRAMS -> NextLvlHologramsBackend.create();
                 case HOLOGRAMLIB -> HologramLibBackend.create(bound);
             });
+    }
+
+    /**
+     * Builds a provider that places holograms as display entities, with no hologram plugin: one {@code TextDisplay}
+     * for each line and an optional {@code ItemDisplay}, as {@link DisplayHolograms} describes. Its
+     * {@link #plugin()} is {@code null}. It suits a plugin that needs no hologram plugin, and a plugin that prefers
+     * a detected hologram plugin and falls back to display entities when {@link #detect} gives no provider.
+     *
+     * <p>Call on the server thread while the owner is enabled, normally from its {@code onEnable}: the provider
+     * registers a listener for the owner and, in every loaded chunk, removes the display entities an earlier
+     * provider of the owner left. An owner holds one such provider at a time: to build another, such as when the
+     * owner reloads its settings, close the held provider first.
+     *
+     * @param owner the plugin that places holograms: its namespace holds the key every entity is tagged with, its
+     *     logger receives every warning, and the provider's listener is registered for it
+     * @param scheduler the owner's scheduler, which runs every entity change on the region thread of its location
+     * @param errors receives a failed spawn and a line MiniMessage refuses, under {@code hook.displays}
+     * @return the provider
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    static DisplayHolograms displays(Plugin owner, Scheduler scheduler, ErrorReports errors) {
+        return EntityHolograms.create(owner, scheduler, errors);
     }
 
     /**

@@ -3,6 +3,33 @@
 All notable changes to Taffy are documented here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## [Unreleased]
+
+### Added
+- `taffy-hooks`: `HologramProvider.displays(Plugin owner, Scheduler scheduler, ErrorReports errors)` returns a
+  `DisplayHolograms`, a `HologramProvider` that needs no hologram plugin: a hologram is one `TextDisplay` for
+  each line and an optional `ItemDisplay`. Its `plugin()` is `null`, and `HologramPlugin` still names only
+  detected hologram plugins. The location is the bottom centre of the text, the lines stack upward 0.28 blocks
+  apart with the last line lowest, and the item is centred 0.45 blocks above the bottom of the top line at 0.75
+  of its size. Lines are centred, shadowed, not see-through, never wrap, and face the viewer, at Paper's default
+  view range, for every player in range.
+- `DisplayHolograms.create(String, Location, List<Component>, ItemStack)` and
+  `update(String, List<Component>, ItemStack)` take Adventure components and a nullable item. The
+  `HologramProvider` methods take MiniMessage lines: `create` places no item and `update` keeps the item. An id
+  is not prefixed, `create` answers `false` for an id in use, and `update`, `move` and `remove` answer `false`
+  for an id that is not in use. PlaceholderAPI placeholders are not filled in.
+- Every `DisplayHolograms` method may be called from any thread on Paper and on Folia. Each spawn, text change,
+  move and removal runs on the region thread of the hologram's location through the owner's `Scheduler`, so a
+  `true` means the change was accepted. A hologram in a chunk that is not loaded is kept and spawned when the
+  chunk loads, and its entities are removed when the chunk unloads. A world unload removes the world's
+  holograms from the world and from the provider.
+- Display hologram entities are non-persistent, so none is saved to a world file, and each carries the owner's
+  persistent data key `<owner namespace>:taffy_hologram`. An entity with that key that the provider does not
+  hold is removed when the provider is built and when the entities of a chunk load. The provider removes every
+  hologram at the owner's `PluginDisableEvent` and in `close()`; on Folia, where a disabling plugin can schedule
+  nothing, entities in regions the disabling thread does not own stay until their chunk unloads or the server
+  stops. A failed spawn removes what it spawned, forgets the hologram and is reported under `hook.displays`.
+
 ## [0.4.10] - 2026-11-23
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.33.0 and bStats 3.2.1.

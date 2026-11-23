@@ -273,15 +273,19 @@ final class PluginHolograms implements HologramProvider, Listener {
     }
 
     private String name(String id) {
+        return prefix + requireId(id);
+    }
+
+    static String requireId(String id) {
         Objects.requireNonNull(id, "id");
         if (!ID.matcher(id).matches()) {
             throw new IllegalArgumentException("invalid hologram id '" + id + "': expected " + EXPECTED);
         }
-        return prefix + id;
+        return id;
     }
 
     // The location's world, or null when it has none or its world has unloaded.
-    private static @Nullable World world(Location location) {
+    static @Nullable World world(Location location) {
         try {
             return location.getWorld();
         } catch (IllegalArgumentException unloaded) {
