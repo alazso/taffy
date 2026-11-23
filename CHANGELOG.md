@@ -30,6 +30,23 @@ All notable changes to Taffy are documented here. This project follows
   valid base64, such as `DIRT`, throws `IllegalArgumentException` with no cause, and a reference that is not
   base64 throws it with the decoder's exception as the cause. `deserialize` and `deserializeOrThrow` read what
   they read before.
+- `AmountFormat` in `taffy-platform` writes an amount of money for a player. It is a record of a symbol, an
+  optional `DecimalFormat` pattern and a scale from 0 to `AmountFormat.MAX_SCALE` (18).
+  `number(BigDecimal, Locale)` writes the number with the digits and separators of the locale, and
+  `format(BigDecimal, Locale)` writes the symbol directly before it. Without a pattern the number is grouped
+  with exactly `scale` decimal places. With one it has the decimal places of the pattern, or `scale` when that
+  is more. An amount with more decimal places is rounded half-even, and one that rounds to zero has no minus
+  sign. The amount is never read as a `double`, and one `AmountFormat` can be used from any thread.
+- `AmountFormat.checkPattern(String)` checks a pattern an owner wrote, such as `#,##0.00`. It refuses a blank
+  pattern, one `DecimalFormat` refuses and one that holds a percent sign, a per mille sign, the currency sign or
+  `E`, with `IllegalArgumentException` and the message `invalid number pattern '<value>': expected ` followed by
+  `AmountFormat.EXPECTED`. The constructor of `AmountFormat` refuses the same patterns.
+- `Amounts.parse(String input, Locale, BigDecimal maximum)` in `taffy-platform` reads an amount a player typed:
+  `1500`, `2.5`, `1k`, `2.5m` or `1b`, with the suffix in either letter case, the decimal separator of the
+  locale and the whitespace around it ignored. It returns an `Amounts.Amount` with the exact `BigDecimal`, not
+  rounded, or an `Amounts.Refused` with an `Amounts.Reason`: `EMPTY`, `TOO_LONG` (over `Amounts.MAX_LENGTH`, 64
+  characters), `NOT_A_NUMBER`, `GROUPING_SEPARATOR`, `NEGATIVE` or `OVER_MAXIMUM`. A plus sign, an exponent such
+  as `1e9`, a second suffix, a space before the suffix and digits other than `0` to `9` are `NOT_A_NUMBER`.
 
 ## [0.4.5] - 2026-11-22
 
