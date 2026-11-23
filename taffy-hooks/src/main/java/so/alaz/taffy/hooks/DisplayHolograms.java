@@ -25,7 +25,8 @@ import java.util.List;
  * MiniMessage. The methods of {@link HologramProvider} take each line as MiniMessage, parsed once when the call is
  * made, with untrusted text put through {@link HologramProvider#literal}. A PlaceholderAPI placeholder in a line
  * shows as written. A line MiniMessage refuses, such as one holding a section sign colour code, makes
- * {@link #create(String, Location, List)} and {@link #update(String, List)} answer {@code false}.
+ * {@link #create(String, Location, List)} and {@link #update(String, List)} answer {@code false}. It is logged and
+ * reported under {@code hook.displays}, unless the call answers {@code false} for another reason.
  *
  * <p><b>Ids.</b> An id is 1 to 48 of {@code a-z}, {@code 0-9}, {@code _} and {@code -}, and is not prefixed: the
  * holograms belong to this provider alone. {@link #create(String, Location, List)} answers {@code false} for an id
@@ -39,7 +40,10 @@ import java.util.List;
  * {@code true} from {@link #create(String, Location, List)}, {@link #update(String, List)} or {@link #move} means
  * the change was accepted, and {@link #exists} and {@link #ids()} answer from the records, before the entities
  * stand. Several changes to one hologram made before its region thread runs are shown as one. A move removes the
- * entities and spawns them again at the new location.
+ * entities and spawns them again at the new location. {@link #available()} answers {@code false} once the provider
+ * is closed and while the owner is not enabled, and every other call then answers {@code false}, {@code 0} or an
+ * empty set. A change the owner's {@code Scheduler} refuses, which it does once the owner is disabling, answers
+ * {@code false}: a refused create or move forgets the hologram, and a refused update keeps it.
  *
  * <p><b>Chunks and worlds.</b> The entities stand only while the chunk of the location is loaded. A hologram created
  * or moved into a chunk that is not loaded is kept in the records and spawned when the chunk loads, and its
@@ -55,12 +59,14 @@ import java.util.List;
  * entity carries the owner's persistent data key {@code <owner namespace>:taffy_hologram} with the hologram's id.
  * An entity with that key that this provider does not hold is removed when the provider is built, in every loaded
  * chunk, and whenever the entities of a chunk load. So an owner holds one display provider at a time and closes it
- * before it builds another. A spawn that fails removes the entities it had spawned, forgets the hologram, logs a
- * warning at most once a minute and reports the failure under {@code hook.displays}.
+ * before it builds another. A spawn or text change that fails removes the hologram's entities, forgets the
+ * hologram, logs a warning at most once a minute and reports the failure under {@code hook.displays}. An entity
+ * that refuses its removal is logged and reported the same way, and the other entities are still removed.
  *
  * <p><b>Disable.</b> The provider removes every hologram when the owner's {@code PluginDisableEvent} fires, before
  * the owner's {@code onDisable}, and {@link #close()} does the same. On Paper both run on the main thread and the
- * entities are removed before the call returns. On Folia a disabling plugin can schedule nothing, so only the
+ * entities are removed before the call returns, those of a move or removal that still waits for its region thread
+ * included. On Folia a disabling plugin can schedule nothing, so only the
  * entities whose location the disabling thread owns are removed. The others stay in the world until their chunk
  * unloads or the server stops, are never saved, and are removed by the next display provider the owner builds.
  */

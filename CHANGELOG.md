@@ -10,14 +10,18 @@ All notable changes to Taffy are documented here. This project follows
   `DisplayHolograms`, a `HologramProvider` that needs no hologram plugin: a hologram is one `TextDisplay` for
   each line and an optional `ItemDisplay`. Its `plugin()` is `null`, and `HologramPlugin` still names only
   detected hologram plugins. The location is the bottom centre of the text, the lines stack upward 0.28 blocks
-  apart with the last line lowest, and the item is centred 0.45 blocks above the bottom of the top line at 0.75
-  of its size. Lines are centred, shadowed, not see-through, never wrap, and face the viewer, at Paper's default
-  view range, for every player in range.
+  apart (`DisplayHolograms.LINE_SPACING`) with the last line lowest, and the item is centred 0.45 blocks
+  (`ITEM_RISE`) above the bottom of the top line at 0.75 of its size (`ITEM_SCALE`). Lines are centred,
+  shadowed, not see-through, never wrap, and face the viewer, at Paper's default view range, for every player
+  in range.
 - `DisplayHolograms.create(String, Location, List<Component>, ItemStack)` and
   `update(String, List<Component>, ItemStack)` take Adventure components and a nullable item. The
   `HologramProvider` methods take MiniMessage lines: `create` places no item and `update` keeps the item. An id
   is not prefixed, `create` answers `false` for an id in use, and `update`, `move` and `remove` answer `false`
-  for an id that is not in use. PlaceholderAPI placeholders are not filled in.
+  for an id that is not in use. A line MiniMessage refuses, such as one holding a section sign colour code,
+  makes `create` and `update` answer `false` and is reported under `hook.displays`, unless the call answers
+  `false` for another reason. `available()` is `false` once the provider is closed and while the owner is not
+  enabled. PlaceholderAPI placeholders are not filled in.
 - Every `DisplayHolograms` method may be called from any thread on Paper and on Folia. Each spawn, text change,
   move and removal runs on the region thread of the hologram's location through the owner's `Scheduler`, so a
   `true` means the change was accepted. A hologram in a chunk that is not loaded is kept and spawned when the
@@ -26,9 +30,11 @@ All notable changes to Taffy are documented here. This project follows
 - Display hologram entities are non-persistent, so none is saved to a world file, and each carries the owner's
   persistent data key `<owner namespace>:taffy_hologram`. An entity with that key that the provider does not
   hold is removed when the provider is built and when the entities of a chunk load. The provider removes every
-  hologram at the owner's `PluginDisableEvent` and in `close()`; on Folia, where a disabling plugin can schedule
-  nothing, entities in regions the disabling thread does not own stay until their chunk unloads or the server
-  stops. A failed spawn removes what it spawned, forgets the hologram and is reported under `hook.displays`.
+  hologram at the owner's `PluginDisableEvent` and in `close()`, the entities of a move or removal that still
+  waits for its region thread included; on Folia, where a disabling plugin can schedule nothing, entities in
+  regions the disabling thread does not own stay until their chunk unloads or the server stops. A failed spawn
+  or text change removes the hologram's entities, forgets the hologram and is reported under `hook.displays`,
+  and so is an entity that refuses its removal, after which the others are still removed.
 
 ## [0.4.10] - 2026-11-23
 

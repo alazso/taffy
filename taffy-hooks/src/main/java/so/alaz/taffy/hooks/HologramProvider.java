@@ -105,7 +105,8 @@ public interface HologramProvider {
      * @param owner the plugin that places holograms: its namespace holds the key every entity is tagged with, its
      *     logger receives every warning, and the provider's listener is registered for it
      * @param scheduler the owner's scheduler, which runs every entity change on the region thread of its location
-     * @param errors receives a failed spawn and a line MiniMessage refuses, under {@code hook.displays}
+     * @param errors receives a failed spawn, text change or removal and a line MiniMessage refuses, under
+     *     {@code hook.displays}
      * @return the provider
      * @throws NullPointerException if an argument is {@code null}
      */
@@ -140,7 +141,7 @@ public interface HologramProvider {
 
     /**
      * Whether calls can reach the holograms: the provider is not {@linkplain #close() closed} and, for a provider
-     * bound to a hologram plugin, that plugin is enabled.
+     * bound to a hologram plugin, that plugin is enabled, or, for a {@link DisplayHolograms}, its owner is enabled.
      *
      * @return {@code true} if calls can place, change and remove holograms
      */

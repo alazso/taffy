@@ -61,6 +61,7 @@ final class EntityHolograms implements DisplayHolograms, Listener {
     private final Map<String, Hologram> holograms = new ConcurrentHashMap<>();
     private final Map<ChunkKey, Set<Hologram>> byChunk = new ConcurrentHashMap<>();
     private final Set<UUID> live = ConcurrentHashMap.newKeySet();
+    private final Set<Hologram> leaving = ConcurrentHashMap.newKeySet();
     private volatile boolean closed;
 
     private record Content(List<Component> lines, @Nullable ItemStack item) {
@@ -145,6 +146,9 @@ final class EntityHolograms implements DisplayHolograms, Listener {
         PluginHolograms.requireId(id);
         Objects.requireNonNull(location, "location");
         List<String> text = List.copyOf(lines);
+        if (!available() || holograms.containsKey(id) || loadedWorld(location) == null) {
+            return false;
+        }
         List<Component> parsed = parse("create", text);
         return parsed != null && place(id, location, new Content(parsed, null));
     }
@@ -160,6 +164,9 @@ final class EntityHolograms implements DisplayHolograms, Listener {
     public boolean update(String id, List<String> lines) {
         PluginHolograms.requireId(id);
         List<String> text = List.copyOf(lines);
+        if (!available() || !holograms.containsKey(id)) {
+            return false;
+        }
         List<Component> parsed = parse("update", text);
         return parsed != null && replace(id, parsed, false, null);
     }
@@ -184,7 +191,7 @@ final class EntityHolograms implements DisplayHolograms, Listener {
         Hologram old;
         Hologram moved;
         synchronized (lock) {
-            old = holograms.get(id);
+            old = closed ? null : holograms.get(id);
             if (old == null) {
                 return false;
             }
@@ -242,8 +249,11 @@ final class EntityHolograms implements DisplayHolograms, Listener {
             }
             closed = true;
         }
-        retireAll();
-        HandlerList.unregisterAll(this);
+        try {
+            retireAll();
+        } finally {
+            HandlerList.unregisterAll(this);
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -344,6 +354,11 @@ final class EntityHolograms implements DisplayHolograms, Listener {
                 removed++;
             }
         }
+        for (Hologram hologram : List.copyOf(leaving)) {
+            if (owned(hologram)) {
+                despawn(hologram);
+            }
+        }
         return removed;
     }
 
@@ -398,14 +413,21 @@ final class EntityHolograms implements DisplayHolograms, Listener {
         }
     }
 
-    // Removes the entities of a hologram that no longer shows. A removal that waits for the region thread keeps a
-    // move from blinking: on Paper it runs in the tick the new entities spawn.
+    // Removes the entities of a hologram that no longer shows: at once on the thread that owns its location when
+    // atOnce, else in a task of its region, which on Paper runs in the tick a moved hologram spawns. A hologram
+    // stays in leaving while that task has not run.
     private void discard(Hologram hologram, boolean atOnce) {
         hologram.gone = true;
         if (atOnce && owned(hologram)) {
             despawn(hologram);
-        } else if (!region(hologram, () -> despawn(hologram)) && owned(hologram)) {
-            despawn(hologram);
+            return;
+        }
+        leaving.add(hologram);
+        if (!region(hologram, () -> despawn(hologram))) {
+            leaving.remove(hologram);
+            if (owned(hologram)) {
+                despawn(hologram);
+            }
         }
     }
 
@@ -506,11 +528,16 @@ final class EntityHolograms implements DisplayHolograms, Listener {
 
     // Runs on the thread that owns the hologram's location.
     private void despawn(Hologram hologram) {
+        leaving.remove(hologram);
         Spawned spawned = hologram.spawned;
         hologram.spawned = NOTHING;
         for (Display entity : spawned.entities()) {
             live.remove(entity.getUniqueId());
-            entity.remove();
+            try {
+                entity.remove();
+            } catch (Exception | LinkageError ex) {
+                fail("remove", ex);
+            }
         }
     }
 

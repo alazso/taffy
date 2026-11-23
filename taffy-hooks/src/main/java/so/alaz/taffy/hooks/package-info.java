@@ -186,8 +186,8 @@
  * {@code hook.worldguard} for every failed call; {@code hook.floodgate} or {@code hook.geyser-spigot} for every
  * failed check of a Bedrock player; and {@code hook.decentholograms}, {@code hook.fancyholograms},
  * {@code hook.holograms} or {@code hook.hologramlib} for every failed hologram call, and {@code hook.displays}
- * for a failed spawn of a display hologram. Reading an item's id and
- * resolving a placeholder log a failure and do not report it.
+ * for a failed spawn, text change or removal of a display hologram and a line MiniMessage refuses. Reading an
+ * item's id and resolving a placeholder log a failure and do not report it.
  *
  * <p>A {@code null} argument throws {@link java.lang.NullPointerException}, except where a parameter is marked
  * {@code @Nullable}, and except a reference given to {@link so.alaz.taffy.hooks.CustomItemRef#parse} or

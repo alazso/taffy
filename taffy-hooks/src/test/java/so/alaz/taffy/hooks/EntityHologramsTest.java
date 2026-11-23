@@ -44,6 +44,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -95,6 +98,7 @@ final class EntityHologramsTest {
     private boolean owned = true;
     private boolean chunkLoaded = true;
     private int failSpawnAt = -1;
+    private int failRemoveAt = -1;
 
     EntityHologramsTest() {
         when(owner.getServer()).thenReturn(server);
@@ -149,7 +153,13 @@ final class EntityHologramsTest {
         Spawn spawn = new Spawn(entity, call.<Location>getArgument(0).clone());
         tagged(entity, spawn.data);
         when(entity.isValid()).thenAnswer(valid -> !spawn.removed);
-        doAnswer(remove -> spawn.removed = true).when(entity).remove();
+        boolean refusesRemoval = spawns.size() == failRemoveAt;
+        doAnswer(remove -> {
+            if (refusesRemoval) {
+                throw new IllegalStateException("remove refused");
+            }
+            return spawn.removed = true;
+        }).when(entity).remove();
         if (entity instanceof TextDisplay text) {
             doAnswer(set -> spawn.text = set.getArgument(0)).when(text).text(any());
         }
@@ -642,6 +652,137 @@ final class EntityHologramsTest {
         assertThat(holograms.ids()).isEmpty();
         assertThat(holograms.removeAll()).isZero();
         assertThat(queued).isEmpty();
+    }
+
+    @Test
+    void aDisableRemovesTheEntitiesOfAMoveWhoseTaskHasNotRun() {
+        EntityHolograms holograms = holograms();
+        holograms.create("crate", here, List.of("line"));
+        runQueued();
+        holograms.move("crate", new Location(world, 100.5, 70, 100.5));
+
+        holograms.onPluginDisable(disabling(owner));
+
+        assertThat(standing()).isEmpty();
+        runQueued();
+        assertThat(spawns).hasSize(1);
+        assertThat(holograms.ids()).isEmpty();
+    }
+
+    @Test
+    void aDisableRemovesTheEntitiesOfARemovalThatWaitsForItsTask() {
+        EntityHolograms holograms = holograms();
+        holograms.create("crate", here, List.of("line"));
+        runQueued();
+        owned = false;
+        holograms.remove("crate");
+        assertThat(standing()).hasSize(1);
+        owned = true;
+
+        holograms.onPluginDisable(disabling(owner));
+
+        assertThat(standing()).isEmpty();
+    }
+
+    @Test
+    void closeRemovesTheEntitiesOfARemovalThatWaitsForItsTask() {
+        EntityHolograms holograms = holograms();
+        holograms.create("crate", here, List.of("line"));
+        runQueued();
+        owned = false;
+        holograms.remove("crate");
+        owned = true;
+
+        holograms.close();
+
+        assertThat(standing()).isEmpty();
+    }
+
+    @Test
+    void aMoveThatRacesCloseAnswersFalseAndLeavesNoEntity() throws InterruptedException {
+        EntityHolograms holograms = holograms();
+        holograms.create("a", here, List.of("one"));
+        holograms.create("b", here, List.of("two"));
+        runQueued();
+        CountDownLatch inMove = new CountDownLatch(1);
+        CountDownLatch closing = new CountDownLatch(1);
+        AtomicBoolean moved = new AtomicBoolean(true);
+        Thread mover = new Thread(() -> moved.set(holograms.move("b", new Location(world, 100.5, 70, 100.5))));
+        when(server.getWorld(world.getUID())).thenAnswer(call -> {
+            if (Thread.currentThread() == mover) {
+                inMove.countDown();
+                closing.await(10, TimeUnit.SECONDS);
+            }
+            return world;
+        });
+        AtomicBoolean paused = new AtomicBoolean();
+        for (Spawn spawn : spawns) {
+            doAnswer(remove -> {
+                if (paused.compareAndSet(false, true)) {
+                    closing.countDown();
+                    mover.join(10_000);
+                }
+                return spawn.removed = true;
+            }).when(spawn.entity).remove();
+        }
+        mover.start();
+        assertThat(inMove.await(10, TimeUnit.SECONDS)).isTrue();
+
+        holograms.close();
+        mover.join(10_000);
+        runQueued();
+
+        assertThat(moved).isFalse();
+        assertThat(standing()).isEmpty();
+        assertThat(spawns).hasSize(2);
+    }
+
+    @Test
+    void anEntityThatRefusesItsRemovalIsReportedAndTheOthersAreRemoved() {
+        doAnswer(call -> {
+            Listener listener = call.getArgument(0);
+            Plugin plugin = call.getArgument(1);
+            PluginDisableEvent.getHandlerList().register(new RegisteredListener(listener, (each, event) -> { },
+                EventPriority.MONITOR, plugin, false));
+            return null;
+        }).when(pluginManager).registerEvents(any(Listener.class), any(Plugin.class));
+        try {
+            EntityHolograms holograms = holograms();
+            failRemoveAt = 0;
+            holograms.create("a", here, List.of("one", "two"));
+            holograms.create("b", here, List.of("three"));
+            runQueued();
+
+            holograms.close();
+
+            assertThat(standing()).containsExactly(spawns.getFirst());
+            assertThat(reported).containsExactly("hook.displays");
+            assertThat(logged.lines()).singleElement().asString().contains("could not remove a hologram");
+            assertThat(HandlerList.getRegisteredListeners(owner)).isEmpty();
+        } finally {
+            HandlerList.unregisterAll(owner);
+        }
+    }
+
+    @Test
+    void aLineMiniMessageRefusesIsNotReportedWhenTheCallAnswersFalseWithoutIt() {
+        EntityHolograms holograms = holograms();
+        List<String> refused = List.of("§6Daily crate");
+        holograms.create("crate", here, List.of("line"));
+
+        assertThat(holograms.update("none", refused)).isFalse();
+        assertThat(holograms.create("crate", here, refused)).isFalse();
+        assertThat(holograms.create("a", new Location(null, 0, 64, 0), refused)).isFalse();
+        when(owner.isEnabled()).thenReturn(false);
+        assertThat(holograms.create("b", here, refused)).isFalse();
+        assertThat(holograms.update("crate", refused)).isFalse();
+        when(owner.isEnabled()).thenReturn(true);
+        holograms.close();
+        assertThat(holograms.create("c", here, refused)).isFalse();
+        assertThat(holograms.update("crate", refused)).isFalse();
+
+        assertThat(reported).isEmpty();
+        assertThat(logged.lines()).isEmpty();
     }
 
     @Test
