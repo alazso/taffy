@@ -1,5 +1,7 @@
 package so.alaz.taffy.test;
 
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import org.assertj.core.api.SoftAssertions;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -23,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.function.Consumer;
@@ -73,6 +76,11 @@ class ApiRulesTest {
             leakyRecord + ".info names " + testInfo,
             leakyRecord + ".<init>() names " + testInfo,
             leakyRecord + ".info() names " + testInfo);
+    }
+
+    @Test
+    void allowsBrigadierTypesInASignature() {
+        assertThat(ApiRules.signatureViolationsOf(Suggesting.class, Suggesting.class)).isEmpty();
     }
 
     @Test
@@ -458,6 +466,12 @@ class ApiRulesTest {
     }
 
     public record LeakyRecord(TestInfo info) {
+    }
+
+    /** Names types of the command library Paper's command API is built on. */
+    abstract static class Suggesting {
+
+        public abstract CompletableFuture<Suggestions> suggest(SuggestionsBuilder builder);
     }
 
     static class StaticHolder {

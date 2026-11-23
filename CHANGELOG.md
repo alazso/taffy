@@ -41,6 +41,30 @@ All notable changes to Taffy are documented here. This project follows
   host names) and then replaces each IPv4 and IPv6 address with `[address hidden]`. `Redaction.rules()` returns
   the rules as `Redaction.Rule(pattern, replacement)`. The rules moved from `taffy-metrics` unchanged, so what
   FastStats error tracking receives is as in 0.4.9.
+- `CommandHelpers` in `taffy-platform` holds what a plugin's commands repeat.
+  `CommandHelpers.permission(String)` returns the `Predicate<CommandSourceStack>` for `requires` of a Brigadier
+  node: whether the sender of the source holds the node. `CommandHelpers.matching(String, Collection<String>)`
+  returns the candidates that start with the typed text, in their order, ignoring letter case under
+  `Locale.ROOT`, for a Brigadier or a Bukkit tab completion, and
+  `CommandHelpers.suggest(SuggestionsBuilder, Collection<String>)` suggests them for the builder's remaining
+  input and returns its `CompletableFuture<Suggestions>`. `CommandHelpers.target(Server, String)` returns the
+  `OfflinePlayer` a typed text stands for, or null: a UUID in its 36 character form, then the exact name of an
+  online player, then `Server.getOfflinePlayerIfCached`. It never asks Mojang for a name, so it does not wait
+  on the network. It finds an online player whether or not the sender can see them.
+- `UpdateCheck` in `taffy-platform` asks once at enable whether a newer release of the plugin is published.
+  `UpdateCheck.start(Plugin, ErrorReports, boolean enabled, UpdateSource, Executor)` sends one `GET` on the
+  plugin's executor to `UpdateSource.github(owner, repository)` (the releases of a GitHub repository) or
+  `UpdateSource.modrinth(project)` (the versions of a Modrinth project), compares the answer with
+  `getPluginMeta().getVersion()` as Semantic Versioning, and logs
+  `A newer release is available: <newest> (running <running>). <releases page>` when the newest one is above
+  the running version. `latest()` returns that version, or null, for a notice the plugin sends itself. A
+  running version without a pre-release part is compared with releases only; one with a pre-release part, such
+  as `1.5.0-rc.1` or `1.5.0-SNAPSHOT`, also with what the source marks as a pre-release. A running version that
+  is not a semantic version logs one warning and sends nothing. With `enabled` false nothing is sent or logged.
+  The check owns no thread and downloads nothing. The request goes over HTTPS to `api.github.com` or
+  `api.modrinth.com`, follows no redirect, names the plugin and its version in `User-Agent` and holds nothing
+  about players or the server, waits at most 10 seconds to connect and for each read and 30 seconds in all, and
+  reads at most 262144 bytes and 100 entries. A failed check logs one warning and throws nothing into enable.
 
 ### Changed
 - `taffy-metrics` is built for and tested with FastStats 0.33.0, up from 0.32.2, and a plugin jar must shade
@@ -58,6 +82,9 @@ All notable changes to Taffy are documented here. This project follows
   `FastStats metrics failed to start: FastStats could not make its context ready`. With FastStats 0.32.2 it
   was the one warning `FastStats metrics failed to start: <cause>`. The context is shut down without a send
   and enable goes on, as before.
+- `ApiRules.signatureViolations` in `taffy-test` also allows the types of `com.mojang.brigadier`, the command
+  library Paper's command API is built on, in a public signature of a Taffy module. It reported them in 0.4.9.
+  `CommandHelpers` names `Suggestions` and `SuggestionsBuilder`.
 
 ## [0.4.9] - 2026-11-23
 

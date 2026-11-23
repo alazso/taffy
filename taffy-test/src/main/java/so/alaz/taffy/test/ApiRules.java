@@ -53,8 +53,8 @@ public final class ApiRules {
     private static final String MODULE_DIRECTORY = "so/alaz/taffy";
 
     private static final List<String> ALLOWED_PACKAGES = List.of(
-        "java.", "javax.", "org.bukkit.", "io.papermc.", "com.destroystokyo.paper.", "net.kyori.",
-        "org.jetbrains.annotations.", MODULE_PACKAGE);
+        "java.", "javax.", "org.bukkit.", "io.papermc.", "com.destroystokyo.paper.", "com.mojang.brigadier.",
+        "net.kyori.", "org.jetbrains.annotations.", MODULE_PACKAGE);
 
     /** The package of the one module allowed to name {@link #COMFICONF_API} types. */
     private static final String COMFICONF_PACKAGE = "so.alaz.taffy.comficonf";
@@ -97,8 +97,9 @@ public final class ApiRules {
      * names. An empty set means the rule holds.
      *
      * <p>The allowed packages are {@code java}, {@code javax}, {@code org.bukkit}, {@code io.papermc},
-     * {@code com.destroystokyo.paper}, {@code net.kyori}, {@code org.jetbrains.annotations} and
-     * {@code so.alaz.taffy}, each with its subpackages. One exception: when the anchor and the checked class are both
+     * {@code com.destroystokyo.paper}, {@code com.mojang.brigadier} (the command library Paper's command API is
+     * built on), {@code net.kyori}, {@code org.jetbrains.annotations} and {@code so.alaz.taffy}, each with its
+     * subpackages. One exception: when the anchor and the checked class are both
      * in the package {@code so.alaz.taffy.comficonf}, not a subpackage of it, {@code com.comficonf.api} and its
      * subpackages are allowed too. A class is checked when it and its enclosing classes are
      * public or protected, together with the module superclasses and superinterfaces it inherits members from,
