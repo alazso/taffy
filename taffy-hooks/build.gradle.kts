@@ -19,6 +19,7 @@ dependencies {
     compileOnly(libs.vault.api) { isTransitive = false }
     compileOnly(libs.playerpoints) { isTransitive = false }
     compileOnly(libs.luckperms.api) { isTransitive = false }
+    compileOnly(libs.worldguard.bukkit) { isTransitive = false }
     compileOnly(libs.worldguard.core) { isTransitive = false }
     compileOnly(libs.worldedit.core) { isTransitive = false }
     compileOnly(libs.worldedit.bukkit) { isTransitive = false }

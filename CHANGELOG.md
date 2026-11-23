@@ -38,6 +38,22 @@ All notable changes to Taffy are documented here. This project follows
   `jitpack`: `momirealms` (`https://repo.momirealms.net/releases/`) for the group `net.momirealms`, and `phoenix`
   (`https://nexus.phoenixdevt.fr/repository/maven-public/`) for the group `net.Indyuce` and the module
   `io.lumine:MythicLib-dist`.
+- `taffy-hooks`: `RegionProvider.canBuild(Player player, Location location)`, a default method that answers
+  `true`, so a `RegionProvider` a plugin or a test implements itself compiles and behaves as before. The provider
+  of `RegionProvider.worldGuard` overrides it: it answers `true` for a player WorldGuard's own listeners let
+  through (`SessionManager.hasBypass`: the permission `worldguard.region.bypass.<world>` for the location's world
+  with the bypass not turned off, or a player marked as an NPC while WorldGuard's `fake-player-build-override` is
+  on), and otherwise what `RegionQuery.testBuild` gives for the `build` flag at the location, which counts region
+  members and owners. It reads no other flag, such as `block-break` or `block-place`. It answers `true` when
+  WorldGuard is not enabled, when the location has no world or its world has unloaded, and when the check fails;
+  a failed check is logged as a warning at most once a minute and reported under `hook.worldguard`. A world
+  WorldGuard's regions are turned off in answers `true`, and a world whose region data WorldGuard could not load
+  answers `false`, as WorldGuard denies building there. Call it on the thread that owns the player, the main
+  thread on Paper; WorldGuard does not run on Folia. A `null` player or location throws `NullPointerException`.
+  Built against WorldGuard 7.0.20 and WorldEdit 7.4.4, and `taffy-hooks` now also compiles against
+  `com.sk89q.worldguard:worldguard-bukkit` (`alaz.worldguard.bukkit`, already in the catalog), which holds
+  `WorldGuardPlugin.wrapPlayer`. Detection does not look for the methods of the build check, so `worldGuard` gives
+  the same status as in 0.4.11.
 
 ## [0.4.11] - 2026-11-23
 

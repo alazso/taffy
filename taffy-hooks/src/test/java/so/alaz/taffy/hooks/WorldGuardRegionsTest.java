@@ -1,13 +1,21 @@
 package so.alaz.taffy.hooks;
 
+import com.sk89q.worldedit.bukkit.BukkitAdapter;
 import com.sk89q.worldedit.math.BlockVector3;
+import com.sk89q.worldguard.LocalPlayer;
+import com.sk89q.worldguard.internal.platform.WorldGuardPlatform;
 import com.sk89q.worldguard.protection.ApplicableRegionSet;
+import com.sk89q.worldguard.protection.flags.StateFlag;
 import com.sk89q.worldguard.protection.managers.RegionManager;
 import com.sk89q.worldguard.protection.regions.ProtectedRegion;
+import com.sk89q.worldguard.protection.regions.RegionContainer;
+import com.sk89q.worldguard.protection.regions.RegionQuery;
+import com.sk89q.worldguard.session.SessionManager;
 import io.papermc.paper.plugin.configuration.PluginMeta;
 import org.bukkit.Location;
 import org.bukkit.Server;
 import org.bukkit.World;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +28,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.BiPredicate;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,6 +50,11 @@ final class WorldGuardRegionsTest {
     private final Function<World, RegionManager> managers = mock(Function.class);
     @SuppressWarnings("unchecked")
     private final Function<Location, BlockVector3> vectors = mock(Function.class);
+    @SuppressWarnings("unchecked")
+    private final BiPredicate<Player, World> bypasses = mock(BiPredicate.class);
+    @SuppressWarnings("unchecked")
+    private final BiPredicate<Player, Location> builds = mock(BiPredicate.class);
+    private final Player player = mock(Player.class);
     private final Location location = new Location(world, 10.5, 64, -3.2);
     private final List<String> reported = new ArrayList<>();
     private final List<Throwable> failures = new ArrayList<>();
@@ -59,7 +73,7 @@ final class WorldGuardRegionsTest {
     }
 
     private WorldGuardRegions regions() {
-        return new WorldGuardRegions(plugin, logged.logger, errors, managers, vectors);
+        return new WorldGuardRegions(plugin, logged.logger, errors, managers, vectors, bypasses, builds);
     }
 
     private static ProtectedRegion region(String id) {
@@ -197,12 +211,167 @@ final class WorldGuardRegionsTest {
     }
 
     @Test
+    void aPlayerWorldGuardRefusesMayNotBuild() {
+        assertThat(regions().canBuild(player, location)).isFalse();
+        verify(bypasses).test(player, world);
+        verify(builds).test(player, location);
+        assertThat(reported).isEmpty();
+        assertThat(logged.lines()).isEmpty();
+    }
+
+    @Test
+    void aPlayerTheBuildFlagAllowsMayBuild() {
+        when(builds.test(player, location)).thenReturn(true);
+
+        assertThat(regions().canBuild(player, location)).isTrue();
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aPlayerWithTheBypassMayBuildWithoutARegionQuery() {
+        when(bypasses.test(player, world)).thenReturn(true);
+
+        assertThat(regions().canBuild(player, location)).isTrue();
+        verifyNoInteractions(builds);
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aDisabledWorldGuardLetsAPlayerBuildWithoutACheck() {
+        when(plugin.isEnabled()).thenReturn(false);
+
+        assertThat(regions().canBuild(player, location)).isTrue();
+        verifyNoInteractions(bypasses, builds);
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aLocationWithoutAWorldLetsAPlayerBuildWithoutACheck() {
+        assertThat(regions().canBuild(player, new Location(null, 0, 64, 0))).isTrue();
+        verifyNoInteractions(bypasses, builds);
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aLocationWhoseWorldUnloadedLetsAPlayerBuildWithoutAReport() {
+        Location stale = mock(Location.class);
+        when(stale.getWorld()).thenThrow(new IllegalArgumentException("World unloaded"));
+
+        assertThat(regions().canBuild(player, stale)).isTrue();
+        verifyNoInteractions(bypasses, builds);
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aBuildCheckRefusesAMissingPlayerOrLocationWithoutAReport() {
+        WorldGuardRegions regions = regions();
+
+        assertThatThrownBy(() -> regions.canBuild(null, location))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("player");
+        assertThatThrownBy(() -> regions.canBuild(player, null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("location");
+        verifyNoInteractions(bypasses, builds);
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aFailingBuildCheckLetsThePlayerBuildWithOneReport() {
+        IllegalStateException broken = new IllegalStateException("no session");
+        when(bypasses.test(player, world)).thenThrow(broken);
+
+        assertThat(regions().canBuild(player, location)).isTrue();
+        assertThat(reported).containsExactly("hook.worldguard");
+        assertThat(failures).containsExactly(broken);
+        assertThat(logged.lines()).containsExactly("WARNING WorldGuard could not check whether a player may build at"
+            + " a location (java.lang.IllegalStateException: no session).");
+        assertThat(logged.records.getFirst().getThrown()).isSameAs(broken);
+    }
+
+    @Test
+    void repeatedBuildCheckFailuresAreLoggedOnceAMinuteApartFromFailedLookups() {
+        when(builds.test(player, location)).thenThrow(new IllegalStateException("query"));
+        when(manager.getApplicableRegions(ArgumentMatchers.<BlockVector3>any()))
+            .thenThrow(new IllegalStateException("index rebuilding"));
+        WorldGuardRegions regions = regions();
+
+        regions.canBuild(player, location);
+        regions.canBuild(player, location);
+        regions.regionsAt(location);
+
+        assertThat(reported).containsExactly("hook.worldguard", "hook.worldguard", "hook.worldguard");
+        assertThat(logged.lines()).containsExactly(
+            "WARNING WorldGuard could not check whether a player may build at a location"
+                + " (java.lang.IllegalStateException: query).",
+            "WARNING WorldGuard could not look up the regions at a location"
+                + " (java.lang.IllegalStateException: index rebuilding).");
+    }
+
+    @Test
+    void aLinkageErrorInTheBuildCheckLetsThePlayerBuildWithOneReport() {
+        when(builds.test(player, location)).thenThrow(new NoSuchMethodError("RegionQuery.testBuild"));
+
+        assertThat(regions().canBuild(player, location)).isTrue();
+        assertThat(reported).containsExactly("hook.worldguard");
+    }
+
+    @Test
+    void anErrorOtherThanALinkageErrorInTheBuildCheckIsRethrownAndNotReported() {
+        when(builds.test(player, location)).thenThrow(new OutOfMemoryError("heap"));
+        WorldGuardRegions regions = regions();
+
+        assertThatThrownBy(() -> regions.canBuild(player, location)).isInstanceOf(OutOfMemoryError.class);
+        assertThat(reported).isEmpty();
+        assertThat(logged.lines()).isEmpty();
+    }
+
+    @Test
+    void aProviderWithoutABuildCheckLetsEveryPlayerBuild() {
+        RegionProvider idsOnly = new RegionProvider() {
+            @Override
+            public boolean available() {
+                return true;
+            }
+
+            @Override
+            public List<String> regionsAt(Location at) {
+                return List.of("spawn");
+            }
+        };
+
+        assertThat(idsOnly.canBuild(player, location)).isTrue();
+        assertThatThrownBy(() -> idsOnly.canBuild(null, location))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("player");
+        assertThatThrownBy(() -> idsOnly.canBuild(player, null))
+            .isInstanceOf(NullPointerException.class)
+            .hasMessage("location");
+    }
+
+    @Test
+    void theBuildCheckCallsMethodsThePinnedWorldGuardAndWorldEditHold() {
+        Class<?> position = com.sk89q.worldedit.util.Location.class;
+        Class<?> weWorld = com.sk89q.worldedit.world.World.class;
+
+        ApiLink.instanceMethod(WorldGuardPlatform.class, "getSessionManager", SessionManager.class);
+        ApiLink.instanceMethod(SessionManager.class, "hasBypass", boolean.class, LocalPlayer.class, weWorld);
+        ApiLink.instanceMethod(WorldGuardPlatform.class, "getRegionContainer", RegionContainer.class);
+        ApiLink.instanceMethod(RegionContainer.class, "createQuery", RegionQuery.class);
+        ApiLink.instanceMethod(RegionQuery.class, "testBuild", boolean.class, position, LocalPlayer.class,
+            StateFlag[].class);
+        ApiLink.staticMethod(BukkitAdapter.class, "adapt", position, Location.class);
+        ApiLink.staticMethod(BukkitAdapter.class, "adapt", weWorld, World.class);
+    }
+
+    @Test
     void theFactoryBuildsAProviderWithoutCallingWorldGuard() {
         RegionProvider provider = WorldGuardRegions.create(plugin, logged.logger, errors);
 
         assertThat(provider).isInstanceOf(WorldGuardRegions.class);
         assertThat(provider.available()).isTrue();
         assertThat(provider.regionsAt(new Location(null, 0, 64, 0))).isEmpty();
+        assertThat(provider.canBuild(player, new Location(null, 0, 64, 0))).isTrue();
         assertThat(reported).isEmpty();
     }
 
