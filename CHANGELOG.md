@@ -33,6 +33,29 @@ All notable changes to Taffy are documented here. This project follows
   does. MiniPlaceholders' audience tags are filled in only for a `Player`. A `null` `OfflinePlayer` skips
   PlaceholderAPI, as a `null` `Player` does, and `render(String)` still asks PlaceholderAPI for nothing. A call
   that passes a literal `null` as the player still compiles and still picks the `Player` method.
+- `EconomyProvider.vault(VaultOptions options, @Nullable Detected<EconomyProvider> previous)` looks the Vault
+  economy up as `vault(VaultOptions)` does and logs its warning, and reports a `FAILED` lookup, only when the
+  status differs from `previous.status()` in plugin, state, version or reason, or when `previous` is `null`. A
+  plugin passes the result it holds to each later lookup, so a Vault that stays `NOT_VISIBLE`, `API_MISSING` or
+  `FAILED` is warned about once and not once per lookup. The entry points without `previous` still warn and
+  report on every lookup.
+- `EconomyProvider.watchVault(VaultOptions options, Scheduler scheduler)` returns a `VaultWatch`, which does the
+  wiring a plugin did by hand: it looks the economy up at once, registers an `EconomyWatcher` for the owner,
+  looks the economy up once more on the first tick through `Scheduler.global`, and gives each lookup the result
+  before it, so a status is warned about once. `VaultWatch.current()` gives the latest `Detected` from any
+  thread, and `close()` unregisters the listener and stops later lookups. Options that are switched off register
+  and schedule nothing.
+- `EconomyProvider.playerPoints(Plugin owner, ErrorReports errors, boolean switchedOn)` detects PlayerPoints and
+  gives an `EconomyProvider` on its points, built against PlayerPoints 3.3.5. The `Detected` is bound to the
+  PlayerPoints plugin, so its status reads `NOT_ENABLED` while PlayerPoints is disabled, and the plugin lists
+  `PlayerPoints` under `dependencies.server`. `scale()` is 0. A withdraw or deposit is never rounded: an amount
+  with a fraction of a point, such as `2.5`, or above `Integer.MAX_VALUE` throws `IllegalArgumentException`
+  before anything in PlayerPoints is called, and `2.00` is whole. `thread(player)` answers `ThreadTag.ASYNC`,
+  since PlayerPoints loads an uncached balance from its database on the calling thread, and `balance`, `has`,
+  `withdraw` and `deposit` throw `IllegalStateException` on a server tick thread, which is every region thread on
+  Folia. The withdraws of the provider for one player run one at a time from the balance read through `start`
+  to the take. A take or give PlayerPoints refuses, as when a listener cancels its `PlayerPointsChangeEvent`,
+  gives `FAILED` with `PlayerPoints refused it` and moves no points.
 
 ## [0.4.6] - 2026-11-22
 

@@ -1,7 +1,8 @@
 /**
- * Integrations with other Paper plugins: custom item plugins, a Vault economy, LuckPerms permissions, WorldGuard
- * regions, Bedrock players through Floodgate and Geyser, placeholder expansions for PlaceholderAPI and
- * MiniPlaceholders, and text holograms through DecentHolograms, FancyHolograms, Holograms and HologramLib.
+ * Integrations with other Paper plugins: custom item plugins, a Vault economy, PlayerPoints points, LuckPerms
+ * permissions, WorldGuard regions, Bedrock players through Floodgate and Geyser, placeholder expansions for
+ * PlaceholderAPI and MiniPlaceholders, and text holograms through DecentHolograms, FancyHolograms, Holograms and
+ * HologramLib.
  *
  * <p>The module compiles against each integration's API but ships none of them, and its published metadata names
  * none of them. Floodgate and Geyser are the exception: they are read through method handles, so the module compiles
@@ -29,9 +30,9 @@
  * }</pre>
  *
  * <p>The names are {@code ItemsAdder}, {@code Nexo}, {@code Oraxen}, {@code HeadDatabase}, {@code Vault},
- * {@code LuckPerms}, {@code WorldGuard}, {@code floodgate}, {@code Geyser-Spigot}, {@code PlaceholderAPI},
- * {@code MiniPlaceholders}, {@code DecentHolograms}, {@code FancyHolograms}, {@code Holograms} and
- * {@code HologramLib}. A plugin that uses WorldGuard also lists
+ * {@code PlayerPoints}, {@code LuckPerms}, {@code WorldGuard}, {@code floodgate}, {@code Geyser-Spigot},
+ * {@code PlaceholderAPI}, {@code MiniPlaceholders}, {@code DecentHolograms}, {@code FancyHolograms},
+ * {@code Holograms} and {@code HologramLib}. A plugin that uses WorldGuard also lists
  * {@code WorldEdit}, which WorldGuard's regions are read through. An integration that is
  * installed but not listed is {@link so.alaz.taffy.hooks.HookState#NOT_VISIBLE}, and its warning names the missing
  * entry.
@@ -57,7 +58,11 @@
  *     {@code volatile} field, and, while the economy is switched on, registers an
  *     {@link so.alaz.taffy.hooks.EconomyWatcher} that looks it up again and looks it up once more on the first tick.
  *     An economy plugin that enables after the plugin registers with Vault only then, so a
- *     {@link so.alaz.taffy.hooks.HookState#NOT_REGISTERED} found in {@code onEnable} may not last;</li>
+ *     {@link so.alaz.taffy.hooks.HookState#NOT_REGISTERED} found in {@code onEnable} may not last.
+ *     {@link so.alaz.taffy.hooks.EconomyProvider#watchVault} does all three and keeps the latest result in a
+ *     {@link so.alaz.taffy.hooks.VaultWatch}, and a plugin that pays in points detects PlayerPoints with
+ *     {@link so.alaz.taffy.hooks.EconomyProvider#playerPoints} and keeps the
+ *     {@link so.alaz.taffy.hooks.Detected};</li>
  *   <li>adds its placeholders to a {@link so.alaz.taffy.hooks.PlaceholderExpansionBuilder} and calls
  *     {@link so.alaz.taffy.hooks.PlaceholderExpansionBuilder#register}, keeping the
  *     {@link so.alaz.taffy.hooks.PlaceholderRegistration}.</li>
@@ -151,7 +156,7 @@
  * per plugin through {@link so.alaz.taffy.hooks.CustomItems#statuses()} and
  * {@link so.alaz.taffy.hooks.PlaceholderRegistration#statuses()}. Every status is read when asked: an integration
  * that was on reads {@link so.alaz.taffy.hooks.HookState#NOT_ENABLED} while its plugin is disabled, and on again once
- * it is enabled. The economy is the exception: its status changes only through a new lookup.
+ * it is enabled. The Vault economy is the exception: its status changes only through a new lookup.
  * {@link so.alaz.taffy.hooks.HookStatus#describe()} names the state, and
  * {@link so.alaz.taffy.hooks.HookStatus#reason()}, when it is set, says what is missing or what went wrong, and what
  * the owner can do when there is something to do; together they are the owner's line. {@link so.alaz.taffy.hooks.EconomyProvider#probe()} describes an economy that was found.
@@ -163,8 +168,10 @@
  * bound, is {@link so.alaz.taffy.hooks.HookState#FAILED}: it is logged as one warning and reported to the plugin's
  * {@link so.alaz.taffy.platform.ErrorReports} under {@code hook.<name>}, the integration plugin's name in lower case,
  * such as {@code hook.luckperms}, {@code hook.vault} or {@code hook.placeholderapi}. The warning and the report come
- * once for each detection, and every economy lookup is a new detection, so each lookup logs its warning again and
- * reports a {@link so.alaz.taffy.hooks.HookState#FAILED} lookup again. Beyond these,
+ * once for each detection, and every Vault economy lookup is a new detection, so each lookup logs its warning again
+ * and reports a {@link so.alaz.taffy.hooks.HookState#FAILED} lookup again, unless it is given the result of the
+ * lookup before it through {@link so.alaz.taffy.hooks.EconomyProvider#vault(VaultOptions, Detected)} or runs in a
+ * {@link so.alaz.taffy.hooks.VaultWatch}, which warn and report only when the status changed. Beyond these,
  * {@link so.alaz.taffy.hooks.CustomItems#detect} logs one line naming the state of every custom item plugin, and
  * {@link so.alaz.taffy.hooks.PlaceholderExpansionBuilder#register} warns about a backend that is installed but not
  * enabled; no other state is logged. An {@link java.lang.Error} other than a {@link java.lang.LinkageError}

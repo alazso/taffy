@@ -13,6 +13,7 @@ dependencies {
     compileOnly(libs.oraxen) { isTransitive = false }
     compileOnly(libs.headdatabase.api) { isTransitive = false }
     compileOnly(libs.vault.api) { isTransitive = false }
+    compileOnly(libs.playerpoints) { isTransitive = false }
     compileOnly(libs.luckperms.api) { isTransitive = false }
     compileOnly(libs.worldguard.core) { isTransitive = false }
     compileOnly(libs.worldedit.core) { isTransitive = false }
@@ -35,6 +36,7 @@ dependencies {
     testImplementation(libs.oraxen) { isTransitive = false }
     testImplementation(libs.headdatabase.api) { isTransitive = false }
     testImplementation(libs.vault.api) { isTransitive = false }
+    testImplementation(libs.playerpoints) { isTransitive = false }
     testImplementation(libs.luckperms.api) { isTransitive = false }
     testImplementation(libs.worldguard.core) { isTransitive = false }
     testImplementation(libs.worldedit.core) { isTransitive = false }
@@ -52,14 +54,17 @@ dependencies {
 tasks.withType<JavaCompile>().configureEach {
     // Nexo is Kotlin-compiled and declared non-transitively, so its kotlin.* annotation types are absent.
     options.compilerArgs.add("-Xlint:-classfile")
-    // The HologramLib jar carries its own copy of Adventure 4 under net.kyori.adventure. Searched last, the
-    // Adventure of paper-api is the one the sources compile against.
-    classpath = classpath.filter { !it.name.startsWith("HologramLib-") } +
-        classpath.filter { it.name.startsWith("HologramLib-") }
+    // The HologramLib jar carries its own copy of Adventure 4 under net.kyori.adventure, and the PlayerPoints jar
+    // one of SLF4J under org.slf4j. Searched last, the libraries of paper-api are the ones the sources compile
+    // against.
+    val bundling = classpath.filter { it.name.startsWith("HologramLib-") || it.name.startsWith("playerpoints-") }
+    classpath = classpath.filter { !it.name.startsWith("HologramLib-") && !it.name.startsWith("playerpoints-") } +
+        bundling
 }
 
 tasks.withType<Test>().configureEach {
-    // Searched last for the same reason: the Adventure of paper-api is the one the tests load.
-    classpath = classpath.filter { !it.name.startsWith("HologramLib-") } +
-        classpath.filter { it.name.startsWith("HologramLib-") }
+    // Searched last for the same reason: the libraries of paper-api are the ones the tests load.
+    val bundling = classpath.filter { it.name.startsWith("HologramLib-") || it.name.startsWith("playerpoints-") }
+    classpath = classpath.filter { !it.name.startsWith("HologramLib-") && !it.name.startsWith("playerpoints-") } +
+        bundling
 }

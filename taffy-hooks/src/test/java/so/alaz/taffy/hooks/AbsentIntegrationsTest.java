@@ -59,9 +59,11 @@ final class AbsentIntegrationsTest {
         "dev.lone.itemsadder.", "com.nexomc.", "io.th0rgal.oraxen.", "me.arcaniax.hdb.", "net.milkbowl.vault.",
         "net.luckperms.api.", "com.sk89q.", "me.clip.placeholderapi.", "io.github.miniplaceholders.",
         "eu.decentsoftware.holograms.", "de.oliver.fancyholograms.", "net.thenextlvl.hologram.",
-        "com.maximde.hologramlib.", "org.geysermc."};
+        "com.maximde.hologramlib.", "org.geysermc.", "org.black_ixx."};
 
     private static final String VAULT_ECONOMY = "net.milkbowl.vault.economy.Economy";
+
+    private static final String PLAYERPOINTS = "org.black_ixx.playerpoints.PlayerPointsAPI";
 
     private static final String LUCKPERMS = "net.luckperms.api.LuckPerms";
 
@@ -98,6 +100,7 @@ final class AbsentIntegrationsTest {
         "io.th0rgal.oraxen.api.OraxenItems", "io.th0rgal.oraxen.api.events.OraxenItemsLoadedEvent",
         "io.th0rgal.oraxen.items.ItemBuilder", "me.arcaniax.hdb.api.DatabaseLoadEvent",
         "me.arcaniax.hdb.api.HeadDatabaseAPI", VAULT_ECONOMY, "net.milkbowl.vault.economy.EconomyResponse", LUCKPERMS,
+        PLAYERPOINTS, "org.black_ixx.playerpoints.PlayerPoints",
         "net.luckperms.api.LuckPermsProvider", "net.luckperms.api.model.user.User", "net.luckperms.api.node.NodeType",
         WORLDGUARD_API[0], WORLDGUARD_API[1], WORLDGUARD_API[2], WORLDGUARD_API[3], WORLDGUARD_API[4],
         WORLDGUARD_API[5], BEDROCK_API[0], BEDROCK_API[1], BEDROCK_API[2], PLACEHOLDER_API[0], PLACEHOLDER_API[1],
@@ -153,6 +156,7 @@ final class AbsentIntegrationsTest {
             probes.add(plugin.probe());
         }
         probes.add(VAULT_ECONOMY);
+        probes.add(PLAYERPOINTS);
         probes.add(LUCKPERMS);
         probes.add(WORLDGUARD);
         probes.add(PluginBedrock.FLOODGATE_PROBE);
@@ -208,12 +212,12 @@ final class AbsentIntegrationsTest {
             CustomItemPlugin.class, CustomItemRef.class, CustomItems.class, CustomItems.Resolution.class,
             CustomItems.Built.class, CustomItems.Built.Reason.class, EconomyResult.class, EconomyResult.Status.class,
             EconomyProvider.class, VaultOptions.class, VaultOptions.ThreadRule.class,
-            VaultOptions.FundsCheck.class, EconomyWatcher.class,
+            VaultOptions.FundsCheck.class, EconomyWatcher.class, VaultWatch.class,
             PermissionProvider.class, RegionProvider.class, BedrockProvider.class,
             PlaceholderExpansionBuilder.class, PlaceholderRegistration.class, PlaceholderCache.class,
             HologramPlugin.class,
             HologramProvider.class);
-        assertThat(exported).doesNotContain(EconomyLookup.class, Detection.class);
+        assertThat(exported).doesNotContain(EconomyLookup.class, Detection.class, PlayerPointsEconomy.class);
 
         for (Class<?> type : exported) {
             assertThatCode(() -> {
@@ -530,6 +534,85 @@ final class AbsentIntegrationsTest {
         assertThat(resolved).hasValue(2);
         assertThatThrownBy(() -> Class.forName(VAULT_ECONOMY, false, loader))
             .isInstanceOf(ClassNotFoundException.class);
+    }
+
+    @Test
+    void theVaultLookupOnTheHiddenCopyGivenTheResultBeforeItWarnsOnce() throws Throwable {
+        ClassLoader loader = hidden();
+        Class<?> providerType = Class.forName(EconomyProvider.class.getName(), true, loader);
+        Class<?> optionsType = Class.forName(VaultOptions.class.getName(), true, loader);
+        Class<?> detectedType = Class.forName(Detected.class.getName(), true, loader);
+        Class<?> statusType = Class.forName(HookStatus.class.getName(), true, loader);
+        MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+        MethodHandle of = lookup.findStatic(optionsType, "of",
+            MethodType.methodType(optionsType, Plugin.class, ErrorReports.class, boolean.class));
+        MethodHandle vault = lookup.findStatic(providerType, "vault",
+            MethodType.methodType(detectedType, optionsType, detectedType));
+        MethodHandle status = lookup.findVirtual(detectedType, "status", MethodType.methodType(statusType));
+        ErrorReports errors = new ErrorReports();
+
+        CapturedLog lackingLog = new CapturedLog();
+        Object lacking = of.invoke(owner(installed(pluginOn(loader, "1.7.3"), "Vault"), lackingLog), errors, false);
+        Object first = vault.invoke(lacking, null);
+        Object second = vault.invoke(lacking, first);
+
+        assertThat(stateOf(loader, status.invoke(second))).isEqualTo(HookState.API_MISSING.name());
+        assertThat(status.invoke(second)).isEqualTo(status.invoke(first));
+        assertThat(lackingLog.lines())
+            .containsExactly("WARNING Vault 1.7.3 lacks the API that is read, so it stays off.");
+
+        CapturedLog hiddenLog = new CapturedLog();
+        Object unseen = of.invoke(owner(installed(pluginOn(withApis(), "1.7.3"), "Vault"), hiddenLog), errors, false);
+        Object third = vault.invoke(unseen, second);
+        Object fourth = vault.invoke(unseen, third);
+
+        assertThat(stateOf(loader, status.invoke(fourth))).isEqualTo(HookState.NOT_VISIBLE.name());
+        assertThat(status.invoke(fourth)).isEqualTo(status.invoke(third));
+        assertThat(hiddenLog.lines()).containsExactly("WARNING Vault 1.7.3 is not visible to this plugin, so it stays"
+            + " off: this plugin's paper-plugin.yml does not list Vault under dependencies.server.");
+    }
+
+    @Test
+    void playerPointsDetectionOnTheHiddenCopyFindsPlayerPointsWithoutItsApiOrOutOfSight() throws Throwable {
+        assertThatCode(() -> Class.forName(PLAYERPOINTS, false, withApis())).doesNotThrowAnyException();
+        ClassLoader loader = hidden();
+        assertThatThrownBy(() -> Class.forName(PLAYERPOINTS, false, loader))
+            .isInstanceOf(ClassNotFoundException.class);
+        List<String> reported = new ArrayList<>();
+        ErrorReports errors = new ErrorReports();
+        errors.install((source, error) -> reported.add(source));
+        Class<?> providerType = Class.forName(EconomyProvider.class.getName(), true, loader);
+        Class<?> detectedType = Class.forName(Detected.class.getName(), true, loader);
+        Class<?> statusType = Class.forName(HookStatus.class.getName(), true, loader);
+        MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+        MethodHandle detect = lookup.findStatic(providerType, "playerPoints",
+            MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class));
+        MethodHandle status = lookup.findVirtual(detectedType, "status", MethodType.methodType(statusType));
+        MethodHandle provider = lookup.findVirtual(detectedType, "provider", MethodType.methodType(Object.class));
+
+        CapturedLog lackingLog = new CapturedLog();
+        Object lacking = detect.invoke(
+            owner(installed(pluginOn(loader, "3.3.5"), "PlayerPoints"), lackingLog), errors, true);
+
+        assertThat(lacking.getClass().getClassLoader()).isSameAs(loader);
+        assertThat(read(loader, status.invoke(lacking), "describe", String.class))
+            .isEqualTo("PlayerPoints 3.3.5 lacks the API that is read");
+        assertThat(provider.invoke(lacking)).isNull();
+        assertThat(lackingLog.lines())
+            .containsExactly("WARNING PlayerPoints 3.3.5 lacks the API that is read, so it stays off.");
+
+        CapturedLog hiddenLog = new CapturedLog();
+        Object unseen = detect.invoke(
+            owner(installed(pluginOn(withApis(), "3.3.5"), "PlayerPoints"), hiddenLog), errors, true);
+
+        assertThat(stateOf(loader, status.invoke(unseen))).isEqualTo(HookState.NOT_VISIBLE.name());
+        assertThat(read(loader, status.invoke(unseen), "reason", String.class)).isEqualTo("PlayerPoints is installed,"
+            + " but this plugin cannot see it, because its paper-plugin.yml does not list PlayerPoints under"
+            + " dependencies.server.");
+        assertThat(provider.invoke(unseen)).isNull();
+        assertThat(hiddenLog.lines()).containsExactly("WARNING PlayerPoints 3.3.5 is not visible to this plugin, so it"
+            + " stays off: this plugin's paper-plugin.yml does not list PlayerPoints under dependencies.server.");
+        assertThat(reported).isEmpty();
     }
 
     @Test
@@ -889,6 +972,8 @@ final class AbsentIntegrationsTest {
         MethodHandle status = lookup.findVirtual(detectedType, "status", MethodType.methodType(statusType));
         MethodHandle luckPerms = lookup.findStatic(Class.forName(PermissionProvider.class.getName(), true, loader),
             "luckPerms", MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class));
+        MethodHandle playerPoints = lookup.findStatic(Class.forName(EconomyProvider.class.getName(), true, loader),
+            "playerPoints", MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class));
         MethodHandle worldGuard = lookup.findStatic(Class.forName(RegionProvider.class.getName(), true, loader),
             "worldGuard", MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class));
         MethodHandle detect = lookup.findStatic(items, "detect",
@@ -903,6 +988,7 @@ final class AbsentIntegrationsTest {
         states.add(stateOf(loader, status.invoke(luckPerms.invoke(owner, errors, false))));
         states.add(stateOf(loader, status.invoke(worldGuard.invoke(owner, errors, false))));
         states.add(stateOf(loader, vaultLookup(loader, owner, errors, false)));
+        states.add(stateOf(loader, status.invoke(playerPoints.invoke(owner, errors, false))));
         states.addAll(placeholderStates(loader, registerPlaceholders(loader, owner, errors, false)));
         for (Object each : (List<?>) statuses.invoke(detect.invoke(owner, errors, Set.of()))) {
             states.add(stateOf(loader, each));
@@ -911,7 +997,7 @@ final class AbsentIntegrationsTest {
             states.add(stateOf(loader, status.invoke(holograms.invoke(owner, errors, false, plugin))));
         }
 
-        assertThat(states).hasSize(13).containsOnly(HookState.SWITCHED_OFF.name());
+        assertThat(states).hasSize(14).containsOnly(HookState.SWITCHED_OFF.name());
         verifyNoInteractions(plugins);
         assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder switched off; Nexo switched off;"
             + " Oraxen switched off; HeadDatabase switched off.");

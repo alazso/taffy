@@ -19,6 +19,11 @@ final class EconomyLookup {
     }
 
     static Detected<EconomyProvider> vault(VaultOptions options) {
+        return vault(options, null);
+    }
+
+    // A status equal to the one of previous is neither warned about nor reported.
+    static Detected<EconomyProvider> vault(VaultOptions options, @Nullable Detected<EconomyProvider> previous) {
         Objects.requireNonNull(options, "options");
         if (!options.switchedOn()) {
             return off(HookState.SWITCHED_OFF, null, null);
@@ -30,15 +35,21 @@ final class EconomyLookup {
         Logger logger = owner.getLogger();
         Plugin vault = server.getPluginManager().getPlugin(VAULT);
         String version = vault == null ? null : vault.getPluginMeta().getVersion();
+        HookStatus before = previous == null ? null : previous.status();
         if (!Classes.present(EconomyWatcher.ECONOMY, EconomyLookup.class, logger)) {
             if (vault == null) {
                 return off(HookState.NOT_INSTALLED, null, MissingEconomy.line(folia, false));
             }
             if (Classes.present(EconomyWatcher.ECONOMY, vault.getClass(), logger)) {
-                return new Detected<>(Detection.notVisible(VAULT, version, MissingEconomy.notVisible(folia), logger),
-                    null);
+                HookStatus hidden = new HookStatus(VAULT, HookState.NOT_VISIBLE, version,
+                    MissingEconomy.notVisible(folia));
+                return new Detected<>(hidden.equals(before) ? hidden
+                    : Detection.notVisible(VAULT, version, MissingEconomy.notVisible(folia), logger), null);
             }
-            return new Detected<>(Detection.apiMissing(VAULT, version, MissingEconomy.apiMissing(folia), logger), null);
+            HookStatus lacking = new HookStatus(VAULT, HookState.API_MISSING, version,
+                MissingEconomy.apiMissing(folia));
+            return new Detected<>(lacking.equals(before) ? lacking
+                : Detection.apiMissing(VAULT, version, MissingEconomy.apiMissing(folia), logger), null);
         }
         String shown = version == null ? "unknown" : version;
         EconomyProvider provider;
@@ -46,8 +57,12 @@ final class EconomyLookup {
             provider = VaultEconomy.lookup(server, options.scale(), logger, options.threadRule(),
                 options.fundsCheck());
         } catch (RuntimeException | LinkageError failure) {
-            Detection.failed(VAULT, shown, failure, logger, errors);
-            return off(HookState.FAILED, shown, "The economy could not be read (" + failure + ").");
+            Detected<EconomyProvider> failed = off(HookState.FAILED, shown,
+                "The economy could not be read (" + failure + ").");
+            if (!failed.status().equals(before)) {
+                Detection.failed(VAULT, shown, failure, logger, errors);
+            }
+            return failed;
         }
         if (provider == null) {
             return vault == null

@@ -25,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -278,6 +279,69 @@ final class EconomyLookupTest {
         assertThat(log.lines()).containsExactly("WARNING Vault 1.7.3 could not be hooked"
             + " (java.lang.IllegalStateException: services unavailable), so it stays off.");
         assertThat(log.records.getFirst().getThrown()).isSameAs(broken);
+    }
+
+    @Test
+    void aLookupGivenTheResultBeforeItWarnsAndReportsOnlyWhenTheStatusChanged() {
+        when(services.getRegistration(Economy.class)).thenThrow(new IllegalStateException("services unavailable"));
+        installVault("1.7.3");
+        VaultOptions options = VaultOptions.of(owner, errors, false);
+
+        Detected<EconomyProvider> first = EconomyProvider.vault(options, null);
+        Detected<EconomyProvider> second = EconomyProvider.vault(options, first);
+        Detected<EconomyProvider> third = EconomyProvider.vault(options, second);
+
+        assertThat(second.status()).isEqualTo(first.status());
+        assertThat(third.status()).isEqualTo(new HookStatus("Vault", HookState.FAILED, "1.7.3",
+            "The economy could not be read (java.lang.IllegalStateException: services unavailable)."));
+        assertThat(third.provider()).isNull();
+        assertThat(log.lines()).containsExactly("WARNING Vault 1.7.3 could not be hooked"
+            + " (java.lang.IllegalStateException: services unavailable), so it stays off.");
+        assertThat(reported).containsExactly("hook.vault services unavailable");
+
+        doThrow(new IllegalStateException("registry closed")).when(services).getRegistration(Economy.class);
+        Detected<EconomyProvider> changed = EconomyProvider.vault(options, third);
+
+        assertThat(changed.status().reason())
+            .isEqualTo("The economy could not be read (java.lang.IllegalStateException: registry closed).");
+        assertThat(log.lines()).hasSize(2).last().isEqualTo("WARNING Vault 1.7.3 could not be hooked"
+            + " (java.lang.IllegalStateException: registry closed), so it stays off.");
+        assertThat(reported).containsExactly("hook.vault services unavailable", "hook.vault registry closed");
+    }
+
+    @Test
+    void aStatusThatCameBackAfterAnotherIsWarnedAboutAgain() {
+        IllegalStateException broken = new IllegalStateException("services unavailable");
+        when(services.getRegistration(Economy.class)).thenThrow(broken);
+        installVault("1.7.3");
+        VaultOptions options = VaultOptions.of(owner, errors, false);
+        Detected<EconomyProvider> failed = EconomyProvider.vault(options, null);
+
+        doReturn(null).when(services).getRegistration(Economy.class);
+        Detected<EconomyProvider> missing = EconomyProvider.vault(options, failed);
+        doThrow(broken).when(services).getRegistration(Economy.class);
+        Detected<EconomyProvider> again = EconomyProvider.vault(options, missing);
+
+        assertThat(missing.status().state()).isEqualTo(HookState.NOT_REGISTERED);
+        assertThat(again.status()).isEqualTo(failed.status());
+        assertThat(log.lines()).hasSize(2);
+        assertThat(reported).hasSize(2);
+    }
+
+    @Test
+    void theLookupsWithoutAResultBeforeThemWarnAndReportEveryTime() {
+        when(services.getRegistration(Economy.class)).thenThrow(new IllegalStateException("services unavailable"));
+        installVault("1.7.3");
+        VaultOptions options = VaultOptions.of(owner, errors, false);
+
+        EconomyProvider.vault(options);
+        EconomyProvider.vault(owner, errors, true, false, null);
+        EconomyProvider.vault(options, null);
+
+        assertThat(log.lines()).hasSize(3);
+        assertThat(reported).hasSize(3);
+        assertThatThrownBy(() -> EconomyProvider.vault(null, lookUp(false, null)))
+            .isInstanceOf(NullPointerException.class).hasMessage("options");
     }
 
     @Test

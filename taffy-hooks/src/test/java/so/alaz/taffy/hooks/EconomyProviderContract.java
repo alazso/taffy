@@ -230,7 +230,7 @@ abstract class EconomyProviderContract {
         bank().onThread(true);
         assertThat(provider.withdraw(PLAYER, BigDecimal.ONE)).isEqualTo(EconomyResult.ok());
         assertThat(provider.deposit(PLAYER, BigDecimal.ONE)).isEqualTo(EconomyResult.ok());
-        assertThat(provider.balance(PLAYER)).isEqualTo(new BigDecimal("10.00"));
+        assertThat(provider.balance(PLAYER)).isEqualByComparingTo("10");
         assertThat(provider.has(PLAYER, BigDecimal.TEN)).isTrue();
     }
 
