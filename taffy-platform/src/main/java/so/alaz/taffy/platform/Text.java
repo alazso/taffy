@@ -23,6 +23,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
@@ -76,6 +77,7 @@ import java.util.regex.Pattern;
 public final class Text {
 
     private static final Pattern BRACED_NAME = Pattern.compile("\\{([a-z0-9_-]+)}");
+    private static final Pattern BRACED_NAME_ANY_CASE = Pattern.compile("\\{([A-Za-z0-9_-]+)}");
     private static final String PLACEHOLDER_API = "placeholderapi";
     private static final String MINI_PLACEHOLDERS = "miniplaceholders";
     private static final String MINI_PLACEHOLDERS_FAILED =
@@ -96,6 +98,7 @@ public final class Text {
     private final @Nullable Supplier<@Nullable TagResolver> miniPlaceholders;
     private final ThrowLog failures;
     private final boolean placeholderFormatting;
+    private final boolean namesIgnoringCase;
 
     /**
      * Detects PlaceholderAPI and MiniPlaceholders once, by class presence. A lookup that fails is
@@ -114,6 +117,7 @@ public final class Text {
             ? () -> MiniPlaceholders.audienceGlobalPlaceholders()
             : null;
         this.placeholderFormatting = false;
+        this.namesIgnoringCase = false;
     }
 
     /** Takes each integration's pass directly. {@code null} means the plugin is absent. */
@@ -126,13 +130,15 @@ public final class Text {
         this.placeholderApi = placeholderApi;
         this.miniPlaceholders = miniPlaceholders;
         this.placeholderFormatting = false;
+        this.namesIgnoringCase = false;
     }
 
-    private Text(Text source, boolean placeholderFormatting) {
+    private Text(Text source, boolean placeholderFormatting, boolean namesIgnoringCase) {
         this.failures = source.failures;
         this.placeholderApi = source.placeholderApi;
         this.miniPlaceholders = source.miniPlaceholders;
         this.placeholderFormatting = placeholderFormatting;
+        this.namesIgnoringCase = namesIgnoringCase;
     }
 
     /**
@@ -144,7 +150,19 @@ public final class Text {
      * can render chat through this instance and owner-written text through the returned one.
      */
     public Text withPlaceholderFormatting() {
-        return placeholderFormatting ? this : new Text(this, true);
+        return placeholderFormatting ? this : new Text(this, true, namesIgnoringCase);
+    }
+
+    /**
+     * Returns a {@code Text} that renders as this one does and also reads a {@code {name}} written with upper-case
+     * letters: the name is matched against the supplied values in lower case, so {@code {crateName}} reads as
+     * {@code <cratename>} when a value named {@code cratename} is supplied. A {@code {name}} that no value
+     * supplies stays as written, and a tag written as {@code <crateName>} is read as MiniMessage reads it. A
+     * supplied value is inserted as it is without this setting: a {@code {name}} inside it is not rewritten. This
+     * instance is left as it is, and the returned one shares its integrations and its log.
+     */
+    public Text withBracedNamesIgnoringCase() {
+        return namesIgnoringCase ? this : new Text(this, placeholderFormatting, true);
     }
 
     /** Parses the input as MiniMessage, without PlaceholderAPI resolution. */
@@ -258,11 +276,12 @@ public final class Text {
         TagResolver supplied = values;
         if (prefix != null) {
             String filled = LegacyText.sectionToMiniMessage(
-                insertPlaceholders(aliasBraces(prefix, values), fill, target, outputs, tokens));
+                insertPlaceholders(aliasBraces(prefix, values, namesIgnoringCase), fill, target, outputs, tokens));
             // The later resolver answers first, so a supplied value named prefix wins.
             supplied = TagResolver.resolver(Placeholder.parsed("prefix", filled), values);
         }
-        String filled = insertPlaceholders(aliasBraces(template, supplied), fill, target, outputs, tokens);
+        String filled = insertPlaceholders(
+            aliasBraces(template, supplied, namesIgnoringCase), fill, target, outputs, tokens);
         if (outputs.isEmpty()) {
             return deserialize(filled, viewer, supplied);
         }
@@ -395,6 +414,20 @@ public final class Text {
     static String aliasBraces(String template, TagResolver values) {
         return BRACED_NAME.matcher(template).replaceAll(
             match -> values.has(match.group(1)) ? "<" + match.group(1) + ">" : match.group());
+    }
+
+    /**
+     * Rewrites as {@link #aliasBraces(String, TagResolver)} does. With {@code ignoringCase}, a name may also hold
+     * upper-case letters: it is looked up in lower case and rewritten to that lower-case tag.
+     */
+    static String aliasBraces(String template, TagResolver values, boolean ignoringCase) {
+        if (!ignoringCase) {
+            return aliasBraces(template, values);
+        }
+        return BRACED_NAME_ANY_CASE.matcher(template).replaceAll(match -> {
+            String name = match.group(1).toLowerCase(Locale.ROOT);
+            return Matcher.quoteReplacement(values.has(name) ? "<" + name + ">" : match.group());
+        });
     }
 
     /**

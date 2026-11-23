@@ -762,4 +762,59 @@ class TextTest {
         assertThat(plain(text.render("{name} <who>", viewer, Placeholder.unparsed("name", "Ann")))).isEqualTo("Ann <who>");
         assertThat(log.records).isEmpty();
     }
+
+    @Test
+    void aBracedNameWithUpperCaseLettersStaysAsWrittenUnlessTheTextIgnoresCase() {
+        Text text = new Text(log.logger, pass, null);
+        String template = "{crateName} {cratename} {CRATENAME} {other} {keyCount} <cratename> %rank%";
+        TagResolver[] values = {Placeholder.unparsed("cratename", "Vote"), Placeholder.unparsed("keycount", "3")};
+
+        assertThat(plain(text.render(template, viewer, values)))
+            .isEqualTo("{crateName} Vote {CRATENAME} {other} {keyCount} Vote <green>VIP");
+        assertThat(plain(text.withBracedNamesIgnoringCase().render(template, viewer, values)))
+            .isEqualTo("Vote Vote Vote {other} 3 Vote <green>VIP");
+        assertThat(plain(text.withBracedNamesIgnoringCase().renderGlobal("{crateName}/{Missing}", values)))
+            .isEqualTo("Vote/{Missing}");
+    }
+
+    @Test
+    void aTextThatIgnoresCaseRendersEveryLowerCaseTemplateAsTheOriginalDoes() {
+        Text text = new Text(log.logger, pass, null);
+        Text ignoring = text.withBracedNamesIgnoringCase();
+        TagResolver[] values = {Placeholder.unparsed("name", "<red>{name}"), Placeholder.parsed("rich", "<bold>B")};
+        List<String> templates = List.of(
+            "{name} <name> {rich} {none} {} {{name}} {a b} %rank% \u00a76gold",
+            "<click:run_command:'/x {name}'>go</click> <hover:show_text:'{name}'>h</hover>",
+            "{item-name_2} $1 \\{name} {name");
+
+        for (String template : templates) {
+            assertThat(ignoring.render(template, viewer, values)).isEqualTo(text.render(template, viewer, values));
+        }
+        assertThat(ignoring.withBracedNamesIgnoringCase()).isSameAs(ignoring);
+        assertThat(ignoring.withPlaceholderFormatting().withBracedNamesIgnoringCase().render("{Name}", viewer, values))
+            .isEqualTo(Component.text("<red>{name}"));
+    }
+
+    @Test
+    void aValueSuppliedToATextThatIgnoresCaseIsNotReadAgain() {
+        Text text = new Text(log.logger, pass, null).withBracedNamesIgnoringCase();
+
+        Component rendered = text.render("{playerName}: {Message}", viewer,
+            Placeholder.unparsed("playername", "{Message} <red>Ann %rank%"),
+            Placeholder.unparsed("message", "<click:run_command:'/op me'>{playerName}</click>"));
+
+        assertThat(rendered).isEqualTo(Component.text(
+            "{Message} <red>Ann %rank%: <click:run_command:'/op me'>{playerName}</click>"));
+        assertThat(passInputs).isEmpty();
+    }
+
+    @Test
+    void aliasBracesIgnoringCaseRewritesToTheLowerCaseTag() {
+        TagResolver values = TagResolver.resolver(Placeholder.unparsed("a", "1"), Placeholder.unparsed("ab_c-2", "2"));
+
+        assertThat(Text.aliasBraces("{a} {A} {aB_C-2} {b} {B} {a b} {} {{A}}", values, true))
+            .isEqualTo("<a> <a> <ab_c-2> {b} {B} {a b} {} {<a>}");
+        assertThat(Text.aliasBraces("{a} {A} {aB_C-2}", values, false)).isEqualTo("<a> {A} {aB_C-2}");
+        assertThat(Text.aliasBraces("{$1} {A}", TagResolver.empty(), true)).isEqualTo("{$1} {A}");
+    }
 }

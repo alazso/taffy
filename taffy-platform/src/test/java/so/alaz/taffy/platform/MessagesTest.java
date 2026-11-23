@@ -4,11 +4,16 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
+import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import net.kyori.adventure.title.Title;
+import net.kyori.adventure.util.Ticks;
 import org.bukkit.OfflinePlayer;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.ArgumentCaptor;
 import so.alaz.taffy.test.CapturedLog;
 import so.alaz.taffy.test.FakeFolders;
 import so.alaz.taffy.test.JvmDefaults;
@@ -27,17 +32,22 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Handler;
 import java.util.logging.LogRecord;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 final class MessagesTest {
@@ -857,6 +867,498 @@ final class MessagesTest {
         assertThat(german.has(Locale.FRANCE, "only-french")).isFalse();
         assertThat(german.has(Locale.of("de", "AT"), "only-austrian")).isFalse();
         assertThat(german.has(Locale.FRANCE, "single")).isTrue();
+    }
+
+    @Test
+    void aNamedFolderHoldsTheFilesAndIsNamedInEveryWarning() throws IOException {
+        Path locales = Files.createDirectories(folder.resolve("locales"));
+        Files.writeString(locales.resolve("de.yml"), "parcel.delivered: \"<prefix>Zugestellt: <count>.\"\n");
+        Files.writeString(locales.resolve("fr.yml"), "parcel.delivered: [unclosed\n");
+        Files.writeString(locales.resolve("pt-BR.yml"), "parcel.held: \"a\"\n");
+        Files.write(locales.resolve("es.yml"), new byte[] {'a', ':', ' ', (byte) 0xC3, 0x28, '\n'});
+
+        Messages messages = Messages.load(folder, "locales", bundled(), log.logger, "it", true);
+
+        assertThat(locales.resolve("en.yml")).hasContent(BUNDLED);
+        assertThat(folder.resolve("lang")).doesNotExist();
+        assertThat(plain(messages, Locale.GERMANY, "parcel.delivered")).isEqualTo("[P] Zugestellt: 7.");
+        assertThat(log.lines()).containsExactlyInAnyOrder(
+            "WARNING locales/de.yml lacks parcel.held, prefix; those messages fall back to locales/it.yml, then to"
+                + " the bundled English text.",
+            "WARNING locales/fr.yml is not valid YAML saved as UTF-8, so its messages are not used.",
+            "WARNING locales/pt-BR.yml lacks parcel.delivered, prefix; those messages fall back to locales/pt.yml,"
+                + " then to locales/it.yml, then to the bundled English text.",
+            "WARNING locales/es.yml is not saved as UTF-8 (the first byte that is not UTF-8 is on line 1), so its"
+                + " messages are not used.",
+            "WARNING The default language it has no locales/it.yml, so the bundled English text is used in its"
+                + " place.");
+
+        log.records.clear();
+        Files.delete(locales.resolve("en.yml"));
+        Files.delete(locales.resolve("fr.yml"));
+        Files.delete(locales.resolve("es.yml"));
+        Files.writeString(locales.resolve("pt_br.yml"), BUNDLED);
+        messages.reload();
+
+        assertThat(locales.resolve("en.yml")).hasContent(BUNDLED);
+        assertThat(log.lines()).filteredOn(line -> line.contains("both")).hasSize(1).first().asString()
+            .startsWith("WARNING locales/pt").contains(" and locales/pt").contains("so only locales/pt");
+    }
+
+    @Test
+    void aFolderThatIsNotOnePathSegmentIsRefused() {
+        for (String name : List.of("", " ", ".", "..", "a/b", "a\\b", "../lang", "a..b")) {
+            assertThatThrownBy(() -> Messages.load(folder, name, bundled(), log.logger, "en", true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("the folder '" + name + "' is not one path segment");
+            assertThatThrownBy(
+                () -> Messages.load(folder, name, List.of(), code -> bundled().get(), log.logger, "en", true))
+                .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(folder).isEmptyDirectory();
+    }
+
+    @Test
+    void aFolderThatCannotBeWrittenIsNamedInTheWarning() throws IOException {
+        Files.writeString(folder.resolve("locales"), "a file where the folder belongs");
+
+        Messages messages = Messages.load(folder, "locales", bundled(), log.logger, "en", true);
+
+        assertThat(plain(messages, Locale.ENGLISH, "parcel.held")).isEqualTo("Held: 7.");
+        assertThat(log.lines()).hasSize(1).first().asString()
+            .startsWith("WARNING Could not write locales/en.yml: ")
+            .endsWith(". Messages use the bundled English text.");
+    }
+
+    @Test
+    void addMissingKeysAppendsTheBundledKeysAndKeepsTheOwnersLines() throws IOException {
+        Path english = Files.createDirectories(folder.resolve("locales")).resolve("en.yml");
+        String owned = "# my shop\r\nshop:\r\n  bought: 'Mine'   # kept\r\n\r\nextra: \"x\"";
+        Files.writeString(english, owned);
+        Messages messages = Messages.load(folder, "locales", supplier("""
+            shop:
+              bought: "Bought"
+              sold: "Sold \\"it\\" for {price}\\\\"
+              help:
+                - "<gold>/shop buy"
+                - ""
+                - "caf\u00e9 \u20ac"
+            none: []
+            "yes": "y"
+            block: |
+              one
+              two
+            time: 20
+            """), log.logger, "en", true);
+        log.records.clear();
+
+        List<String> added = messages.addMissingKeys();
+
+        assertThat(added).containsExactly("shop.sold", "shop.help", "none", "yes", "block", "time");
+        assertThat(Files.readString(english)).isEqualTo(owned + "\r\n"
+            + "shop.sold: \"Sold \\\"it\\\" for {price}\\\\\"\r\n"
+            + "shop.help:\r\n  - \"<gold>/shop buy\"\r\n  - \"\"\r\n  - \"caf\u00e9 \u20ac\"\r\n"
+            + "none: []\r\n"
+            + "\"yes\": \"y\"\r\n"
+            + "block: \"one\\ntwo\\n\"\r\n"
+            + "time: \"20\"\r\n");
+        assertThat(messages.template(null, "shop.bought")).isEqualTo("Mine");
+        assertThat(messages.template(null, "extra")).isEqualTo("x");
+        assertThat(messages.template(null, "shop.sold")).isEqualTo("Sold \"it\" for {price}\\");
+        assertThat(messages.lines(null, "shop.help")).hasSize(3);
+        assertThat(messages.lines(null, "none")).isEmpty();
+        assertThat(messages.template(null, "block")).isEqualTo("one\ntwo\n");
+        assertThat(log.lines()).isEmpty();
+        assertThat(english.resolveSibling("en.yml.tmp")).doesNotExist();
+
+        assertThat(messages.addMissingKeys()).isEmpty();
+        messages.reload();
+        assertThat(log.lines()).isEmpty();
+        assertThat(messages.addMissingKeys("fr")).isEmpty();
+    }
+
+    @Test
+    void addMissingKeysKeepsAByteOrderMarkAndLineFeeds() throws IOException {
+        Path english = Files.createDirectories(folder.resolve("lang")).resolve("en.yml");
+        byte[] owned =
+            "\uFEFFprefix: \"[\u00dc] \"\n# held\nparcel.held: \"Held\"\n".getBytes(StandardCharsets.UTF_8);
+        Files.write(english, owned);
+        Messages messages = Messages.load(folder, bundled(), log.logger);
+
+        assertThat(messages.addMissingKeys()).containsExactly("parcel.delivered");
+
+        ByteArrayOutputStream expected = new ByteArrayOutputStream();
+        expected.writeBytes(owned);
+        expected.writeBytes("parcel.delivered: \"<prefix>Delivered: <count>.\"\n".getBytes(StandardCharsets.UTF_8));
+        assertThat(Files.readAllBytes(english)).isEqualTo(expected.toByteArray());
+        assertThat(plain(messages, Locale.ENGLISH, "parcel.delivered")).isEqualTo("[\u00dc] Delivered: 7.");
+    }
+
+    @Test
+    void addMissingKeysLeavesAFileThatIsNotReadableAsItIs() throws IOException {
+        Path english = Files.createDirectories(folder.resolve("lang")).resolve("en.yml");
+        Files.writeString(english, "parcel.held: [unclosed\n");
+        Messages messages = Messages.load(folder, bundled(), log.logger);
+        log.records.clear();
+
+        assertThat(messages.addMissingKeys()).isEmpty();
+        assertThat(english).hasContent("parcel.held: [unclosed\n");
+        assertThat(log.lines()).containsExactly(
+            "WARNING lang/en.yml is not valid YAML saved as UTF-8, so no key was added to it.");
+
+        log.records.clear();
+        byte[] legacy = "parcel.held: \"Gar\u00e7on\"\n".getBytes(Charset.forName("windows-1252"));
+        Files.write(english, legacy);
+        Messages lenient = Messages.loadLenient(folder, bundled(), log.logger, "en", true);
+        log.records.clear();
+
+        assertThat(lenient.addMissingKeys()).isEmpty();
+        assertThat(Files.readAllBytes(english)).isEqualTo(legacy);
+        assertThat(log.lines()).containsExactly(
+            "WARNING lang/en.yml is not valid YAML saved as UTF-8, so no key was added to it.");
+    }
+
+    @Test
+    void addMissingKeysLeavesAFileWhoseKeysDoNotAllowTheNewOnes() throws IOException {
+        Path english = Files.createDirectories(folder.resolve("lang")).resolve("en.yml");
+        Files.writeString(english, "parcel: \"text where the bundled file has a section\"\n");
+        Messages messages = Messages.load(folder, bundled(), log.logger);
+        log.records.clear();
+
+        assertThat(messages.addMissingKeys()).isEmpty();
+
+        assertThat(english).hasContent("parcel: \"text where the bundled file has a section\"\n");
+        assertThat(log.lines()).containsExactly("WARNING lang/en.yml was not changed, because prefix, parcel.delivered,"
+            + " parcel.held cannot be added at its end.");
+        assertThat(messages.template(null, "parcel")).isEqualTo("text where the bundled file has a section");
+    }
+
+    @Test
+    void addMissingKeysOfAnAbsentFileWritesNothing() throws IOException {
+        Files.writeString(folder.resolve("lang"), "a file where the folder belongs");
+        Messages messages = Messages.load(folder, bundled(), log.logger);
+        log.records.clear();
+
+        assertThat(messages.addMissingKeys()).isEmpty();
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void bundledLanguagesAreWrittenAndBackTheOwnersFileOfTheSameCode() throws IOException {
+        Path locales = Files.createDirectories(folder.resolve("locales"));
+        Files.writeString(locales.resolve("de.yml"), "parcel.held: \"Meins: <count>.\"\n");
+        Files.writeString(locales.resolve("de_AT.yml"), "prefix: \"[AT] \"\n");
+        Files.writeString(locales.resolve("fr.yml"), "parcel.held: \"Tenu: <count>.\"\n");
+        Map<String, String> jar = Map.of("en", BUNDLED, "de", GERMAN, "pt_BR", "parcel.held: \"Retido: <count>.\"\n");
+        List<String> opened = new ArrayList<>();
+        Function<String, InputStream> opener = code -> {
+            opened.add(code);
+            return jar.containsKey(code) ? supplier(jar.get(code)).get() : null;
+        };
+
+        Messages messages =
+            Messages.load(folder, "locales", List.of("de", "EN", "pt_BR"), opener, log.logger, "", true);
+
+        assertThat(opened).contains("en", "de", "pt_BR").doesNotContain("EN", "pt_br");
+        assertThat(locales.resolve("en.yml")).hasContent(BUNDLED);
+        assertThat(locales.resolve("pt_BR.yml")).hasContent(jar.get("pt_BR"));
+        assertThat(locales.resolve("de.yml")).hasContent("parcel.held: \"Meins: <count>.\"\n");
+        assertThat(messages.loadedLanguages()).containsExactlyInAnyOrder("en", "de", "de_at", "fr", "pt_br");
+        assertThat(plain(messages, Locale.GERMANY, "parcel.held")).isEqualTo("Meins: 7.");
+        assertThat(plain(messages, Locale.GERMANY, "parcel.delivered")).isEqualTo("[D] Geliefert f\u00fcr 7 \u20ac.");
+        assertThat(plain(messages, Locale.of("de", "AT"), "parcel.delivered"))
+            .isEqualTo("[AT] Geliefert f\u00fcr 7 \u20ac.");
+        assertThat(plain(messages, Locale.of("pt", "BR"), "parcel.held")).isEqualTo("Retido: 7.");
+        assertThat(plain(messages, Locale.of("pt", "BR"), "parcel.delivered")).isEqualTo("[P] Delivered: 7.");
+        assertThat(plain(messages, Locale.FRANCE, "parcel.delivered")).isEqualTo("[P] Delivered: 7.");
+        assertThat(log.lines()).containsExactlyInAnyOrder(
+            "WARNING locales/fr.yml lacks parcel.delivered, prefix; those messages are shown in another language.",
+            "WARNING locales/pt_BR.yml lacks parcel.delivered, prefix; those messages are shown in another"
+                + " language.");
+
+        log.records.clear();
+        Files.delete(locales.resolve("pt_BR.yml"));
+        Files.delete(locales.resolve("de.yml"));
+        Files.writeString(locales.resolve("en.yml"), "prefix: \"[E] \"\n");
+        Files.writeString(locales.resolve("fr.yml"), "prefix: \"[F] \"\n");
+        messages.reload();
+
+        assertThat(locales.resolve("pt_BR.yml")).hasContent(jar.get("pt_BR"));
+        assertThat(locales.resolve("de.yml")).hasContent(GERMAN);
+        assertThat(plain(messages, Locale.ENGLISH, "parcel.held")).isEqualTo("Held: 7.");
+        assertThat(log.lines()).containsExactly(
+            "WARNING locales/fr.yml lacks parcel.delivered, parcel.held; those messages are shown in another"
+                + " language.");
+
+        log.records.clear();
+        messages.reload();
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void aBundledLanguageIsServedBeforeTheDefaultLanguageAndWithoutItsFile() throws IOException {
+        Files.writeString(folder.resolve("lang"), "a file where the folder belongs");
+        Map<String, String> jar = Map.of("en", BUNDLED, "de", GERMAN, "fr", "parcel.held: \"Tenu: <count>.\"\n");
+
+        Messages messages = Messages.load(
+            folder, "lang", List.of("de", "fr"), code -> supplier(jar.get(code)).get(), log.logger, "de", true);
+
+        assertThat(log.lines()).hasSize(1).first().asString()
+            .startsWith("WARNING Could not write lang/en.yml: ").endsWith(". Messages use the bundled English text.");
+        assertThat(messages.loadedLanguages()).containsExactlyInAnyOrder("en", "de", "fr");
+        assertThat(plain(messages, Locale.FRANCE, "parcel.held")).isEqualTo("Tenu: 7.");
+        assertThat(plain(messages, Locale.FRANCE, "parcel.delivered")).isEqualTo("[D] Geliefert f\u00fcr 7 \u20ac.");
+        assertThat(plain(messages, Locale.UK, "parcel.delivered")).isEqualTo("[P] Delivered: 7.");
+        assertThat(plain(messages, Locale.JAPAN, "parcel.held")).isEqualTo("Gehalten: 7.");
+    }
+
+    @Test
+    void aBundledLanguageFileThatIsMissingOrNamedTwiceStopsTheLoad() {
+        Function<String, InputStream> english = code -> code.equals("en") ? bundled().get() : null;
+
+        assertThatThrownBy(() -> Messages.load(folder, "lang", List.of("de"), english, log.logger, "en", true))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("the bundled de.yml is missing or unreadable");
+        assertThatThrownBy(
+            () -> Messages.load(folder, "lang", List.of("pt_BR", "pt-br"), english, log.logger, "en", true))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("two bundled locales read as pt_br");
+        assertThatThrownBy(() -> Messages.load(folder, "lang", List.of("../de"), english, log.logger, "en", true))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the bundled locale '../de' is not one path segment");
+        assertThat(folder).isEmptyDirectory();
+    }
+
+    @Test
+    void addMissingKeysOfALocaleTakesTheTextOfThatLanguageOnly() throws IOException {
+        Path locales = Files.createDirectories(folder.resolve("locales"));
+        Files.writeString(locales.resolve("de.yml"), "# meins\nparcel.held: \"Meins: <count>.\"\n");
+        Files.writeString(locales.resolve("fr.yml"), "parcel.held: \"Tenu: <count>.\"\n");
+        Map<String, String> jar = Map.of("en", BUNDLED, "de", "parcel.held: \"Gehalten\"\nprefix: \"[D] \"\n");
+        Messages messages = Messages.load(
+            folder, "locales", List.of("de"), code -> supplier(jar.get(code)).get(), log.logger, "en", true);
+        log.records.clear();
+
+        assertThat(messages.addMissingKeys("DE")).containsExactly("prefix");
+        assertThat(messages.addMissingKeys("fr")).isEmpty();
+        assertThat(messages.addMissingKeys()).isEmpty();
+
+        assertThat(locales.resolve("de.yml"))
+            .hasContent("# meins\nparcel.held: \"Meins: <count>.\"\nprefix: \"[D] \"\n");
+        assertThat(locales.resolve("fr.yml")).hasContent("parcel.held: \"Tenu: <count>.\"\n");
+        assertThat(plain(messages, Locale.GERMANY, "parcel.delivered")).isEqualTo("[D] Delivered: 7.");
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void sendRendersTheKeyForTheSenderAndSkipsAnEmptyMessage() {
+        Messages messages = Messages.load(folder, supplier("""
+            prefix: "[P] "
+            hello: "<prefix>Hello <name> %rank%"
+            pages:
+              - "<red>one"
+              - "two {name}"
+            quiet: ""
+            none: []
+            """), log.logger);
+        Text text = new Text(log.logger, pass, null);
+        Player player = viewer(Locale.ENGLISH);
+        CommandSender console = mock(CommandSender.class);
+
+        messages.send(text, player, "hello", Placeholder.unparsed("name", "<red>{name} %rank%"));
+        messages.send(text, console, "hello", Placeholder.unparsed("name", "Ann"));
+        messages.send(text, player, "pages", Placeholder.unparsed("name", "Ann"));
+        messages.send(text, player, "quiet");
+        messages.send(text, player, "none");
+        messages.send(text, console, "absent");
+
+        ArgumentCaptor<Component> toPlayer = ArgumentCaptor.forClass(Component.class);
+        verify(player, org.mockito.Mockito.times(2)).sendMessage(toPlayer.capture());
+        assertThat(toPlayer.getAllValues()).extracting(MessagesTest::plain)
+            .containsExactly("[P] Hello <red>{name} %rank% VIP", "one\ntwo Ann");
+        ArgumentCaptor<Component> toConsole = ArgumentCaptor.forClass(Component.class);
+        verify(console, org.mockito.Mockito.times(2)).sendMessage(toConsole.capture());
+        assertThat(toConsole.getAllValues()).extracting(MessagesTest::plain)
+            .containsExactly("[P] Hello Ann %rank%", "missing:absent");
+    }
+
+    @Test
+    void aChatPrefixFromThePluginStandsInFrontOfChatSendsOnly() {
+        Messages plain = Messages.load(folder, supplier("""
+            prefix: "[P] "
+            hello: "<prefix>Hello <name>"
+            pages:
+              - "one"
+              - "two"
+            quiet: ""
+            """), log.logger);
+        String[] configured = {"<gold>[%tag%]</gold> <gray>"};
+        Messages messages = plain.withChatPrefix(() -> configured[0]);
+        Text text = new Text(log.logger, pass, null);
+        Player player = viewer(Locale.ENGLISH);
+
+        messages.send(text, player, "hello", Placeholder.unparsed("name", "<red>Ann"));
+        messages.send(text, player, "pages");
+        messages.send(text, player, "quiet");
+        configured[0] = "";
+        messages.send(text, player, "hello", Placeholder.unparsed("name", "Bo"));
+        configured[0] = null;
+        messages.send(text, player, "hello", Placeholder.unparsed("name", "Cy"));
+        plain.send(text, player, "hello", Placeholder.unparsed("name", "Di"));
+        messages.sendActionBar(text, player, "hello", Placeholder.unparsed("name", "Ed"));
+
+        ArgumentCaptor<Component> sent = ArgumentCaptor.forClass(Component.class);
+        verify(player, org.mockito.Mockito.times(5)).sendMessage(sent.capture());
+        assertThat(sent.getAllValues()).extracting(MessagesTest::plain).containsExactly(
+            "[DE] [P] Hello <red>Ann", "[DE] one\ntwo", "[P] Hello Bo", "[P] Hello Cy", "[P] Hello Di");
+        assertThat(sent.getAllValues().getFirst()).isEqualTo(new Text(log.logger, null, null).render(
+            "<gold>[DE]</gold> <gray>[P] Hello <name>", (Player) null, Placeholder.unparsed("name", "<red>Ann")));
+        ArgumentCaptor<Component> bar = ArgumentCaptor.forClass(Component.class);
+        verify(player).sendActionBar(bar.capture());
+        assertThat(plain(bar.getValue())).isEqualTo("[P] Hello Ed");
+        assertThat(plain(messages.render(text, player, "hello", Placeholder.unparsed("name", "Flo"))))
+            .isEqualTo("[P] Hello Flo");
+        assertThat(plain(messages.render(Locale.ENGLISH, "hello", Placeholder.unparsed("name", "Gus"))))
+            .isEqualTo("[P] Hello Gus");
+    }
+
+    @Test
+    void aDerivedMessagesSharesTheFilesOfTheOneItCameFrom() throws IOException {
+        Messages messages = Messages.load(folder, bundled(), log.logger);
+        Messages prefixed = messages.withChatPrefix(() -> "> ").withBracedNamesIgnoringCase();
+
+        write("en.yml", "parcel.held: \"Kept {Count}\"\n");
+        prefixed.reload();
+
+        assertThat(plain(messages, Locale.ENGLISH, "parcel.held")).isEqualTo("Kept {Count}");
+        assertThat(plain(prefixed, Locale.ENGLISH, "parcel.held")).isEqualTo("Kept 7");
+        assertThat(messages.addMissingKeys()).containsExactly("prefix", "parcel.delivered");
+        assertThat(plain(prefixed, Locale.ENGLISH, "parcel.delivered")).isEqualTo("[P] Delivered: 7.");
+        assertThat(prefixed.defaultLocale()).isEqualTo("en");
+        assertThat(prefixed.withBracedNamesIgnoringCase()).isSameAs(prefixed);
+    }
+
+    @Test
+    void anActionBarAndATitleAreShownByKey() {
+        Messages messages = Messages.load(folder, supplier("""
+            prefix: "[P] "
+            bar: "<prefix>Bound to <name> %rank%"
+            win.title: "<gold>You won"
+            win.subtitle: "{prize} %rank%"
+            quiet: ""
+            """), log.logger);
+        Text text = new Text(log.logger, pass, null);
+        Player player = viewer(Locale.ENGLISH);
+        Title.Times times = Title.Times.times(Ticks.duration(5), Ticks.duration(40), Ticks.duration(15));
+
+        messages.sendActionBar(text, player, "bar", Placeholder.unparsed("name", "<b>Ann"));
+        messages.sendActionBar(text, player, "quiet");
+        messages.showTitle(text, player, "win.title", "win.subtitle", times, Placeholder.unparsed("prize", "{prize}"));
+        messages.showTitle(text, player, "win.title", null, times);
+        messages.showTitle(text, player, "quiet", "quiet", times);
+        messages.showTitle(text, player, "quiet", null, times);
+
+        ArgumentCaptor<Component> bar = ArgumentCaptor.forClass(Component.class);
+        verify(player).sendActionBar(bar.capture());
+        assertThat(plain(bar.getValue())).isEqualTo("[P] Bound to <b>Ann VIP");
+        ArgumentCaptor<Title> shown = ArgumentCaptor.forClass(Title.class);
+        verify(player, org.mockito.Mockito.times(2)).showTitle(shown.capture());
+        Title first = shown.getAllValues().getFirst();
+        assertThat(first.title()).isEqualTo(MINI.deserialize("<gold>You won"));
+        assertThat(plain(first.subtitle())).isEqualTo("{prize} VIP");
+        assertThat(first.times()).isEqualTo(times);
+        assertThat(shown.getAllValues().getLast().subtitle()).isEqualTo(Component.empty());
+        verify(player, never()).sendMessage(any(Component.class));
+    }
+
+    @Test
+    void aTitleEntryReadsItsTimesAsTicksFromTheLangFile() {
+        Messages messages = Messages.load(folder, supplier("""
+            win:
+              title: "<gold>You won {prizeName}"
+              subtitle: "<gray>Enjoy"
+              fadeIn: 5
+              stay: 40
+              fadeOut: 15
+            lose:
+              title: "Lost"
+              fadeIn: soon
+              stay: -4
+              fadeOut: 1.5
+            """), log.logger).withBracedNamesIgnoringCase();
+        Text text = new Text(log.logger, null, null);
+        Player player = viewer(Locale.ENGLISH);
+
+        messages.showTitle(text, player, "win", Placeholder.unparsed("prizename", "<b>Gem"));
+        messages.showTitle(text, player, "lose");
+        messages.showTitle(text, player, "absent");
+
+        ArgumentCaptor<Title> shown = ArgumentCaptor.forClass(Title.class);
+        verify(player, org.mockito.Mockito.times(3)).showTitle(shown.capture());
+        Title win = shown.getAllValues().getFirst();
+        assertThat(plain(win.title())).isEqualTo("You won <b>Gem");
+        assertThat(plain(win.subtitle())).isEqualTo("Enjoy");
+        assertThat(win.times())
+            .isEqualTo(Title.Times.times(Ticks.duration(5), Ticks.duration(40), Ticks.duration(15)));
+        Title lose = shown.getAllValues().get(1);
+        assertThat(lose.subtitle()).isEqualTo(Component.empty());
+        assertThat(lose.times()).isEqualTo(Title.DEFAULT_TIMES);
+        assertThat(plain(shown.getAllValues().getLast().title())).isEqualTo("missing:absent.title");
+    }
+
+    @Test
+    void camelCaseNamesStayAsWrittenUnlessTheMessagesIgnoreCase() {
+        Messages messages = Messages.load(folder, supplier("""
+            prefix: "[{worldName}] "
+            open: "{prefix}{crateName} for {playerName}, {keyCount} of {maxKeys}"
+            lore:
+              - "{crateName}"
+              - "{cratename}"
+            """), log.logger);
+        Messages ignoring = messages.withBracedNamesIgnoringCase();
+        TagResolver[] values = {
+            Placeholder.unparsed("cratename", "Vote"), Placeholder.unparsed("playername", "<red>{crateName}"),
+            Placeholder.unparsed("keycount", "3"), Placeholder.unparsed("worldname", "nether")};
+        Text text = new Text(log.logger, pass, null);
+        Player player = viewer(Locale.ENGLISH);
+
+        String written = "[{worldName}] {crateName} for {playerName}, {keyCount} of {maxKeys}";
+        assertThat(plain(messages.render(Locale.ENGLISH, "open", values))).isEqualTo(written);
+        assertThat(plain(messages.render(text, player, "open", values))).isEqualTo(written);
+        assertThat(messages.lines(null, "lore", values)).extracting(MessagesTest::plain)
+            .containsExactly("{crateName}", "Vote");
+
+        String filled = "[nether] Vote for <red>{crateName}, 3 of {maxKeys}";
+        assertThat(plain(ignoring.render(Locale.ENGLISH, "open", values))).isEqualTo(filled);
+        assertThat(plain(ignoring.render(text, player, "open", values))).isEqualTo(filled);
+        assertThat(plain(ignoring.render(text.withBracedNamesIgnoringCase(), null, "open", values))).isEqualTo(filled);
+        assertThat(plain(messages.render(text.withBracedNamesIgnoringCase(), player, "open", values)))
+            .isEqualTo(filled);
+        assertThat(plain(ignoring.renderTemplate(text, player, "{Prefix}{CrateName}", values)))
+            .isEqualTo("[nether] Vote");
+        assertThat(ignoring.lines(null, "lore", values)).extracting(MessagesTest::plain)
+            .containsExactly("Vote", "Vote");
+        assertThat(ignoring.template(null, "lore")).isEqualTo("{crateName}\n{cratename}");
+    }
+
+    @Test
+    void messagesThatIgnoreCaseRenderEveryLowerCaseTemplateAsTheOriginalDoes() {
+        Messages messages = Messages.load(folder, listed(), log.logger);
+        Messages ignoring = messages.withBracedNamesIgnoringCase();
+        Text text = new Text(log.logger, pass, null);
+        Player player = viewer(Locale.ENGLISH);
+        TagResolver[] values = {Placeholder.unparsed("count", "<red>{count}"), Placeholder.parsed("x", "\u00a7cx")};
+
+        for (String key : List.of("lore", "single", "prefix", "absent")) {
+            assertThat(ignoring.render(Locale.ENGLISH, key, values))
+                .isEqualTo(messages.render(Locale.ENGLISH, key, values));
+            assertThat(ignoring.lines(Locale.ENGLISH, key, values))
+                .isEqualTo(messages.lines(Locale.ENGLISH, key, values));
+            assertThat(ignoring.render(text, player, key, values))
+                .isEqualTo(messages.render(text, player, key, values));
+        }
+        assertThat(ignoring.renderTemplate(text, player, "{prefix}{count} {x} {none} %rank%", values))
+            .isEqualTo(messages.renderTemplate(text, player, "{prefix}{count} {x} {none} %rank%", values));
     }
 
     private String plain(Messages messages, Locale locale, String key) {

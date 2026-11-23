@@ -5,6 +5,53 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `Messages.load(Path dataFolder, String folder, Supplier<InputStream> bundled, Logger, String defaultLocale,
+  boolean perPlayer)` reads the language files from `dataFolder/<folder>` in place of `dataFolder/lang`: the
+  bundled English file is written to `<folder>/en.yml`, and every warning names `<folder>`. The folder is one
+  path segment, and a blank one, `.`, or one that holds `/`, `\` or `..` throws `IllegalArgumentException`. The
+  other loads keep `lang`, and `Messages.FOLDER` is still `lang`.
+- `Messages.load(Path dataFolder, String folder, Collection<String> bundledLocales,
+  Function<String, InputStream> bundled, Logger, String defaultLocale, boolean perPlayer)` loads the messages of
+  a plugin that bundles more languages than English. `bundled` is asked for `en` and for each code as
+  `bundledLocales` writes it. The load and each `reload()` write every bundled file whose `<folder>/<code>.yml`
+  is absent. At each step of the lookup, a key the owner's file lacks is taken from the bundled file of the same
+  code before the next step, so a `de.yml` kept from an older release serves a new key in German. A bundled
+  language is served when its file is gone as well, and `loadedLanguages()` lists it. The warning about the keys
+  a file lacks lists only the keys shown in another language, as `<folder>/<name> lacks <keys>; those messages
+  are shown in another language.`, and is logged once for each file and list of keys while the server runs. A
+  bundled file that is missing or unreadable throws `IllegalStateException`, and two codes that read as one
+  locale throw `IllegalArgumentException`. The other loads warn as before, on the load and on each reload.
+- `Messages.addMissingKeys()` appends each key of the bundled English file that the owner's `en.yml` lacks, with
+  its bundled text, at the end of that file, and returns the keys it added. `addMissingKeys(String locale)` does
+  the same for the file of a language from that language's own bundled file, and adds nothing for a language
+  the plugin bundles no file of, so a file is never given English text. The owner's bytes stay as they are:
+  lines, comments, order, encoding and byte order mark are kept, and the added lines end as the file's lines do.
+  A key is added in its dotted form, such as `shop.sold: "..."`. The new content is written to `<name>.tmp`
+  beside the file and moved over it in one step, and the file is then read again. A file that is not valid YAML
+  or is not saved as UTF-8 is left as it is, with the warning `<folder>/<name> is not valid YAML saved as UTF-8,
+  so no key was added to it.` Nothing calls it for the plugin: a plugin calls it at enable, behind its own
+  setting.
+- `Messages` sends by lang key: `send(Text, CommandSender, String key, TagResolver...)` as one chat message,
+  `sendActionBar(Text, Player, String key, TagResolver...)` and
+  `showTitle(Text, Player, String titleKey, String subtitleKey, Title.Times, TagResolver...)`. Each renders as
+  `render(Text, Player, String, TagResolver...)` does and belongs on the thread that owns the player. An empty
+  message, one whose template is an empty text or a list of no lines, is not sent, and a title is not shown when
+  its title and subtitle are both empty. `showTitle(Text, Player, String key, TagResolver...)` shows a title
+  written as one lang entry: `<key>.title`, `<key>.subtitle`, and `<key>.fadeIn`, `<key>.stay` and
+  `<key>.fadeOut` as whole numbers of ticks, each `Title.DEFAULT_TIMES` when it is absent or not a whole number.
+- `Messages.withChatPrefix(Supplier<String> prefix)` returns a `Messages` over the same files that puts a prefix
+  from the plugin, such as a `config.yml` setting, in front of each message `send` sends. The prefix is a
+  MiniMessage template read on each send and rendered with the message, so a tag it leaves open applies to the
+  message. A message of several lines gets it once, in front of its first line, and an empty message, which is
+  not sent, gets none. A render, an action bar and a title do not get it, and the `prefix` key of the lang files
+  still appears only where a template writes `<prefix>`. Without it, `send` adds no prefix.
+- `Text.withBracedNamesIgnoringCase()` and `Messages.withBracedNamesIgnoringCase()` return an instance that also
+  reads a `{name}` written with upper-case letters: the name is matched against the supplied values in lower
+  case, so `{crateName}` is filled by a value named `cratename`. Without it, only names of lower-case letters,
+  digits, `_` and `-` are rewritten, as before. A supplied value is inserted as it is either way: a `{name}` or
+  a tag inside `Placeholder.unparsed` text is not read again.
+
 ## [0.4.7] - 2026-11-22
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.
