@@ -16,21 +16,24 @@ import org.jetbrains.annotations.Nullable;
 // started. The flag only goes from false to true, so it needs no lock.
 final class ItemsAdderProvider implements CustomItemProvider, Listener {
 
+    private final Runnable itemsLoaded;
+
     private volatile boolean loaded;
 
-    private ItemsAdderProvider() {
+    private ItemsAdderProvider(Runnable itemsLoaded) {
+        this.itemsLoaded = itemsLoaded;
     }
 
     // registerEvents logs and skips a listener whose event class is missing instead of throwing, so the event is
     // linked first. The listener is registered before the loaded check, so a load that ends in between is seen by
     // the event.
-    static CustomItemProvider create(Plugin owner) {
+    static CustomItemProvider create(Plugin owner, Runnable itemsLoaded) {
         ApiLink.staticMethod(CustomStack.class, "byItemStack", CustomStack.class, ItemStack.class);
         ApiLink.instanceMethod(CustomStack.class, "getNamespacedID", String.class);
         ApiLink.staticMethod(CustomStack.class, "getInstance", CustomStack.class, String.class);
         ApiLink.instanceMethod(CustomStack.class, "getItemStack", ItemStack.class);
         ApiLink.staticMethod(ItemsAdderLoadDataEvent.class, "getHandlerList", HandlerList.class);
-        ItemsAdderProvider provider = new ItemsAdderProvider();
+        ItemsAdderProvider provider = new ItemsAdderProvider(itemsLoaded);
         owner.getServer().getPluginManager().registerEvents(provider, owner);
         try {
             if (loadedNow()) {
@@ -55,6 +58,7 @@ final class ItemsAdderProvider implements CustomItemProvider, Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void loaded(ItemsAdderLoadDataEvent event) {
         loaded = true;
+        itemsLoaded.run();
     }
 
     @Override

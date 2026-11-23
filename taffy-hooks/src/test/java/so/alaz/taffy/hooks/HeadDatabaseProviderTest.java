@@ -59,7 +59,7 @@ final class HeadDatabaseProviderTest {
             when(api.isHead("1234")).thenReturn(true);
             when(api.getItemHead("1234")).thenReturn(head);
         })) {
-            CustomItemProvider provider = HeadDatabaseProvider.create(owner);
+            CustomItemProvider provider = HeadDatabaseProvider.create(owner, () -> { });
 
             assertThat(provider.create("1234")).isSameAs(head);
             assertThat(apis.constructed()).hasSize(2);
@@ -72,7 +72,7 @@ final class HeadDatabaseProviderTest {
             when(api.isHead("9999")).thenReturn(false);
             when(api.getItemHead("9999")).thenReturn(head);
         })) {
-            CustomItemProvider provider = HeadDatabaseProvider.create(owner);
+            CustomItemProvider provider = HeadDatabaseProvider.create(owner, () -> { });
 
             assertThat(provider.create("9999")).isNull();
             HeadDatabaseAPI api = apis.constructed().getLast();
@@ -86,7 +86,7 @@ final class HeadDatabaseProviderTest {
         try (MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class, (api, context) -> {
             when(api.isHead("hdb:1234")).thenReturn(false);
         })) {
-            CustomItemProvider provider = HeadDatabaseProvider.create(owner);
+            CustomItemProvider provider = HeadDatabaseProvider.create(owner, () -> { });
 
             assertThat(provider.create("hdb:1234")).isNull();
             verify(apis.constructed().getLast()).isHead("hdb:1234");
@@ -96,7 +96,7 @@ final class HeadDatabaseProviderTest {
     @Test
     void noItemIsReadBackAsAHead() {
         try (MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class)) {
-            CustomItemProvider provider = HeadDatabaseProvider.create(owner);
+            CustomItemProvider provider = HeadDatabaseProvider.create(owner, () -> { });
 
             assertThat(provider.readsIds()).isFalse();
             assertThat(provider.id(head)).isNull();
@@ -111,7 +111,7 @@ final class HeadDatabaseProviderTest {
                 order.add("read");
                 return head;
             }))) {
-            CustomItemProvider provider = HeadDatabaseProvider.create(owner);
+            CustomItemProvider provider = HeadDatabaseProvider.create(owner, () -> { });
 
             assertThat(order).containsExactly("register", "read");
             assertThat(listeners).containsExactly((Listener) provider);
@@ -123,7 +123,7 @@ final class HeadDatabaseProviderTest {
     @Test
     void aDatabaseThatGivesNoRandomHeadBuildsFromTheLoadEvent() {
         try (MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class)) {
-            CustomItemProvider provider = HeadDatabaseProvider.create(owner);
+            CustomItemProvider provider = HeadDatabaseProvider.create(owner, () -> { });
 
             assertThat(provider.ready()).isFalse();
             ((HeadDatabaseProvider) provider).loaded(new DatabaseLoadEvent(3));
@@ -134,13 +134,41 @@ final class HeadDatabaseProviderTest {
     }
 
     @Test
+    void eachLoadEventRunsTheSignalOnceTheProviderIsReady() {
+        List<Boolean> readyWhenTold = new ArrayList<>();
+        CustomItemProvider[] provider = new CustomItemProvider[1];
+        try (MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class)) {
+            provider[0] = HeadDatabaseProvider.create(owner, () -> readyWhenTold.add(provider[0].ready()));
+
+            assertThat(readyWhenTold).isEmpty();
+            ((HeadDatabaseProvider) provider[0]).loaded(new DatabaseLoadEvent(3));
+            ((HeadDatabaseProvider) provider[0]).loaded(new DatabaseLoadEvent(4));
+            assertThat(readyWhenTold).containsExactly(true, true);
+            assertThat(apis.constructed()).hasSize(1);
+        }
+    }
+
+    @Test
+    void aDatabaseThatAlreadyHoldsAHeadRunsNoSignal() {
+        List<String> told = new ArrayList<>();
+        try (MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class, (api, context) ->
+            when(api.getRandomHead()).thenReturn(head))) {
+            CustomItemProvider provider = HeadDatabaseProvider.create(owner, () -> told.add("loaded"));
+
+            assertThat(provider.ready()).isTrue();
+            assertThat(told).isEmpty();
+            assertThat(apis.constructed()).hasSize(1);
+        }
+    }
+
+    @Test
     void aProviderCreatedAfterALoadEventAnotherProviderSawBuildsWithoutAskingForARandomHead() {
         try (MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class)) {
-            CustomItemProvider first = HeadDatabaseProvider.create(owner);
+            CustomItemProvider first = HeadDatabaseProvider.create(owner, () -> { });
             assertThat(first.ready()).isFalse();
             ((HeadDatabaseProvider) first).loaded(new DatabaseLoadEvent(0));
 
-            CustomItemProvider second = HeadDatabaseProvider.create(owner);
+            CustomItemProvider second = HeadDatabaseProvider.create(owner, () -> { });
 
             assertThat(second.ready()).isTrue();
             assertThat(listeners).containsExactly((Listener) first, (Listener) second);
@@ -155,7 +183,7 @@ final class HeadDatabaseProviderTest {
                 ((HeadDatabaseProvider) listeners.getFirst()).loaded(new DatabaseLoadEvent(3));
                 return null;
             }))) {
-            assertThat(HeadDatabaseProvider.create(owner).ready()).isTrue();
+            assertThat(HeadDatabaseProvider.create(owner, () -> { }).ready()).isTrue();
             assertThat(apis.constructed()).hasSize(1);
         }
     }
@@ -168,7 +196,7 @@ final class HeadDatabaseProviderTest {
             HeadDatabaseProvider.forgetLoad();
             try (MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class, (api, context) ->
                 when(api.getRandomHead()).thenThrow(thrown))) {
-                CustomItemProvider provider = HeadDatabaseProvider.create(owner);
+                CustomItemProvider provider = HeadDatabaseProvider.create(owner, () -> { });
 
                 assertThat(provider.ready()).isFalse();
                 assertThat(listeners).containsExactly((Listener) provider);
@@ -187,13 +215,13 @@ final class HeadDatabaseProviderTest {
         Class<?> hiddenProvider = Class.forName(CustomItemProvider.class.getName(), false, loader);
         // getDeclaredMethod would resolve the parameter type of every declared method, the event handler included.
         MethodHandle create = MethodHandles.privateLookupIn(hidden, MethodHandles.lookup())
-            .findStatic(hidden, "create", MethodType.methodType(hiddenProvider, Plugin.class));
+            .findStatic(hidden, "create", MethodType.methodType(hiddenProvider, Plugin.class, Runnable.class));
 
         assertThat(hidden.getClassLoader()).isSameAs(loader);
         assertThatThrownBy(hidden::getDeclaredMethods)
             .isInstanceOf(NoClassDefFoundError.class)
             .hasMessageContaining("DatabaseLoadEvent");
-        assertThatThrownBy(() -> create.invoke(owner))
+        assertThatThrownBy(() -> create.invoke(owner, (Runnable) () -> { }))
             .isInstanceOf(NoClassDefFoundError.class)
             .hasMessageContaining("DatabaseLoadEvent");
         verify(manager, never()).registerEvents(any(Listener.class), eq(owner));
@@ -202,7 +230,7 @@ final class HeadDatabaseProviderTest {
     // The HeadDatabase-API jar holds stubs, and its getRandomHead gives no head.
     @Test
     void theFactoryLinksTheApiAndRegistersTheListener() {
-        CustomItemProvider provider = HeadDatabaseProvider.create(owner);
+        CustomItemProvider provider = HeadDatabaseProvider.create(owner, () -> { });
 
         assertThat(provider).isInstanceOf(HeadDatabaseProvider.class);
         assertThat(listeners).containsExactly((Listener) provider);

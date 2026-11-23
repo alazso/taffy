@@ -1,7 +1,10 @@
 package so.alaz.taffy.hooks;
 
+import com.nexomc.nexo.api.events.NexoItemsLoadedEvent;
+import dev.lone.itemsadder.api.Events.ItemsAdderLoadDataEvent;
 import dev.lone.itemsadder.api.ItemsAdder;
 import io.papermc.paper.plugin.configuration.PluginMeta;
+import io.th0rgal.oraxen.api.events.OraxenItemsLoadedEvent;
 import me.arcaniax.hdb.api.DatabaseLoadEvent;
 import me.arcaniax.hdb.api.HeadDatabaseAPI;
 import org.bukkit.Material;
@@ -915,6 +918,119 @@ final class CustomItemsTest {
             assertThat(items.create("hdb:1234")).isSameAs(head);
             assertThat(apis.constructed()).hasSize(2);
         }
+    }
+
+    private List<Listener> everyPluginInstalled() {
+        PluginManager manager = server();
+        List<Listener> listeners = new ArrayList<>();
+        for (CustomItemPlugin plugin : CustomItemPlugin.values()) {
+            install(manager, plugin);
+        }
+        doAnswer(call -> listeners.add(call.getArgument(0)))
+            .when(manager).registerEvents(any(Listener.class), eq(owner));
+        return listeners;
+    }
+
+    private static void fireEveryLoadEvent(List<Listener> listeners) {
+        ((ItemsAdderProvider) listeners.get(0)).loaded(mock(ItemsAdderLoadDataEvent.class));
+        ((NexoProvider) listeners.get(1)).loaded(mock(NexoItemsLoadedEvent.class));
+        ((OraxenProvider) listeners.get(2)).loaded(mock(OraxenItemsLoadedEvent.class));
+        ((HeadDatabaseProvider) listeners.get(3)).loaded(new DatabaseLoadEvent(3));
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void theCallbackIsGivenEachPluginAtItsFirstLoadAndAtEveryReload() {
+        List<Listener> listeners = everyPluginInstalled();
+        List<String> told = new ArrayList<>();
+        CustomItems[] items = new CustomItems[1];
+
+        try (MockedStatic<ItemsAdder> itemsAdder = mockStatic(ItemsAdder.class);
+             MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class)) {
+            itemsAdder.when(ItemsAdder::areItemsLoaded).thenReturn(false);
+
+            items[0] = CustomItems.detect(owner, errors, ALL, plugin -> told.add(plugin + " "
+                + items[0].statuses().get(plugin.ordinal()).state() + " " + items[0].ready()));
+
+            assertThat(told).isEmpty();
+            assertThat(items[0].ready()).isFalse();
+            fireEveryLoadEvent(listeners);
+            assertThat(told).containsExactly("ITEMSADDER ON false", "NEXO ON false", "ORAXEN ON false",
+                "HEADDATABASE ON true");
+
+            told.clear();
+            ((NexoProvider) listeners.get(1)).loaded(mock(NexoItemsLoadedEvent.class));
+            assertThat(told).containsExactly("NEXO ON true");
+            assertThat(apis.constructed()).hasSize(1);
+        }
+        assertThat(log.lines()).filteredOn(line -> !line.startsWith("INFO")).allMatch(line ->
+            line.startsWith("WARNING Nexo does not say") || line.startsWith("WARNING Oraxen does not say"));
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void aCallbackThatThrowsIsWarnedAboutAndReportedAndTheNextPluginIsStillAnnounced() {
+        List<Listener> listeners = everyPluginInstalled();
+        List<CustomItemPlugin> told = new ArrayList<>();
+        IllegalStateException broken = new IllegalStateException("broken");
+        NoClassDefFoundError missing = new NoClassDefFoundError("com/example/Gone");
+
+        try (MockedStatic<ItemsAdder> itemsAdder = mockStatic(ItemsAdder.class);
+             MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class)) {
+            itemsAdder.when(ItemsAdder::areItemsLoaded).thenReturn(false);
+            CustomItems items = CustomItems.detect(owner, errors, ALL, plugin -> {
+                told.add(plugin);
+                if (plugin == CustomItemPlugin.NEXO) {
+                    throw broken;
+                }
+                if (plugin == CustomItemPlugin.ORAXEN) {
+                    throw missing;
+                }
+            });
+            log.records.clear();
+
+            fireEveryLoadEvent(listeners);
+
+            assertThat(told).containsExactly(CustomItemPlugin.values());
+            assertThat(items.ready()).isTrue();
+            assertThat(apis.constructed()).hasSize(1);
+        }
+        assertThat(log.lines()).containsExactly(
+            "WARNING The callback for the items Nexo loaded failed (java.lang.IllegalStateException: broken).",
+            "WARNING The callback for the items Oraxen loaded failed"
+                + " (java.lang.NoClassDefFoundError: com/example/Gone).");
+        assertThat(log.records).extracting(record -> record.getThrown()).containsExactly(broken, missing);
+        assertThat(reports).containsExactly(Map.entry("hook.nexo", broken), Map.entry("hook.oraxen", missing));
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void detectWithoutACallbackStillHearsTheLoadEvents() {
+        List<Listener> listeners = everyPluginInstalled();
+
+        try (MockedStatic<ItemsAdder> itemsAdder = mockStatic(ItemsAdder.class);
+             MockedConstruction<HeadDatabaseAPI> apis = mockConstruction(HeadDatabaseAPI.class)) {
+            itemsAdder.when(ItemsAdder::areItemsLoaded).thenReturn(false);
+            CustomItems items = CustomItems.detect(owner, errors, ALL);
+
+            assertThat(items.ready()).isFalse();
+            fireEveryLoadEvent(listeners);
+
+            assertThat(items.ready()).isTrue();
+            assertThat(apis.constructed()).hasSize(1);
+        }
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
+    void detectRefusesAMissingCallbackByName() {
+        assertThatThrownBy(() -> CustomItems.detect(owner, errors, ALL, null))
+            .isInstanceOf(NullPointerException.class).hasMessage("onItemsLoaded");
+        assertThatThrownBy(() -> CustomItems.detect(null, errors, ALL, plugin -> { }))
+            .isInstanceOf(NullPointerException.class).hasMessage("owner");
+        assertThatThrownBy(() -> CustomItems.detect(owner, null, ALL, plugin -> { }))
+            .isInstanceOf(NullPointerException.class).hasMessage("errors");
     }
 
     // Registers each listener the manager is given in a handler list of its own, as the server does per event.

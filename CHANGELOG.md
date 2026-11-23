@@ -56,6 +56,16 @@ All notable changes to Taffy are documented here. This project follows
   Folia. The withdraws of the provider for one player run one at a time from the balance read through `start`
   to the take. A take or give PlayerPoints refuses, as when a listener cancels its `PlayerPointsChangeEvent`,
   gives `FAILED` with `PlayerPoints refused it` and moves no points.
+- `CustomItems.detect(Plugin owner, ErrorReports errors, Set<CustomItemPlugin> switchedOn,
+  Consumer<CustomItemPlugin> onItemsLoaded)` detects as the three-argument `detect` does and runs
+  `onItemsLoaded` each time a plugin whose integration is on finishes loading its items, at its first load after
+  the server starts and at every reload: on `ItemsAdderLoadDataEvent`, `NexoItemsLoadedEvent`,
+  `OraxenItemsLoadedEvent` and HeadDatabase's `DatabaseLoadEvent`. The callback runs inside that event, on the
+  thread the plugin fires it on, after the plugin counts as loaded in `ready()`, so it hands its rebuild to
+  `Scheduler.global`. A plugin that had loaded its items before `detect` is announced from its next reload on.
+  A callback that throws is logged at most once a minute per plugin and reported under `hook.<key>`, and the
+  event goes on to its other listeners. `close()` ends the callbacks with the listeners. `CustomItems` itself
+  stays immutable, and `ready()` stays `true` while a plugin reloads its items.
 
 ## [0.4.6] - 2026-11-22
 

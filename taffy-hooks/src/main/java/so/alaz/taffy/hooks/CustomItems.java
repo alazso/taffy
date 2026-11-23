@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.logging.Logger;
 
@@ -27,7 +28,9 @@ import java.util.logging.Logger;
  * While it is still loading its items it builds none, and its ids are read only when it reads them from the item's
  * own data, as Nexo and Oraxen do.
  *
- * <p>Immutable after {@link #detect} and thread-safe. Each call runs the integration plugins on the calling thread,
+ * <p>Immutable after {@link #detect} and thread-safe. A plugin that reloads its items changes nothing here: the
+ * {@link #detect(Plugin, ErrorReports, Set, Consumer)} callback tells the owner, which rebuilds what it built from
+ * them. Each call runs the integration plugins on the calling thread,
  * so call on the thread that owns the item. {@link #close} unregisters the listeners detection registered, before the
  * owner detects again.
  */
@@ -150,14 +153,67 @@ public final class CustomItems {
      * @throws NullPointerException if an argument is {@code null}
      */
     public static CustomItems detect(Plugin owner, ErrorReports errors, Set<CustomItemPlugin> switchedOn) {
+        return detect(owner, errors, switchedOn, plugin -> { });
+    }
+
+    /**
+     * Detects the custom item plugins as {@link #detect(Plugin, ErrorReports, Set)} does, and runs
+     * {@code onItemsLoaded} each time a plugin whose integration is on finishes loading its items: at its first load
+     * after the server starts and at every reload of its items. A plugin that had loaded its items before this call
+     * is announced from its next reload on, so the caller reads {@link #ready()} on the result for the load that is
+     * already over.
+     *
+     * <p>The callback runs inside the event the plugin fires when its load ends, on the thread the plugin fires it
+     * on: {@code ItemsAdderLoadDataEvent}, {@code NexoItemsLoadedEvent}, {@code OraxenItemsLoadedEvent} and
+     * HeadDatabase's {@code DatabaseLoadEvent}. Each is a synchronous event, which Paper has a plugin fire on the
+     * server thread, and Folia on a thread that ticks, without saying which. The callback therefore only hands its
+     * work on, such as to {@code Scheduler.global}, and does not rebuild anything itself. By the time it runs, the
+     * plugin it names builds items here.
+     *
+     * <p>A callback that throws is warned about, at most once a minute per plugin with its stack the first time,
+     * and reported under {@code hook.<key>}. The event goes on to its other listeners. No callback runs after
+     * {@link #close} or once the owner is disabled, and the result of each {@code detect} that is not closed runs
+     * its own.
+     *
+     * @param owner the plugin that uses the integrations, as for {@link #detect(Plugin, ErrorReports, Set)}
+     * @param errors where a failure to build an integration or an item, and a callback that throws, is reported,
+     *     under {@code hook.<key>}, such as {@code hook.nexo}
+     * @param switchedOn the plugins to look for; any other plugin is not looked at and is
+     *     {@link HookState#SWITCHED_OFF}
+     * @param onItemsLoaded given the plugin that has just loaded or reloaded its items
+     * @return the integrations that are on
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    public static CustomItems detect(Plugin owner, ErrorReports errors, Set<CustomItemPlugin> switchedOn,
+                                     Consumer<CustomItemPlugin> onItemsLoaded) {
         Objects.requireNonNull(owner, "owner");
+        Objects.requireNonNull(errors, "errors");
+        Objects.requireNonNull(onItemsLoaded, "onItemsLoaded");
+        ThrowLog throwLog = new ThrowLog(owner.getLogger());
+        Function<CustomItemPlugin, Runnable> loaded = plugin -> itemsLoaded(plugin, onItemsLoaded, throwLog, errors);
         Map<CustomItemPlugin, Function<Plugin, CustomItemProvider>> factories = new EnumMap<>(CustomItemPlugin.class);
-        factories.put(CustomItemPlugin.ITEMSADDER, plugin -> ItemsAdderProvider.create(owner));
-        factories.put(CustomItemPlugin.NEXO, plugin -> NexoProvider.create(owner));
-        factories.put(CustomItemPlugin.ORAXEN, plugin -> OraxenProvider.create(owner));
-        factories.put(CustomItemPlugin.HEADDATABASE, plugin -> HeadDatabaseProvider.create(owner));
+        factories.put(CustomItemPlugin.ITEMSADDER,
+            plugin -> ItemsAdderProvider.create(owner, loaded.apply(CustomItemPlugin.ITEMSADDER)));
+        factories.put(CustomItemPlugin.NEXO, plugin -> NexoProvider.create(owner, loaded.apply(CustomItemPlugin.NEXO)));
+        factories.put(CustomItemPlugin.ORAXEN,
+            plugin -> OraxenProvider.create(owner, loaded.apply(CustomItemPlugin.ORAXEN)));
+        factories.put(CustomItemPlugin.HEADDATABASE,
+            plugin -> HeadDatabaseProvider.create(owner, loaded.apply(CustomItemPlugin.HEADDATABASE)));
         return detect(owner, errors, switchedOn,
             new PluginPresence(owner.getServer().getPluginManager(), owner.getLogger()), factories);
+    }
+
+    static Runnable itemsLoaded(CustomItemPlugin plugin, Consumer<CustomItemPlugin> onItemsLoaded, ThrowLog throwLog,
+                                ErrorReports errors) {
+        return () -> {
+            try {
+                onItemsLoaded.accept(plugin);
+            } catch (Exception | LinkageError failure) {
+                throwLog.warn("loaded " + plugin.key(), "The callback for the items " + plugin.plugin()
+                    + " loaded failed (" + failure + ").", failure);
+                errors.report("hook." + plugin.key(), failure);
+            }
+        };
     }
 
     static CustomItems detect(Plugin owner, ErrorReports errors, Set<CustomItemPlugin> switchedOn, Presence presence,

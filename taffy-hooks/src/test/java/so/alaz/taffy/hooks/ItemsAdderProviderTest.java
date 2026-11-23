@@ -72,7 +72,7 @@ final class ItemsAdderProviderTest {
             return true;
         });
 
-        CustomItemProvider provider = ItemsAdderProvider.create(owner);
+        CustomItemProvider provider = ItemsAdderProvider.create(owner, () -> { });
 
         assertThat(order).containsExactly("register", "read");
         assertThat(listeners).containsExactly((Listener) provider);
@@ -83,11 +83,36 @@ final class ItemsAdderProviderTest {
     void itemsNotYetLoadedAreReadyFromTheLoadEvent() {
         itemsAdder.when(ItemsAdder::areItemsLoaded).thenReturn(false);
 
-        CustomItemProvider provider = ItemsAdderProvider.create(owner);
+        CustomItemProvider provider = ItemsAdderProvider.create(owner, () -> { });
 
         assertThat(provider.ready()).isFalse();
         ((ItemsAdderProvider) provider).loaded(mock(ItemsAdderLoadDataEvent.class));
         assertThat(provider.ready()).isTrue();
+    }
+
+    @Test
+    void eachLoadEventRunsTheSignalOnceTheProviderIsReady() {
+        itemsAdder.when(ItemsAdder::areItemsLoaded).thenReturn(false);
+        List<Boolean> readyWhenTold = new ArrayList<>();
+        CustomItemProvider[] provider = new CustomItemProvider[1];
+
+        provider[0] = ItemsAdderProvider.create(owner, () -> readyWhenTold.add(provider[0].ready()));
+
+        assertThat(readyWhenTold).isEmpty();
+        ((ItemsAdderProvider) provider[0]).loaded(mock(ItemsAdderLoadDataEvent.class));
+        ((ItemsAdderProvider) provider[0]).loaded(mock(ItemsAdderLoadDataEvent.class));
+        assertThat(readyWhenTold).containsExactly(true, true);
+    }
+
+    @Test
+    void itemsLoadedBeforeTheProviderIsCreatedRunNoSignal() {
+        itemsAdder.when(ItemsAdder::areItemsLoaded).thenReturn(true);
+        List<String> told = new ArrayList<>();
+
+        CustomItemProvider provider = ItemsAdderProvider.create(owner, () -> told.add("loaded"));
+
+        assertThat(provider.ready()).isTrue();
+        assertThat(told).isEmpty();
     }
 
     @Test
@@ -97,14 +122,14 @@ final class ItemsAdderProviderTest {
             return false;
         });
 
-        assertThat(ItemsAdderProvider.create(owner).ready()).isTrue();
+        assertThat(ItemsAdderProvider.create(owner, () -> { }).ready()).isTrue();
     }
 
     @Test
     void anApiWithoutTheLoadedCheckWaitsForTheEvent() {
         itemsAdder.when(ItemsAdder::areItemsLoaded).thenThrow(new NoSuchMethodError("areItemsLoaded"));
 
-        CustomItemProvider provider = ItemsAdderProvider.create(owner);
+        CustomItemProvider provider = ItemsAdderProvider.create(owner, () -> { });
 
         assertThat(provider.ready()).isFalse();
         assertThat(log.lines()).containsExactly("WARNING ItemsAdder does not say whether its items are loaded"
@@ -120,7 +145,7 @@ final class ItemsAdderProviderTest {
         itemsAdder.when(ItemsAdder::areItemsLoaded).thenThrow(broken);
 
         try (MockedStatic<HandlerList> handlers = mockStatic(HandlerList.class)) {
-            assertThatThrownBy(() -> ItemsAdderProvider.create(owner)).isSameAs(broken);
+            assertThatThrownBy(() -> ItemsAdderProvider.create(owner, () -> { })).isSameAs(broken);
 
             assertThat(listeners).singleElement().isInstanceOf(ItemsAdderProvider.class);
             handlers.verify(() -> HandlerList.unregisterAll(listeners.getFirst()));
@@ -137,14 +162,14 @@ final class ItemsAdderProviderTest {
         Class<?> hiddenProvider = Class.forName(CustomItemProvider.class.getName(), false, loader);
         // getDeclaredMethod would resolve the parameter type of every declared method, the event handler included.
         MethodHandle create = MethodHandles.privateLookupIn(hidden, MethodHandles.lookup())
-            .findStatic(hidden, "create", MethodType.methodType(hiddenProvider, Plugin.class));
+            .findStatic(hidden, "create", MethodType.methodType(hiddenProvider, Plugin.class, Runnable.class));
 
         assertThat(hidden.getClassLoader()).isSameAs(loader);
         assertThat(hiddenProvider).isNotSameAs(CustomItemProvider.class);
         assertThatThrownBy(hidden::getDeclaredMethods)
             .isInstanceOf(NoClassDefFoundError.class)
             .hasMessageContaining("ItemsAdderLoadDataEvent");
-        assertThatThrownBy(() -> create.invoke(owner))
+        assertThatThrownBy(() -> create.invoke(owner, (Runnable) () -> { }))
             .isInstanceOf(NoClassDefFoundError.class)
             .hasMessageContaining("ItemsAdderLoadDataEvent");
         verify(manager, never()).registerEvents(any(Listener.class), eq(owner));
@@ -160,7 +185,7 @@ final class ItemsAdderProviderTest {
         stacks.when(() -> CustomStack.byItemStack(coin)).thenReturn(custom);
         stacks.when(() -> CustomStack.byItemStack(dirt)).thenReturn(null);
 
-        CustomItemProvider provider = ItemsAdderProvider.create(owner);
+        CustomItemProvider provider = ItemsAdderProvider.create(owner, () -> { });
 
         assertThat(provider.id(coin)).isEqualTo("shop:coin");
         assertThat(provider.id(dirt)).isNull();
@@ -174,7 +199,7 @@ final class ItemsAdderProviderTest {
         when(custom.getItemStack()).thenReturn(coin);
         stacks.when(() -> CustomStack.getInstance("shop:coin")).thenReturn(custom);
 
-        CustomItemProvider provider = ItemsAdderProvider.create(owner);
+        CustomItemProvider provider = ItemsAdderProvider.create(owner, () -> { });
 
         assertThat(provider.create("shop:coin")).isSameAs(coin);
         stacks.verify(() -> CustomStack.getInstance("shop:coin"));
@@ -185,7 +210,7 @@ final class ItemsAdderProviderTest {
         itemsAdder.when(ItemsAdder::areItemsLoaded).thenReturn(true);
         stacks.when(() -> CustomStack.getInstance("shop:nothing")).thenReturn(null);
 
-        CustomItemProvider provider = ItemsAdderProvider.create(owner);
+        CustomItemProvider provider = ItemsAdderProvider.create(owner, () -> { });
 
         assertThat(provider.create("shop:nothing")).isNull();
         stacks.verify(() -> CustomStack.getInstance("shop:nothing"));

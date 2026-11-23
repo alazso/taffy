@@ -179,7 +179,9 @@
  *
  * <p>A failure inside a later call is logged as a warning, at most once a minute for each kind of call with its stack
  * the first time. A failure that loses a write or a lookup is also reported under {@code hook.<name>}:
- * {@code hook.<key>} when a custom item cannot be built, such as {@code hook.nexo}; {@code hook.luckperms} and
+ * {@code hook.<key>} when a custom item cannot be built or the items-loaded callback of
+ * {@link so.alaz.taffy.hooks.CustomItems#detect(org.bukkit.plugin.Plugin, so.alaz.taffy.platform.ErrorReports,
+ * java.util.Set, java.util.function.Consumer)} throws, such as {@code hook.nexo}; {@code hook.luckperms} and
  * {@code hook.worldguard} for every failed call; {@code hook.floodgate} or {@code hook.geyser-spigot} for every
  * failed check of a Bedrock player; and {@code hook.decentholograms}, {@code hook.fancyholograms},
  * {@code hook.holograms} or {@code hook.hologramlib} for every failed hologram call. Reading an item's id and

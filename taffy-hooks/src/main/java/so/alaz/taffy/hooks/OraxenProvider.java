@@ -29,20 +29,22 @@ final class OraxenProvider implements CustomItemProvider, Listener {
     private final Predicate<String> exists;
     private final Function<String, @Nullable ItemStack> build;
     private final Function<ItemStack, @Nullable String> idOf;
+    private final Runnable itemsLoaded;
     private static volatile boolean seenLoad;
 
     private volatile boolean loaded;
 
     OraxenProvider(Predicate<String> exists, Function<String, @Nullable ItemStack> build,
-                   Function<ItemStack, @Nullable String> idOf) {
+                   Function<ItemStack, @Nullable String> idOf, Runnable itemsLoaded) {
         this.exists = exists;
         this.build = build;
         this.idOf = idOf;
+        this.itemsLoaded = itemsLoaded;
     }
 
     // registerEvents logs and skips a listener whose event class is missing instead of throwing, so the event is
     // linked first.
-    static CustomItemProvider create(Plugin owner) {
+    static CustomItemProvider create(Plugin owner, Runnable itemsLoaded) {
         ApiLink.staticMethod(OraxenItems.class, "getIdByItem", String.class, ItemStack.class);
         ApiLink.staticMethod(OraxenItems.class, "exists", boolean.class, String.class);
         ApiLink.staticMethod(OraxenItems.class, "getItemById", ItemBuilder.class, String.class);
@@ -55,7 +57,8 @@ final class OraxenProvider implements CustomItemProvider, Listener {
                 ItemBuilder builder = OraxenItems.getItemById(id);
                 return builder == null ? null : builder.build();
             },
-            item -> OraxenItems.getIdByItem(item));
+            item -> OraxenItems.getIdByItem(item),
+            itemsLoaded);
         return start(owner, provider, () -> !OraxenItems.getNames().isEmpty());
     }
 
@@ -90,6 +93,7 @@ final class OraxenProvider implements CustomItemProvider, Listener {
     public void loaded(OraxenItemsLoadedEvent event) {
         seenLoad = true;
         loaded = true;
+        itemsLoaded.run();
     }
 
     @Override

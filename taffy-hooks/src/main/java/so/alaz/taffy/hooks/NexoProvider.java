@@ -27,20 +27,22 @@ final class NexoProvider implements CustomItemProvider, Listener {
     private final Predicate<String> exists;
     private final Function<String, @Nullable ItemStack> build;
     private final Function<ItemStack, @Nullable String> idOf;
+    private final Runnable itemsLoaded;
     private static volatile boolean seenLoad;
 
     private volatile boolean loaded;
 
     NexoProvider(Predicate<String> exists, Function<String, @Nullable ItemStack> build,
-                 Function<ItemStack, @Nullable String> idOf) {
+                 Function<ItemStack, @Nullable String> idOf, Runnable itemsLoaded) {
         this.exists = exists;
         this.build = build;
         this.idOf = idOf;
+        this.itemsLoaded = itemsLoaded;
     }
 
     // registerEvents logs and skips a listener whose event class is missing instead of throwing, so the event is
     // linked first.
-    static CustomItemProvider create(Plugin owner) {
+    static CustomItemProvider create(Plugin owner, Runnable itemsLoaded) {
         ApiLink.staticMethod(NexoItems.class, "idFromItem", String.class, ItemStack.class);
         ApiLink.staticMethod(NexoItems.class, "exists", boolean.class, String.class);
         ApiLink.staticMethod(NexoItems.class, "itemFromId", ItemBuilder.class, String.class);
@@ -53,7 +55,8 @@ final class NexoProvider implements CustomItemProvider, Listener {
                 ItemBuilder builder = NexoItems.itemFromId(id);
                 return builder == null ? null : builder.build();
             },
-            item -> NexoItems.idFromItem(item));
+            item -> NexoItems.idFromItem(item),
+            itemsLoaded);
         return start(owner, provider, () -> !NexoItems.itemNames().isEmpty());
     }
 
@@ -88,6 +91,7 @@ final class NexoProvider implements CustomItemProvider, Listener {
     public void loaded(NexoItemsLoadedEvent event) {
         seenLoad = true;
         loaded = true;
+        itemsLoaded.run();
     }
 
     @Override

@@ -20,21 +20,24 @@ final class HeadDatabaseProvider implements CustomItemProvider, Listener {
 
     private static volatile boolean seenLoad;
 
+    private final Runnable itemsLoaded;
+
     private volatile boolean loaded;
 
-    private HeadDatabaseProvider() {
+    private HeadDatabaseProvider(Runnable itemsLoaded) {
+        this.itemsLoaded = itemsLoaded;
     }
 
     // registerEvents logs and skips a listener whose event class is missing instead of throwing, so the event is
     // linked first. The listener is registered before the random head is asked for, so a load that ends in between
     // is seen by the event.
-    static CustomItemProvider create(Plugin owner) {
+    static CustomItemProvider create(Plugin owner, Runnable itemsLoaded) {
         ApiLink.constructor(HeadDatabaseAPI.class);
         ApiLink.instanceMethod(HeadDatabaseAPI.class, "isHead", boolean.class, String.class);
         ApiLink.instanceMethod(HeadDatabaseAPI.class, "getItemHead", ItemStack.class, String.class);
         ApiLink.instanceMethod(HeadDatabaseAPI.class, "getRandomHead", ItemStack.class);
         ApiLink.staticMethod(DatabaseLoadEvent.class, "getHandlerList", HandlerList.class);
-        HeadDatabaseProvider provider = new HeadDatabaseProvider();
+        HeadDatabaseProvider provider = new HeadDatabaseProvider(itemsLoaded);
         owner.getServer().getPluginManager().registerEvents(provider, owner);
         if (seenLoad || holdsAHead()) {
             provider.loaded = true;
@@ -61,6 +64,7 @@ final class HeadDatabaseProvider implements CustomItemProvider, Listener {
     public void loaded(DatabaseLoadEvent event) {
         seenLoad = true;
         loaded = true;
+        itemsLoaded.run();
     }
 
     @Override

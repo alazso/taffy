@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
@@ -375,6 +376,34 @@ final class AbsentIntegrationsTest {
             "Oraxen 3.0 not visible to this plugin", "HeadDatabase 3.0 not visible to this plugin");
         assertThat(log.lines()).first().isEqualTo("WARNING ItemsAdder 3.0 is not visible to this plugin, so it stays"
             + " off: this plugin's paper-plugin.yml does not list ItemsAdder under dependencies.server.");
+        verify(plugins, never()).registerEvents(any(Listener.class), any(Plugin.class));
+    }
+
+    @Test
+    void customItemDetectionWithACallbackOnTheHiddenCopyRegistersNoListenerAndNeverRunsIt() throws Throwable {
+        ClassLoader loader = hidden();
+        PluginManager plugins = everyCustomItemPlugin(pluginOn(loader, "3.0"));
+        CapturedLog log = new CapturedLog();
+        Plugin owner = owner(plugins, log);
+        List<Object> told = new ArrayList<>();
+        Consumer<Object> callback = told::add;
+
+        Class<?> items = Class.forName(CustomItems.class.getName(), true, loader);
+        MethodHandle detect = MethodHandles.publicLookup().findStatic(items, "detect",
+            MethodType.methodType(items, Plugin.class, ErrorReports.class, Set.class, Consumer.class));
+        MethodHandle statuses = MethodHandles.publicLookup().findVirtual(items, "statuses",
+            MethodType.methodType(List.class));
+        MethodHandle ready = MethodHandles.publicLookup().findVirtual(items, "ready",
+            MethodType.methodType(boolean.class));
+
+        Object detected = detect.invoke(owner, new ErrorReports(),
+            allOf(Class.forName(CustomItemPlugin.class.getName(), true, loader)), callback);
+
+        assertThat(described(loader, (List<?>) statuses.invoke(detected))).containsExactly(
+            "ItemsAdder 3.0 lacks the API that is read", "Nexo 3.0 lacks the API that is read",
+            "Oraxen 3.0 lacks the API that is read", "HeadDatabase 3.0 lacks the API that is read");
+        assertThat((boolean) ready.invoke(detected)).isTrue();
+        assertThat(told).isEmpty();
         verify(plugins, never()).registerEvents(any(Listener.class), any(Plugin.class));
     }
 
