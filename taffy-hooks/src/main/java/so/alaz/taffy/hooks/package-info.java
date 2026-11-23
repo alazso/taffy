@@ -132,8 +132,7 @@
  *     all.add(regions.status());
  *     all.addAll(placeholders.statuses());
  *     for (HookStatus status : all) {
- *         sender.sendPlainMessage(status.reason() == null ? status.describe()
- *             : status.describe() + ". " + status.reason());
+ *         sender.sendPlainMessage(status.line());
  *     }
  * }
  *
@@ -159,7 +158,9 @@
  * it is enabled. The Vault economy is the exception: its status changes only through a new lookup.
  * {@link so.alaz.taffy.hooks.HookStatus#describe()} names the state, and
  * {@link so.alaz.taffy.hooks.HookStatus#reason()}, when it is set, says what is missing or what went wrong, and what
- * the owner can do when there is something to do; together they are the owner's line. {@link so.alaz.taffy.hooks.EconomyProvider#probe()} describes an economy that was found.
+ * the owner can do when there is something to do; together they are the owner's line, which
+ * {@link so.alaz.taffy.hooks.HookStatus#line()} returns: the state alone, or the state, a full stop, one space and
+ * the reason. {@link so.alaz.taffy.hooks.EconomyProvider#probe()} describes an economy that was found.
  *
  * <h2>Failures</h2>
  *

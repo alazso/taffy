@@ -77,4 +77,28 @@ final class HookStatusTest {
         assertThatThrownBy(() -> new HookStatus("Vault", null, "1.0", null))
             .isInstanceOf(NullPointerException.class).hasMessage("state");
     }
+
+    @Test
+    void theLineIsTheDescriptionAloneWithoutAReason() {
+        for (HookState state : HookState.values()) {
+            HookStatus status = new HookStatus("Vault", state, "1.7.3", null);
+
+            assertThat(status.line()).as(state.name()).isEqualTo(status.describe());
+        }
+    }
+
+    @Test
+    void theLineJoinsTheDescriptionAndTheReasonWithAFullStopAndASpace() {
+        String reason = "Vault is installed, but no economy plugin has registered with it. Install one, such as"
+            + " EssentialsX.";
+
+        assertThat(new HookStatus("Vault", HookState.NOT_REGISTERED, "1.7.3", reason).line())
+            .isEqualTo("Vault 1.7.3 has nothing registered with it. Vault is installed, but no economy plugin has"
+                + " registered with it. Install one, such as EssentialsX.");
+        for (HookState state : HookState.values()) {
+            HookStatus status = new HookStatus("Vault", state, null, reason);
+
+            assertThat(status.line()).as(state.name()).isEqualTo(status.describe() + ". " + reason);
+        }
+    }
 }

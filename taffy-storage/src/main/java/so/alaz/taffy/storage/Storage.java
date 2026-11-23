@@ -2,9 +2,11 @@ package so.alaz.taffy.storage;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import com.zaxxer.hikari.HikariPoolMXBean;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.Classes;
+import so.alaz.taffy.platform.DiagnosticReport;
 import so.alaz.taffy.platform.ErrorReports;
 
 import java.io.IOException;
@@ -24,7 +26,9 @@ import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -325,6 +329,95 @@ public final class Storage {
      */
     public Dialect dialect() {
         return dialect;
+    }
+
+    /**
+     * The state of this storage, as the lines of a {@link DiagnosticReport} section. It reads counters without
+     * blocking, takes no connection and never throws, so it is safe on any thread, the command's included. The
+     * lines hold no host, port, database name, user, password, connection URL or file path.
+     *
+     * <ul>
+     *   <li>{@code Database}: {@code SQLite}, {@code MySQL}, {@code MariaDB} or {@code PostgreSQL};</li>
+     *   <li>{@code State}: {@code open}, or {@code closed} once {@link #close} has begun;</li>
+     *   <li>one line for each connection pool this storage built: {@code Write pool} and {@code Read pool} on
+     *       SQLite, and {@code Pool} on a server. Its value is
+     *       {@code <active> active, <idle> idle, <waiting> waiting, <max> max}: the connections in use, the idle
+     *       ones, the threads that wait for a connection and the most connections the pool opens. It is
+     *       {@code closed} for a pool that was closed. Storage from {@link #over} built no pool and has no such
+     *       line.</li>
+     * </ul>
+     *
+     * @return the lines, unmodifiable
+     */
+    public List<DiagnosticReport.Line> diagnostics() {
+        List<DiagnosticReport.Line> lines = new ArrayList<>();
+        lines.add(new DiagnosticReport.Line("Database", switch (dialect) {
+            case SQLITE -> "SQLite";
+            case MYSQL -> "MySQL";
+            case MARIADB -> "MariaDB";
+            case POSTGRES -> "PostgreSQL";
+        }));
+        lines.add(new DiagnosticReport.Line("State", executor.isShutdown() ? "closed" : "open"));
+        for (int i = 0; i < pools.size(); i++) {
+            String label = pools.size() == 1 ? "Pool" : i == 0 ? "Write pool" : "Read pool";
+            lines.add(new DiagnosticReport.Line(label, poolState(pools.get(i))));
+        }
+        return List.copyOf(lines);
+    }
+
+    /**
+     * The state of a storage start, as the lines of a {@link DiagnosticReport} section, for a plugin that shows its
+     * diagnostics before the future of {@link #start} has completed or after it failed. It never waits for the
+     * future and never throws for what the future holds, so it is safe on any thread.
+     *
+     * <ul>
+     *   <li>a future that has not completed gives the one line {@code State: starting};</li>
+     *   <li>a cancelled future gives {@code State: start cancelled};</li>
+     *   <li>a future that completed exceptionally gives {@code State: failed to start: <message>}, where the
+     *       message is that of the failure, read beneath any {@code CompletionException} or
+     *       {@code ExecutionException}, with secrets and personal data hidden as
+     *       {@link so.alaz.taffy.platform.Redaction#hide} hides them: a connection URL, a host, an address, a
+     *       database user and a file path among them. A failure without a message shows its class name. The line
+     *       is cut as every {@link DiagnosticReport.Line} is;</li>
+     *   <li>a future that completed with a storage gives the lines of its {@link #diagnostics()}.</li>
+     * </ul>
+     *
+     * <p>A plugin that retries a failed start passes the future of the whole retry, which stays uncompleted
+     * between two attempts.
+     *
+     * @param start the future {@link #start} returned, or one a plugin completes from it
+     * @return the lines, unmodifiable
+     * @throws NullPointerException if {@code start} is {@code null} or completed with {@code null}
+     */
+    public static List<DiagnosticReport.Line> diagnostics(CompletableFuture<Storage> start) {
+        Objects.requireNonNull(start, "start");
+        if (!start.isDone()) {
+            return List.of(new DiagnosticReport.Line("State", "starting"));
+        }
+        if (start.isCancelled()) {
+            return List.of(new DiagnosticReport.Line("State", "start cancelled"));
+        }
+        if (start.isCompletedExceptionally()) {
+            Throwable failure = start.exceptionNow();
+            while ((failure instanceof CompletionException || failure instanceof ExecutionException)
+                && failure.getCause() != null) {
+                failure = failure.getCause();
+            }
+            String message = failure.getMessage();
+            String shown = message == null || message.isBlank() ? failure.getClass().getName() : message;
+            return List.of(DiagnosticReport.Line.redacted("State", "failed to start: " + shown));
+        }
+        return Objects.requireNonNull(start.resultNow(), "storage").diagnostics();
+    }
+
+    // Kept apart from diagnostics() so that storage without a pool resolves no HikariCP type there.
+    private static String poolState(HikariDataSource pool) {
+        HikariPoolMXBean counters = pool.getHikariPoolMXBean();
+        if (counters == null || pool.isClosed()) {
+            return "closed";
+        }
+        return counters.getActiveConnections() + " active, " + counters.getIdleConnections() + " idle, "
+            + counters.getThreadsAwaitingConnection() + " waiting, " + pool.getMaximumPoolSize() + " max";
     }
 
     /**

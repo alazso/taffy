@@ -5,6 +5,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import so.alaz.taffy.platform.DiagnosticReport;
 import so.alaz.taffy.test.RaceRunner;
 
 import java.math.BigDecimal;
@@ -88,6 +89,21 @@ abstract class StorageContract {
             tx.execute(createProbe(probe()));
             return null;
         }).join();
+    }
+
+    @Test
+    void diagnosticsNameTheDatabaseTheStateAndEachPool() {
+        List<String> lines = storage().diagnostics().stream().map(DiagnosticReport.Line::plain).toList();
+        String database = switch (dialect()) {
+            case SQLITE -> "SQLite";
+            case MYSQL -> "MySQL";
+            case MARIADB -> "MariaDB";
+            case POSTGRES -> "PostgreSQL";
+        };
+
+        assertThat(lines).startsWith("Database: " + database, "State: open");
+        assertThat(lines.subList(2, lines.size())).allSatisfy(line -> assertThat(line)
+            .matches("(Pool|Write pool|Read pool): \\d+ active, \\d+ idle, \\d+ waiting, \\d+ max"));
     }
 
     @Test

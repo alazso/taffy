@@ -7,7 +7,7 @@ import java.util.Objects;
 /**
  * The state of one integration, for a plugin to show to the server owner. {@link #describe()} names the state;
  * {@link #reason()}, when there is one, says what is missing or what went wrong, and what the owner can do when there
- * is something to do.
+ * is something to do. {@link #line()} joins the two.
  *
  * @param plugin the name of the integration plugin, such as {@code Vault}
  * @param state what became of the integration
@@ -62,5 +62,17 @@ public record HookStatus(String plugin, HookState state, @Nullable String versio
             case ON -> plugin + " on";
             case LOADING -> plugin + " on, waiting for its items to load";
         };
+    }
+
+    /**
+     * The owner's line: {@link #describe()} alone when there is no reason, and otherwise {@link #describe()}, a
+     * full stop, one space and {@link #reason()}, such as
+     * {@code Vault 1.7.3 has nothing registered with it. Install an economy plugin.} The line has no line break
+     * unless the reason holds one, and ends with a full stop only when there is a reason.
+     *
+     * @return {@code <describe()>} or {@code <describe()>. <reason()>}
+     */
+    public String line() {
+        return reason == null ? describe() : describe() + ". " + reason;
     }
 }

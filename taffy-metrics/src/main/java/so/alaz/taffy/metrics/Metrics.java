@@ -2,9 +2,11 @@ package so.alaz.taffy.metrics;
 
 import dev.faststats.SdkInfo;
 import org.jetbrains.annotations.Nullable;
+import so.alaz.taffy.platform.DiagnosticReport;
 import so.alaz.taffy.platform.ErrorReports;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import java.util.logging.Logger;
@@ -54,7 +56,8 @@ import java.util.logging.Logger;
  *
  * <p>The state methods report what each provider is actually doing, for a plugin's diagnostics command. They
  * read cached state without blocking and never throw, so they are safe on any thread. On an inert handle and
- * after {@link #shutdown()} they read {@code false} or {@code null}.
+ * after {@link #shutdown()} they read {@code false} or {@code null}. {@link #diagnostics()} gives them as the lines
+ * of a {@link DiagnosticReport} section.
  */
 public final class Metrics {
 
@@ -152,6 +155,48 @@ public final class Metrics {
     public boolean fastStatsErrorTracking() {
         return reads(context -> context.errorTrackerService().isPresent()
             && context.getConfig().errorTracking());
+    }
+
+    /**
+     * What each provider is doing, as the lines of a {@link DiagnosticReport} section, read from the state methods
+     * of this handle. It reads cached state without blocking and never throws, so it is safe on any thread. The
+     * lines hold no token, service id or server id.
+     *
+     * <ul>
+     *   <li>{@code bStats}: {@code on} while {@link #bStatsStarted()}, otherwise {@code not running};</li>
+     *   <li>{@code FastStats}: {@code not running} when {@link #fastStatsSdk()} is {@code null}, and otherwise the
+     *       SDK name and version, a comma and one of {@code opted out on this server},
+     *       {@code not submitting metrics}, {@code submitting metrics without the plugin's charts} and
+     *       {@code submitting metrics and the plugin's charts}, as in
+     *       {@code bukkit 0.33.0, submitting metrics and the plugin's charts};</li>
+     *   <li>{@code FastStats error tracking}: {@code on} while {@link #fastStatsErrorTracking()}, otherwise
+     *       {@code off}.</li>
+     * </ul>
+     *
+     * <p>A provider the plugin did not configure, one its owner turned off and every provider after
+     * {@link #shutdown()} read {@code not running}. A plugin with a switch of its own for metrics says so in a line
+     * of its own.
+     *
+     * @return the three lines, unmodifiable
+     */
+    public List<DiagnosticReport.Line> diagnostics() {
+        String sdk = fastStatsSdk();
+        String fastStatsState;
+        if (sdk == null) {
+            fastStatsState = "not running";
+        } else if (!fastStatsEnabled()) {
+            fastStatsState = sdk + ", opted out on this server";
+        } else if (!fastStatsSubmitting()) {
+            fastStatsState = sdk + ", not submitting metrics";
+        } else if (!fastStatsCharts()) {
+            fastStatsState = sdk + ", submitting metrics without the plugin's charts";
+        } else {
+            fastStatsState = sdk + ", submitting metrics and the plugin's charts";
+        }
+        return List.of(
+            new DiagnosticReport.Line("bStats", bStatsStarted() ? "on" : "not running"),
+            new DiagnosticReport.Line("FastStats", fastStatsState),
+            new DiagnosticReport.Line("FastStats error tracking", fastStatsErrorTracking() ? "on" : "off"));
     }
 
     /**

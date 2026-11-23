@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
+import so.alaz.taffy.platform.DiagnosticReport;
 import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.platform.Scheduler;
 
@@ -92,6 +93,56 @@ class MetricsTest {
         assertThat(neither.fastStatsSubmitting()).isFalse();
         assertThat(neither.fastStatsCharts()).isFalse();
         assertThat(neither.fastStatsErrorTracking()).isFalse();
+    }
+
+    @Test
+    void theDiagnosticsOfAnInertHandleReadNotRunning() {
+        assertThat(neither.diagnostics()).extracting(DiagnosticReport.Line::plain).containsExactly(
+            "bStats: not running", "FastStats: not running", "FastStats error tracking: off");
+        assertThatThrownBy(() -> neither.diagnostics().clear()).isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void theDiagnosticsOfAStartedBStatsReadOnUntilShutdown() {
+        org.bstats.bukkit.Metrics bStats = MetricsBuilder.startBStats(fixture.plugin,
+            MetricsFixture.BSTATS_SERVICE_ID, List.of(), fixture.log.logger, MetricsBuilder.BSTATS_FAILED);
+        Metrics metrics = new Metrics(bStats, null, null, errors, fixture.log.logger);
+
+        assertThat(metrics.diagnostics()).extracting(DiagnosticReport.Line::plain).containsExactly(
+            "bStats: on", "FastStats: not running", "FastStats error tracking: off");
+        metrics.shutdown();
+        assertThat(metrics.diagnostics()).extracting(DiagnosticReport.Line::plain).startsWith("bStats: not running");
+    }
+
+    @Test
+    void theDiagnosticsNameWhatFastStatsSubmitsAndNoTokenOrServerId() throws IOException {
+        Metrics on = startFastStats(true, true, true);
+        assertThat(on.diagnostics()).extracting(DiagnosticReport.Line::plain).containsExactly(
+            "bStats: not running",
+            "FastStats: bukkit 0.33.0, submitting metrics and the plugin's charts",
+            "FastStats error tracking: on");
+        assertThat(on.diagnostics().toString())
+            .doesNotContain(MetricsFixture.FASTSTATS_TOKEN).doesNotContain(MetricsFixture.SERVER_ID);
+
+        assertThat(startFastStats(false, true, true).diagnostics()).extracting(DiagnosticReport.Line::plain)
+            .containsExactly("bStats: not running", "FastStats: bukkit 0.33.0, opted out on this server",
+                "FastStats error tracking: off");
+        assertThat(startFastStats(true, false, true).diagnostics()).extracting(DiagnosticReport.Line::plain)
+            .containsExactly("bStats: not running", "FastStats: bukkit 0.33.0, not submitting metrics",
+                "FastStats error tracking: on");
+        assertThat(startFastStats(true, true, false).diagnostics()).extracting(DiagnosticReport.Line::plain)
+            .contains("FastStats error tracking: off");
+
+        fixture.writeFastStatsConfig(true, true, true, false);
+        Metrics withoutCharts = new MetricsBuilder(fixture.plugin, errors, true)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN).start();
+        started.add(withoutCharts);
+        assertThat(withoutCharts.diagnostics()).extracting(DiagnosticReport.Line::plain)
+            .contains("FastStats: bukkit 0.33.0, submitting metrics without the plugin's charts");
+
+        on.shutdown();
+        assertThat(on.diagnostics()).extracting(DiagnosticReport.Line::plain).containsExactly(
+            "bStats: not running", "FastStats: not running", "FastStats error tracking: off");
     }
 
     @Test

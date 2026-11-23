@@ -100,7 +100,9 @@
  * <p>{@link so.alaz.taffy.comficonf.ComfiConfConnection#status()} is read when asked.
  * {@link so.alaz.taffy.comficonf.ComfiConfStatus#describe()} names the state, and
  * {@link so.alaz.taffy.comficonf.ComfiConfStatus#reason()}, when it is set, says what is missing or what went wrong,
- * and what the owner can do when there is something to do; together they are the owner's line.
+ * and what the owner can do when there is something to do; together they are the owner's line, which
+ * {@link so.alaz.taffy.comficonf.ComfiConfStatus#line()} returns: the state alone, or the state, a full stop, one
+ * space and the reason.
  * {@link so.alaz.taffy.comficonf.ComfiConfConnection#resourceId()} gives the registered resource id for the same
  * line.
  *

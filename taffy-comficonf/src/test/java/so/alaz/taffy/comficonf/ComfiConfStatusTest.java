@@ -78,4 +78,26 @@ final class ComfiConfStatusTest {
         assertThatThrownBy(() -> new ComfiConfStatus(null, "1.2.0", null))
             .isInstanceOf(NullPointerException.class).hasMessage("state");
     }
+
+    @Test
+    void theLineIsTheDescriptionAloneWithoutAReason() {
+        for (ComfiConfState state : ComfiConfState.values()) {
+            ComfiConfStatus status = new ComfiConfStatus(state, "1.2.0", null);
+
+            assertThat(status.line()).as(state.name()).isEqualTo(status.describe());
+        }
+    }
+
+    @Test
+    void theLineJoinsTheDescriptionAndTheReasonWithAFullStopAndASpace() {
+        String reason = "Run /comficonf register Shop on this server.";
+
+        assertThat(new ComfiConfStatus(ComfiConfState.NOT_REGISTERED, "1.2.0", reason).line())
+            .isEqualTo("ComfiConf 1.2.0 installed, not registered. Run /comficonf register Shop on this server.");
+        for (ComfiConfState state : ComfiConfState.values()) {
+            ComfiConfStatus status = new ComfiConfStatus(state, null, reason);
+
+            assertThat(status.line()).as(state.name()).isEqualTo(status.describe() + ". " + reason);
+        }
+    }
 }

@@ -1,6 +1,6 @@
 /**
  * The classes every other Taffy module builds on: scheduling, shutdown, text, items, time, amounts of money,
- * logging and a Discord webhook.
+ * logging, a diagnostics report and a Discord webhook.
  *
  * <p>The shutdown classes assume one order while the owning plugin disables, with each step run through
  * {@link so.alaz.taffy.platform.Shutdown#closeQuietly} so that a failing step does not stop the next:

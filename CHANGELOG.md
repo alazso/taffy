@@ -5,6 +5,43 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `HookStatus.line()` and `ComfiConfStatus.line()` return the owner's line of a status: `describe()` alone when
+  there is no reason, and otherwise `describe()`, a full stop, one space and `reason()`, as in
+  `Vault 1.7.3 has nothing registered with it. Install an economy plugin.`
+- `DiagnosticReport` in `taffy-platform` builds a plugin's diagnostics report for the server owner.
+  `DiagnosticReport.builder(Plugin, Scheduler.Mode)` starts it, `section(String, Supplier)` and
+  `section(String, Collection)` add titled sections of `DiagnosticReport.Line(label, value)`, and `build()` reads
+  every section on the calling thread. A report starts with the section `Server`: the plugin's name and version,
+  the server's name and Minecraft version, the Java version and `Paper` or `Folia`. `plainText()` gives it as
+  lines of text for the console and `components()` as one Adventure component for each line, with every value
+  as plain text. A section whose supplier throws holds the one line `could not be read: <exception class>` and
+  the failure is logged on the plugin's logger, so the rest of the report is kept. A report is bounded: 32
+  sections after the standard one, 64 lines in a section, 64 characters in a label and 512 in a value, with
+  what is left out counted in a line of its own, and no line holds a line break.
+- `DiagnosticReport.Line.of(String)` is a line without a label, `Line.redacted(String, String)` passes a text
+  the plugin did not write through `Redaction.hide`, and `Line.pendingRestart(Collection<String>)` is the line
+  `Waiting for a restart` for the paths `RestartKeys.changed` returns: it names up to 32 paths and never a
+  value, and reads `none` for no path.
+- `Storage.diagnostics()` gives the lines of a storage section without taking a connection: `Database` with
+  `SQLite`, `MySQL`, `MariaDB` or `PostgreSQL`, `State` with `open` or `closed`, and for each connection pool
+  (`Write pool` and `Read pool` on SQLite, `Pool` on a server) its connections in use, idle connections, waiting
+  threads and maximum size. `Storage.diagnostics(CompletableFuture<Storage>)` reads the future of
+  `Storage.start` without waiting for it: `State: starting` before it completes, `State: start cancelled`,
+  `State: failed to start: <message>` with the failure's message passed through `Redaction.hide`, or the lines of
+  the started storage. The lines of a started storage hold no host, user, password, connection URL or file
+  path; the message of a failed start is the one text Taffy did not write.
+- `Metrics.diagnostics()` gives the lines of a metrics section from the readers of the handle: `bStats` with
+  `on` or `not running`, `FastStats` with `not running` or the SDK version and what it submits, such as
+  `bukkit 0.33.0, submitting metrics and the plugin's charts`, and `FastStats error tracking` with `on` or
+  `off`.
+- `Redaction` in `taffy-platform` hides secrets and personal data in free text such as an exception message.
+  `Redaction.hide(String)` applies the 19 rules `taffy-metrics` gives every FastStats error tracker (connection
+  URLs, credentials, tokens, email addresses, UUIDs, database users and names, SQL statements, file paths and
+  host names) and then replaces each IPv4 and IPv6 address with `[address hidden]`. `Redaction.rules()` returns
+  the rules as `Redaction.Rule(pattern, replacement)`. The rules moved from `taffy-metrics` unchanged, so what
+  FastStats error tracking receives is as in 0.4.9.
+
 ### Changed
 - `taffy-metrics` is built for and tested with FastStats 0.33.0, up from 0.32.2, and a plugin jar must shade
   FastStats 0.33.0 or newer with this release. FastStats 0.33.0 removed `BukkitContext`, which `taffy-metrics`
