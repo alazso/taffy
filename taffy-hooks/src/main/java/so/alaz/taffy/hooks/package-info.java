@@ -29,10 +29,10 @@
  *       required: false
  * }</pre>
  *
- * <p>The names are {@code ItemsAdder}, {@code Nexo}, {@code Oraxen}, {@code HeadDatabase}, {@code Vault},
- * {@code PlayerPoints}, {@code LuckPerms}, {@code WorldGuard}, {@code floodgate}, {@code Geyser-Spigot},
- * {@code PlaceholderAPI}, {@code MiniPlaceholders}, {@code DecentHolograms}, {@code FancyHolograms},
- * {@code Holograms} and {@code HologramLib}. A plugin that uses WorldGuard also lists
+ * <p>The names are {@code ItemsAdder}, {@code Nexo}, {@code Oraxen}, {@code HeadDatabase}, {@code CraftEngine},
+ * {@code MMOItems}, {@code Vault}, {@code PlayerPoints}, {@code LuckPerms}, {@code WorldGuard}, {@code floodgate},
+ * {@code Geyser-Spigot}, {@code PlaceholderAPI}, {@code MiniPlaceholders}, {@code DecentHolograms},
+ * {@code FancyHolograms}, {@code Holograms} and {@code HologramLib}. A plugin that uses WorldGuard also lists
  * {@code WorldEdit}, which WorldGuard's regions are read through. An integration that is
  * installed but not listed is {@link so.alaz.taffy.hooks.HookState#NOT_VISIBLE}, and its warning names the missing
  * entry.

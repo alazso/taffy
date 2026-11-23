@@ -22,11 +22,17 @@ import java.util.logging.Logger;
  * The custom item plugins that were on when the owner detected them, in {@link CustomItemPlugin} order: reads the
  * id of an item and builds the item an id names.
  *
- * <p>An id is the plugin's key, a colon and the plugin's own id of the item, as in {@code nexo:ruby} or
- * {@code itemsadder:gems:ruby}. {@link #create} also takes the plugin's own id alone, as in {@code ruby} or
- * {@code gems:ruby}. A plugin whose integration is on is still skipped by a call while it is no longer enabled.
- * While it is still loading its items it builds none, and its ids are read only when it reads them from the item's
- * own data, as Nexo and Oraxen do.
+ * <p>An id is the plugin's key, a colon and the plugin's own id of the item, as in {@code nexo:ruby},
+ * {@code itemsadder:gems:ruby}, {@code craftengine:default:topaz} or {@code mmoitems:SWORD:CUTLASS}. {@link #create}
+ * also takes the plugin's own id alone, as in {@code ruby} or {@code gems:ruby}. A plugin whose integration is on is
+ * still skipped by a call while it is no longer enabled. While it is still loading its items it builds none, and its
+ * ids are read only when it reads them from the item's own data, as Nexo, Oraxen and CraftEngine do.
+ *
+ * <p>A CraftEngine id is {@code <namespace>:<id>} and an MMOItems id is {@code <type>:<id>}, in the case MMOItems
+ * holds its types and ids in. An id of either plugin without a colon, or with nothing before or after its first
+ * colon, names no item, like an id the plugin does not know and an MMOItems type that does not exist: {@link #build}
+ * gives {@link Built.Reason#UNKNOWN_ID} for each. MMOItems has loaded its items by the time it is enabled, so it is
+ * never still loading them, and its items are built and read on the server thread.
  *
  * <p>Immutable after {@link #detect} and thread-safe. A plugin that reloads its items changes nothing here: the
  * {@link #detect(Plugin, ErrorReports, Set, Consumer)} callback tells the owner, which rebuilds what it built from
@@ -141,7 +147,10 @@ public final class CustomItems {
      * is on at once when it gives one. A HeadDatabase whose database holds no head gives none, as one that is still
      * loading does, so it is {@link HookState#LOADING} until its next {@code DatabaseLoadEvent}. Nexo and Oraxen are
      * otherwise on at once when they know an item name, so one that loaded with no item at all is
-     * {@link HookState#LOADING} until its next items-loaded event.
+     * {@link HookState#LOADING} until its next items-loaded event. CraftEngine, which finishes its first load after
+     * the server has started, is on at once when it says it is fully loaded or an earlier detection in this server
+     * run heard its {@code CraftEngineReloadEvent}, and is otherwise {@link HookState#LOADING} until that event.
+     * MMOItems is on at once.
      *
      * @param owner the plugin that uses the integrations: its server's plugin manager is searched, its logger
      *     receives every log line, and the integrations register their listeners for it
@@ -164,11 +173,16 @@ public final class CustomItems {
      * already over.
      *
      * <p>The callback runs inside the event the plugin fires when its load ends, on the thread the plugin fires it
-     * on: {@code ItemsAdderLoadDataEvent}, {@code NexoItemsLoadedEvent}, {@code OraxenItemsLoadedEvent} and
-     * HeadDatabase's {@code DatabaseLoadEvent}. Each is a synchronous event, which Paper has a plugin fire on the
-     * server thread, and Folia on a thread that ticks, without saying which. The callback therefore only hands its
-     * work on, such as to {@code Scheduler.global}, and does not rebuild anything itself. By the time it runs, the
-     * plugin it names builds items here.
+     * on: {@code ItemsAdderLoadDataEvent}, {@code NexoItemsLoadedEvent}, {@code OraxenItemsLoadedEvent},
+     * HeadDatabase's {@code DatabaseLoadEvent} and {@code CraftEngineReloadEvent}. Each is a synchronous event, which
+     * Paper has a plugin fire on the server thread, and Folia on a thread that ticks, without saying which. The
+     * callback therefore only hands its work on, such as to {@code Scheduler.global}, and does not rebuild anything
+     * itself. By the time it runs, the plugin it names builds items here.
+     *
+     * <p>MMOItems has no event for the end of a load. Its {@code MMOItemsReloadEvent} is fired on the server thread
+     * when its reload command starts, before it reads its files again, and it has read them by the time the command
+     * returns. The callback runs inside that event, so MMOItems still builds the items of before the reload while
+     * the callback runs, and the work the callback hands on to a later tick finds the reloaded ones.
      *
      * <p>A callback that throws is warned about, at most once a minute per plugin with its stack the first time,
      * and reported under {@code hook.<key>}. The event goes on to its other listeners. No callback runs after
@@ -199,6 +213,10 @@ public final class CustomItems {
             plugin -> OraxenProvider.create(owner, loaded.apply(CustomItemPlugin.ORAXEN)));
         factories.put(CustomItemPlugin.HEADDATABASE,
             plugin -> HeadDatabaseProvider.create(owner, loaded.apply(CustomItemPlugin.HEADDATABASE)));
+        factories.put(CustomItemPlugin.CRAFTENGINE,
+            plugin -> CraftEngineProvider.create(owner, loaded.apply(CustomItemPlugin.CRAFTENGINE)));
+        factories.put(CustomItemPlugin.MMOITEMS,
+            plugin -> MMOItemsProvider.create(owner, loaded.apply(CustomItemPlugin.MMOITEMS)));
         return detect(owner, errors, switchedOn,
             new PluginPresence(owner.getServer().getPluginManager(), owner.getLogger()), factories);
     }
@@ -244,10 +262,11 @@ public final class CustomItems {
      * Reads the id of an item: asks each plugin in turn and gives the first id one of them reads. A plugin that
      * throws is warned about, at most once a minute with its stack the first time, and counts as a failure. A plugin
      * that is no longer enabled is not asked and counts as a failure too, and so does ItemsAdder while it is still
-     * loading its items, since it reads ids from the items it has loaded. Nexo and Oraxen read the id from the
-     * item's own data, so they are asked while they are still loading their items. HeadDatabase, which only builds
-     * items, is never asked and never counts as a failure. A {@code null} or empty item is no custom item: no plugin
-     * is asked, and the result has no id and no failure.
+     * loading its items, since it reads ids from the items it has loaded. Nexo, Oraxen and CraftEngine read the id
+     * from the item's own data, so they are asked while they are still loading their items. MMOItems reads the
+     * item's type and id from the item's own data too. HeadDatabase, which only builds items, is never asked and
+     * never counts as a failure. A {@code null} or empty item is no custom item: no plugin is asked, and the result
+     * has no id and no failure.
      *
      * @param item the item to read
      * @return the id with no failure, or no id and whether any plugin failed

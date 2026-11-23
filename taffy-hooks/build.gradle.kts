@@ -12,6 +12,10 @@ dependencies {
     compileOnly(libs.nexo) { isTransitive = false }
     compileOnly(libs.oraxen) { isTransitive = false }
     compileOnly(libs.headdatabase.api) { isTransitive = false }
+    compileOnly(libs.craftengine.bukkit) { isTransitive = false }
+    compileOnly(libs.craftengine.core) { isTransitive = false }
+    compileOnly(libs.mmoitems.api) { isTransitive = false }
+    compileOnly(libs.mythiclib) { isTransitive = false }
     compileOnly(libs.vault.api) { isTransitive = false }
     compileOnly(libs.playerpoints) { isTransitive = false }
     compileOnly(libs.luckperms.api) { isTransitive = false }
@@ -35,6 +39,10 @@ dependencies {
     testImplementation(libs.nexo) { isTransitive = false }
     testImplementation(libs.oraxen) { isTransitive = false }
     testImplementation(libs.headdatabase.api) { isTransitive = false }
+    testImplementation(libs.craftengine.bukkit) { isTransitive = false }
+    testImplementation(libs.craftengine.core) { isTransitive = false }
+    testImplementation(libs.mmoitems.api) { isTransitive = false }
+    testImplementation(libs.mythiclib) { isTransitive = false }
     testImplementation(libs.vault.api) { isTransitive = false }
     testImplementation(libs.playerpoints) { isTransitive = false }
     testImplementation(libs.luckperms.api) { isTransitive = false }
@@ -54,17 +62,17 @@ dependencies {
 tasks.withType<JavaCompile>().configureEach {
     // Nexo is Kotlin-compiled and declared non-transitively, so its kotlin.* annotation types are absent.
     options.compilerArgs.add("-Xlint:-classfile")
-    // The HologramLib jar carries its own copy of Adventure 4 under net.kyori.adventure, and the PlayerPoints jar
-    // one of SLF4J under org.slf4j. Searched last, the libraries of paper-api are the ones the sources compile
-    // against.
-    val bundling = classpath.filter { it.name.startsWith("HologramLib-") || it.name.startsWith("playerpoints-") }
-    classpath = classpath.filter { !it.name.startsWith("HologramLib-") && !it.name.startsWith("playerpoints-") } +
-        bundling
+    // The HologramLib jar carries its own copy of Adventure 4 under net.kyori.adventure, the PlayerPoints jar one
+    // of SLF4J under org.slf4j, and the craft-engine-core jar one of Gson under com.google.gson. Searched last, the
+    // libraries of paper-api are the ones the sources compile against.
+    val bundlingJars = listOf("HologramLib-", "playerpoints-", "craft-engine-core-")
+    val bundling = classpath.filter { file -> bundlingJars.any { file.name.startsWith(it) } }
+    classpath = classpath.filter { file -> bundlingJars.none { file.name.startsWith(it) } } + bundling
 }
 
 tasks.withType<Test>().configureEach {
     // Searched last for the same reason: the libraries of paper-api are the ones the tests load.
-    val bundling = classpath.filter { it.name.startsWith("HologramLib-") || it.name.startsWith("playerpoints-") }
-    classpath = classpath.filter { !it.name.startsWith("HologramLib-") && !it.name.startsWith("playerpoints-") } +
-        bundling
+    val bundlingJars = listOf("HologramLib-", "playerpoints-", "craft-engine-core-")
+    val bundling = classpath.filter { file -> bundlingJars.any { file.name.startsWith(it) } }
+    classpath = classpath.filter { file -> bundlingJars.none { file.name.startsWith(it) } } + bundling
 }

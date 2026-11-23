@@ -14,6 +14,7 @@ class PublicApiRulesTest {
             .contains(ApiLink.class, HookState.class, HookStatus.class, Detected.class, Detection.class, Presence.class,
                 PluginPresence.class, CustomItemProvider.class, CustomItemPlugin.class, CustomItemRef.class,
                 ItemsAdderProvider.class, NexoProvider.class, OraxenProvider.class, HeadDatabaseProvider.class,
+                CraftEngineProvider.class, MMOItemsProvider.class,
                 CustomItems.class, CustomItems.Resolution.class, CustomItems.Built.class,
                 CustomItems.Built.Reason.class, EconomyResult.class, EconomyResult.Status.class,
                 EconomyProvider.class, VaultOptions.class, VaultOptions.ThreadRule.class,

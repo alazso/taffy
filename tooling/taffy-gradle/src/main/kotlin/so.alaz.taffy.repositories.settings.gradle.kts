@@ -78,6 +78,17 @@ dependencyResolutionManagement {
             name = "packetevents"
             content { includeGroup("com.github.retrooper") }
         }
+        maven("https://repo.momirealms.net/releases/") {
+            name = "momirealms"
+            content { includeGroup("net.momirealms") }
+        }
+        maven("https://nexus.phoenixdevt.fr/repository/maven-public/") {
+            name = "phoenix"
+            content {
+                includeGroup("net.Indyuce")
+                includeModule("io.lumine", "MythicLib-dist")
+            }
+        }
         maven("https://jitpack.io") {
             name = "jitpack"
             content {

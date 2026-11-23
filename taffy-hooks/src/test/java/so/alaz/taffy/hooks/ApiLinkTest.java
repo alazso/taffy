@@ -24,6 +24,8 @@ final class ApiLinkTest {
 
     public static final class Api {
 
+        public static Api instance;
+
         public static String idFromItem(ItemStack item) {
             return "id";
         }
@@ -107,6 +109,21 @@ final class ApiLinkTest {
     }
 
     @Test
+    void aStaticFieldOfTheExpectedTypeLinks() {
+        assertThatCode(() -> ApiLink.staticField(Api.class, "instance", Api.class)).doesNotThrowAnyException();
+    }
+
+    @Test
+    void aMissingStaticFieldOrAChangedTypeFailsToLink() {
+        assertThatThrownBy(() -> ApiLink.staticField(Api.class, "plugin", Api.class))
+            .isInstanceOf(NoSuchFieldError.class)
+            .hasMessage(Api.class.getName() + ".plugin:Api")
+            .hasCauseInstanceOf(NoSuchFieldException.class);
+        assertThatThrownBy(() -> ApiLink.staticField(Api.class, "instance", String.class))
+            .isInstanceOf(NoSuchFieldError.class);
+    }
+
+    @Test
     void aConstructorWithTheExpectedParametersLinks() {
         assertThatCode(() -> {
             ApiLink.constructor(Api.class);
@@ -135,7 +152,9 @@ final class ApiLinkTest {
                 return plain;
             },
             CustomItemPlugin.ORAXEN, bound -> plain,
-            CustomItemPlugin.HEADDATABASE, bound -> plain);
+            CustomItemPlugin.HEADDATABASE, bound -> plain,
+            CustomItemPlugin.CRAFTENGINE, bound -> plain,
+            CustomItemPlugin.MMOITEMS, bound -> plain);
         Plugin owner = mock(Plugin.class);
         when(owner.getLogger()).thenReturn(log.logger);
 
@@ -143,10 +162,11 @@ final class ApiLinkTest {
             new Everywhere(), factories);
 
         assertThat(items.active()).containsExactly(CustomItemPlugin.ITEMSADDER, CustomItemPlugin.ORAXEN,
-            CustomItemPlugin.HEADDATABASE);
+            CustomItemPlugin.HEADDATABASE, CustomItemPlugin.CRAFTENGINE, CustomItemPlugin.MMOITEMS);
         assertThat(log.lines()).containsExactly(
             "WARNING Nexo 2.0 could not be hooked (java.lang.NoSuchMethodError: " + Api.class.getName()
                 + ".idFor(ItemStack)String), so it stays off.",
-            "INFO Custom item plugins: ItemsAdder on; Nexo 2.0 could not be hooked; Oraxen on; HeadDatabase on.");
+            "INFO Custom item plugins: ItemsAdder on; Nexo 2.0 could not be hooked; Oraxen on; HeadDatabase on;"
+                + " CraftEngine on; MMOItems on.");
     }
 }

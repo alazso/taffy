@@ -7,6 +7,8 @@ import io.papermc.paper.plugin.configuration.PluginMeta;
 import io.th0rgal.oraxen.api.events.OraxenItemsLoadedEvent;
 import me.arcaniax.hdb.api.DatabaseLoadEvent;
 import me.arcaniax.hdb.api.HeadDatabaseAPI;
+import net.Indyuce.mmoitems.api.event.MMOItemsReloadEvent;
+import net.momirealms.craftengine.bukkit.api.event.CraftEngineReloadEvent;
 import org.bukkit.Material;
 import org.bukkit.Server;
 import org.bukkit.event.EventPriority;
@@ -68,6 +70,7 @@ final class CustomItemsTest {
         NexoProvider.forgetLoad();
         OraxenProvider.forgetLoad();
         HeadDatabaseProvider.forgetLoad();
+        CraftEngineProvider.forgetLoad();
         when(owner.getLogger()).thenReturn(log.logger);
         errors.install((source, error) -> reports.add(Map.entry(source, error)));
     }
@@ -118,15 +121,17 @@ final class CustomItemsTest {
         assertThat(items.active()).containsExactly(CustomItemPlugin.values());
         assertThat(items.statuses()).containsExactly(status(CustomItemPlugin.ITEMSADDER, HookState.ON),
             status(CustomItemPlugin.NEXO, HookState.ON), status(CustomItemPlugin.ORAXEN, HookState.ON),
-            status(CustomItemPlugin.HEADDATABASE, HookState.ON));
-        assertThat(log.lines()).containsExactly(
-            "INFO Custom item plugins: ItemsAdder on; Nexo on; Oraxen on; HeadDatabase on.");
+            status(CustomItemPlugin.HEADDATABASE, HookState.ON), status(CustomItemPlugin.CRAFTENGINE, HookState.ON),
+            status(CustomItemPlugin.MMOITEMS, HookState.ON));
+        assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder on; Nexo on; Oraxen on;"
+            + " HeadDatabase on; CraftEngine on; MMOItems on.");
         for (CustomItemPlugin plugin : CustomItemPlugin.values()) {
             assertThat(factoryCalls.get(plugin)).as(plugin.plugin()).isEqualTo(1);
             assertThat(builtWith.get(plugin)).as(plugin.plugin()).isSameAs(bound(plugin));
         }
         assertThat(presence.probes).containsExactly(CustomItemPlugin.ITEMSADDER.probe(),
-            CustomItemPlugin.NEXO.probe(), CustomItemPlugin.ORAXEN.probe(), CustomItemPlugin.HEADDATABASE.probe());
+            CustomItemPlugin.NEXO.probe(), CustomItemPlugin.ORAXEN.probe(), CustomItemPlugin.HEADDATABASE.probe(),
+            CustomItemPlugin.CRAFTENGINE.probe(), CustomItemPlugin.MMOITEMS.probe());
     }
 
     @Test
@@ -134,13 +139,13 @@ final class CustomItemsTest {
         CustomItems items = detect(EnumSet.complementOf(EnumSet.of(CustomItemPlugin.NEXO)));
 
         assertThat(items.active()).containsExactly(CustomItemPlugin.ITEMSADDER, CustomItemPlugin.ORAXEN,
-            CustomItemPlugin.HEADDATABASE);
+            CustomItemPlugin.HEADDATABASE, CustomItemPlugin.CRAFTENGINE, CustomItemPlugin.MMOITEMS);
         assertThat(items.statuses()).contains(status(CustomItemPlugin.NEXO, HookState.SWITCHED_OFF));
         assertThat(factoryCalls).doesNotContainKey(CustomItemPlugin.NEXO);
         assertThat(presence.probes).doesNotContain(CustomItemPlugin.NEXO.probe());
         assertThat(presence.plugins).doesNotContainKey("Nexo");
-        assertThat(log.lines()).containsExactly(
-            "INFO Custom item plugins: ItemsAdder on; Nexo switched off; Oraxen on; HeadDatabase on.");
+        assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder on; Nexo switched off;"
+            + " Oraxen on; HeadDatabase on; CraftEngine on; MMOItems on.");
     }
 
     @Test
@@ -156,7 +161,7 @@ final class CustomItemsTest {
         assertThat(items.available("nexo")).isFalse();
         assertThat(log.lines()).containsExactly(
             "INFO Custom item plugins: ItemsAdder switched off; Nexo switched off; Oraxen switched off;"
-                + " HeadDatabase switched off.");
+                + " HeadDatabase switched off; CraftEngine switched off; MMOItems switched off.");
     }
 
     @Test
@@ -166,13 +171,16 @@ final class CustomItemsTest {
 
         CustomItems items = detect(ALL);
 
-        assertThat(items.active()).containsExactly(CustomItemPlugin.NEXO, CustomItemPlugin.HEADDATABASE);
-        assertThat(factoryCalls).containsOnlyKeys(CustomItemPlugin.NEXO, CustomItemPlugin.HEADDATABASE);
+        assertThat(items.active()).containsExactly(CustomItemPlugin.NEXO, CustomItemPlugin.HEADDATABASE,
+            CustomItemPlugin.CRAFTENGINE, CustomItemPlugin.MMOITEMS);
+        assertThat(factoryCalls).containsOnlyKeys(CustomItemPlugin.NEXO, CustomItemPlugin.HEADDATABASE,
+            CustomItemPlugin.CRAFTENGINE, CustomItemPlugin.MMOITEMS);
         assertThat(items.statuses()).containsExactly(status(CustomItemPlugin.ITEMSADDER, HookState.NOT_ENABLED),
             status(CustomItemPlugin.NEXO, HookState.ON), status(CustomItemPlugin.ORAXEN, HookState.NOT_INSTALLED),
-            status(CustomItemPlugin.HEADDATABASE, HookState.ON));
+            status(CustomItemPlugin.HEADDATABASE, HookState.ON), status(CustomItemPlugin.CRAFTENGINE, HookState.ON),
+            status(CustomItemPlugin.MMOITEMS, HookState.ON));
         assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder installed but not enabled;"
-            + " Nexo on; Oraxen not installed; HeadDatabase on.");
+            + " Nexo on; Oraxen not installed; HeadDatabase on; CraftEngine on; MMOItems on.");
     }
 
     @Test
@@ -182,13 +190,13 @@ final class CustomItemsTest {
         CustomItems items = detect(ALL);
 
         assertThat(items.active()).containsExactly(CustomItemPlugin.ITEMSADDER, CustomItemPlugin.ORAXEN,
-            CustomItemPlugin.HEADDATABASE);
+            CustomItemPlugin.HEADDATABASE, CustomItemPlugin.CRAFTENGINE, CustomItemPlugin.MMOITEMS);
         assertThat(factoryCalls).doesNotContainKey(CustomItemPlugin.NEXO);
         assertThat(items.statuses()).contains(status(CustomItemPlugin.NEXO, HookState.API_MISSING));
         assertThat(log.lines()).containsExactly(
             "WARNING Nexo 1.0 lacks the API that is read, so it stays off.",
             "INFO Custom item plugins: ItemsAdder on; Nexo 1.0 lacks the API that is read; Oraxen on;"
-                + " HeadDatabase on.");
+                + " HeadDatabase on; CraftEngine on; MMOItems on.");
     }
 
     @Test
@@ -198,12 +206,13 @@ final class CustomItemsTest {
         CustomItems items = detect(ALL);
 
         assertThat(items.active()).containsExactly(CustomItemPlugin.NEXO, CustomItemPlugin.ORAXEN,
-            CustomItemPlugin.HEADDATABASE);
+            CustomItemPlugin.HEADDATABASE, CustomItemPlugin.CRAFTENGINE, CustomItemPlugin.MMOITEMS);
         assertThat(items.statuses().getFirst()).isEqualTo(status(CustomItemPlugin.ITEMSADDER, HookState.FAILED));
         assertThat(log.lines()).containsExactly(
             "WARNING ItemsAdder 1.0 could not be hooked (java.lang.NoClassDefFoundError:"
                 + " dev/lone/itemsadder/api/CustomStack), so it stays off.",
-            "INFO Custom item plugins: ItemsAdder 1.0 could not be hooked; Nexo on; Oraxen on; HeadDatabase on.");
+            "INFO Custom item plugins: ItemsAdder 1.0 could not be hooked; Nexo on; Oraxen on; HeadDatabase on;"
+                + " CraftEngine on; MMOItems on.");
         assertThat(log.records.getFirst().getThrown()).isInstanceOf(NoClassDefFoundError.class);
         assertThat(reports).containsExactly(
             Map.entry("hook.itemsadder", factoryFailures.get(CustomItemPlugin.ITEMSADDER)));
@@ -216,10 +225,11 @@ final class CustomItemsTest {
         CustomItems items = detect(ALL);
 
         assertThat(items.active()).containsExactly(CustomItemPlugin.ITEMSADDER, CustomItemPlugin.ORAXEN,
-            CustomItemPlugin.HEADDATABASE);
+            CustomItemPlugin.HEADDATABASE, CustomItemPlugin.CRAFTENGINE, CustomItemPlugin.MMOITEMS);
         assertThat(log.lines()).containsExactly(
             "WARNING Nexo 1.0 could not be hooked (java.io.IOException: kotlin), so it stays off.",
-            "INFO Custom item plugins: ItemsAdder on; Nexo 1.0 could not be hooked; Oraxen on; HeadDatabase on.");
+            "INFO Custom item plugins: ItemsAdder on; Nexo 1.0 could not be hooked; Oraxen on; HeadDatabase on;"
+                + " CraftEngine on; MMOItems on.");
         assertThat(log.records.getFirst().getThrown()).isInstanceOf(IOException.class);
         assertThat(reports).containsExactly(Map.entry("hook.nexo", factoryFailures.get(CustomItemPlugin.NEXO)));
     }
@@ -246,7 +256,8 @@ final class CustomItemsTest {
         assertThat(items.active()).containsExactly(CustomItemPlugin.ITEMSADDER);
         assertThat(items.statuses().getFirst()).isEqualTo(status(CustomItemPlugin.ITEMSADDER, HookState.LOADING));
         assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder on, waiting for its items to"
-            + " load; Nexo switched off; Oraxen switched off; HeadDatabase switched off.");
+            + " load; Nexo switched off; Oraxen switched off; HeadDatabase switched off; CraftEngine switched off;"
+            + " MMOItems switched off.");
     }
 
     @Test
@@ -257,7 +268,8 @@ final class CustomItemsTest {
 
         assertThat(items.statuses()).containsExactly(status(CustomItemPlugin.ITEMSADDER, HookState.LOADING),
             status(CustomItemPlugin.NEXO, HookState.ON), status(CustomItemPlugin.ORAXEN, HookState.NOT_INSTALLED),
-            status(CustomItemPlugin.HEADDATABASE, HookState.SWITCHED_OFF));
+            status(CustomItemPlugin.HEADDATABASE, HookState.SWITCHED_OFF),
+            status(CustomItemPlugin.CRAFTENGINE, HookState.ON), status(CustomItemPlugin.MMOITEMS, HookState.ON));
 
         provider(CustomItemPlugin.ITEMSADDER).ready = true;
         when(bound(CustomItemPlugin.NEXO).isEnabled()).thenReturn(false);
@@ -265,7 +277,8 @@ final class CustomItemsTest {
         assertThat(items.statuses()).containsExactly(status(CustomItemPlugin.ITEMSADDER, HookState.ON),
             status(CustomItemPlugin.NEXO, HookState.NOT_ENABLED),
             status(CustomItemPlugin.ORAXEN, HookState.NOT_INSTALLED),
-            status(CustomItemPlugin.HEADDATABASE, HookState.SWITCHED_OFF));
+            status(CustomItemPlugin.HEADDATABASE, HookState.SWITCHED_OFF),
+            status(CustomItemPlugin.CRAFTENGINE, HookState.ON), status(CustomItemPlugin.MMOITEMS, HookState.ON));
         assertThat(items.statuses().get(1).describe()).isEqualTo("Nexo installed but not enabled");
         assertThatThrownBy(() -> items.statuses().add(status(CustomItemPlugin.NEXO, HookState.ON)))
             .isInstanceOf(UnsupportedOperationException.class);
@@ -299,13 +312,13 @@ final class CustomItemsTest {
         CustomItems items = detect(ALL);
 
         assertThat(items.active()).containsExactly(CustomItemPlugin.ITEMSADDER, CustomItemPlugin.NEXO,
-            CustomItemPlugin.HEADDATABASE);
+            CustomItemPlugin.HEADDATABASE, CustomItemPlugin.CRAFTENGINE, CustomItemPlugin.MMOITEMS);
         assertThat(items.statuses()).contains(status(CustomItemPlugin.ORAXEN, HookState.NOT_VISIBLE));
         assertThat(log.lines()).containsExactly(
             "WARNING Oraxen 1.0 is not visible to this plugin, so it stays off: this plugin's paper-plugin.yml does"
                 + " not list Oraxen under dependencies.server.",
             "INFO Custom item plugins: ItemsAdder on; Nexo on; Oraxen 1.0 not visible to this plugin;"
-                + " HeadDatabase on.");
+                + " HeadDatabase on; CraftEngine on; MMOItems on.");
     }
 
     @Test
@@ -445,7 +458,8 @@ final class CustomItemsTest {
         CustomItems.Built notReady = new CustomItems.Built(null, CustomItems.Built.Reason.NOT_READY);
 
         assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder switched off; Nexo on,"
-            + " waiting for its items to load; Oraxen switched off; HeadDatabase switched off.");
+            + " waiting for its items to load; Oraxen switched off; HeadDatabase switched off; CraftEngine switched"
+            + " off; MMOItems switched off.");
         assertThat(items.ready()).isFalse();
         assertThat(items.statuses().get(1)).isEqualTo(status(CustomItemPlugin.NEXO, HookState.LOADING));
         assertThat(items.resolve(gem)).isEqualTo(new CustomItems.Resolution("nexo:gem", false));
@@ -567,6 +581,23 @@ final class CustomItemsTest {
     }
 
     @Test
+    void aCraftEngineOrMmoItemsReferenceGoesToItsPluginWithTheRestAsTheIdAndReadsBackTheSame() {
+        provider(CustomItemPlugin.CRAFTENGINE).id("emerald", "default:topaz");
+        provider(CustomItemPlugin.MMOITEMS).id("dirt", "SWORD:CUTLASS");
+        CustomItems items = detected();
+
+        assertThat(FakeItems.type(items.create("craftengine:default:topaz"))).isEqualTo("emerald");
+        assertThat(FakeItems.type(items.create("mmoitems:SWORD:CUTLASS"))).isEqualTo("dirt");
+        assertThat(items.build("craftengine:default:opal")).isEqualTo(none(CustomItems.Built.Reason.UNKNOWN_ID));
+        assertThat(items.build("mmoitems:STAFF:CUTLASS")).isEqualTo(none(CustomItems.Built.Reason.UNKNOWN_ID));
+        assertThat(provider(CustomItemPlugin.ITEMSADDER).calls).hasValue(0);
+        assertThat(provider(CustomItemPlugin.CRAFTENGINE).calls).hasValue(2);
+        assertThat(provider(CustomItemPlugin.MMOITEMS).calls).hasValue(2);
+        assertThat(items.resolve(gem)).isEqualTo(new CustomItems.Resolution("craftengine:default:topaz", false));
+        assertThat(items.resolve(dirt)).isEqualTo(new CustomItems.Resolution("mmoitems:SWORD:CUTLASS", false));
+    }
+
+    @Test
     void aReferenceStartingWithAColonGivesEachPluginTheBareId() {
         provider(CustomItemPlugin.NEXO).id("ruby", "ruby");
         CustomItems items = detected();
@@ -587,7 +618,7 @@ final class CustomItemsTest {
 
         assertThat(FakeItems.type(items.create("gems:opal"))).isEqualTo("nexo_opal");
         assertThat(FakeItems.type(items.create("gems:pack:ruby"))).isNull();
-        assertThat(items.create("mmoitems:ruby")).as("no plugin is given the id without the hint").isNull();
+        assertThat(items.create("mythic:ruby")).as("no plugin is given the id without the hint").isNull();
         for (CustomItemPlugin plugin : CustomItemPlugin.values()) {
             assertThat(provider(plugin).calls).as(plugin.plugin())
                 .hasValue(plugin == CustomItemPlugin.ITEMSADDER ? 4 : plugin == CustomItemPlugin.NEXO ? 3 : 2);
@@ -772,7 +803,7 @@ final class CustomItemsTest {
     void buildNamesTheCauseForAReferenceWhoseHintNamesNoPlugin() {
         CustomItems items = detected();
 
-        assertThat(items.build("mmoitems:ruby")).isEqualTo(none(CustomItems.Built.Reason.UNKNOWN_PLUGIN));
+        assertThat(items.build("mythic:ruby")).isEqualTo(none(CustomItems.Built.Reason.UNKNOWN_PLUGIN));
 
         provider(CustomItemPlugin.ORAXEN).failure = new IllegalStateException("boom");
         assertThat(items.build("gems:ruby")).isEqualTo(none(CustomItems.Built.Reason.FAILED));
@@ -821,7 +852,9 @@ final class CustomItemsTest {
         assertThat(items.available(" HDB ")).isTrue();
         assertThat(items.available("nexo")).isTrue();
         assertThat(items.available("oraxen")).isFalse();
-        assertThat(items.available("mmoitems")).isFalse();
+        assertThat(items.available("craftengine")).isTrue();
+        assertThat(items.available("MMOItems")).isTrue();
+        assertThat(items.available("mythic")).isFalse();
         assertThat(items.available("")).isFalse();
 
         when(bound(CustomItemPlugin.NEXO).isEnabled()).thenReturn(false);
@@ -837,7 +870,7 @@ final class CustomItemsTest {
         assertThatThrownBy(() -> items.statuses().clear()).isInstanceOf(UnsupportedOperationException.class);
         assertThatThrownBy(() -> items.active().clear()).isInstanceOf(UnsupportedOperationException.class);
         assertThat(items.active()).containsExactly(CustomItemPlugin.NEXO, CustomItemPlugin.ORAXEN,
-            CustomItemPlugin.HEADDATABASE);
+            CustomItemPlugin.HEADDATABASE, CustomItemPlugin.CRAFTENGINE, CustomItemPlugin.MMOITEMS);
     }
 
     @Test
@@ -871,7 +904,8 @@ final class CustomItemsTest {
         assertThat(items.active()).isEmpty();
         assertThat(items.statuses()).extracting(HookStatus::state).containsOnly(HookState.NOT_INSTALLED);
         assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder not installed;"
-            + " Nexo not installed; Oraxen not installed; HeadDatabase not installed.");
+            + " Nexo not installed; Oraxen not installed; HeadDatabase not installed; CraftEngine not installed;"
+            + " MMOItems not installed.");
         verify(manager, never()).registerEvents(any(), any());
     }
 
@@ -907,13 +941,16 @@ final class CustomItemsTest {
             assertThat(items.statuses()).containsExactly(new HookStatus("ItemsAdder", HookState.LOADING, "2.0", null),
                 new HookStatus("Nexo", HookState.LOADING, "2.0", null),
                 new HookStatus("Oraxen", HookState.LOADING, "2.0", null),
-                new HookStatus("HeadDatabase", HookState.ON, "2.0", null));
+                new HookStatus("HeadDatabase", HookState.ON, "2.0", null),
+                new HookStatus("CraftEngine", HookState.LOADING, "2.0", null),
+                new HookStatus("MMOItems", HookState.ON, "2.0", null));
             assertThat(log.lines()).filteredOn(line -> line.startsWith("INFO")).containsExactly("INFO Custom item"
                 + " plugins: ItemsAdder on, waiting for its items to load; Nexo on, waiting for its items to load;"
-                + " Oraxen on, waiting for its items to load; HeadDatabase on.");
+                + " Oraxen on, waiting for its items to load; HeadDatabase on; CraftEngine on, waiting for its items"
+                + " to load; MMOItems on.");
             assertThat(listeners).extracting(listener -> (Object) listener.getClass())
                 .containsExactly(ItemsAdderProvider.class, NexoProvider.class, OraxenProvider.class,
-                    HeadDatabaseProvider.class);
+                    HeadDatabaseProvider.class, CraftEngineProvider.class, MMOItemsProvider.class);
             assertThat(items.ready()).isFalse();
             assertThat(items.create("hdb:1234")).isSameAs(head);
             assertThat(apis.constructed()).hasSize(2);
@@ -936,6 +973,8 @@ final class CustomItemsTest {
         ((NexoProvider) listeners.get(1)).loaded(mock(NexoItemsLoadedEvent.class));
         ((OraxenProvider) listeners.get(2)).loaded(mock(OraxenItemsLoadedEvent.class));
         ((HeadDatabaseProvider) listeners.get(3)).loaded(new DatabaseLoadEvent(3));
+        ((CraftEngineProvider) listeners.get(4)).loaded(mock(CraftEngineReloadEvent.class));
+        ((MMOItemsProvider) listeners.get(5)).reloading(mock(MMOItemsReloadEvent.class));
     }
 
     @Test
@@ -956,7 +995,7 @@ final class CustomItemsTest {
             assertThat(items[0].ready()).isFalse();
             fireEveryLoadEvent(listeners);
             assertThat(told).containsExactly("ITEMSADDER ON false", "NEXO ON false", "ORAXEN ON false",
-                "HEADDATABASE ON true");
+                "HEADDATABASE ON false", "CRAFTENGINE ON true", "MMOITEMS ON true");
 
             told.clear();
             ((NexoProvider) listeners.get(1)).loaded(mock(NexoItemsLoadedEvent.class));
@@ -964,7 +1003,8 @@ final class CustomItemsTest {
             assertThat(apis.constructed()).hasSize(1);
         }
         assertThat(log.lines()).filteredOn(line -> !line.startsWith("INFO")).allMatch(line ->
-            line.startsWith("WARNING Nexo does not say") || line.startsWith("WARNING Oraxen does not say"));
+            line.startsWith("WARNING Nexo does not say") || line.startsWith("WARNING Oraxen does not say")
+                || line.startsWith("WARNING CraftEngine does not say"));
         assertThat(reports).isEmpty();
     }
 
@@ -1102,7 +1142,8 @@ final class CustomItemsTest {
 
             assertThat(handlers.getRegisteredListeners()).isEmpty();
             assertThat(items.statuses()).extracting(HookStatus::state).containsExactly(HookState.SWITCHED_OFF,
-                HookState.LOADING, HookState.LOADING, HookState.LOADING);
+                HookState.LOADING, HookState.LOADING, HookState.LOADING, HookState.SWITCHED_OFF,
+                HookState.SWITCHED_OFF);
         } finally {
             HandlerList.unregisterAll(owner);
         }
@@ -1167,9 +1208,10 @@ final class CustomItemsTest {
             CustomItems items = CustomItems.detect(owner, errors, EnumSet.of(CustomItemPlugin.HEADDATABASE));
 
             assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder switched off; Nexo switched"
-                + " off; Oraxen switched off; HeadDatabase on, waiting for its items to load.");
+                + " off; Oraxen switched off; HeadDatabase on, waiting for its items to load; CraftEngine switched"
+                + " off; MMOItems switched off.");
             assertThat(items.ready()).isFalse();
-            assertThat(items.statuses().getLast()).isEqualTo(loading);
+            assertThat(items.statuses().get(3)).isEqualTo(loading);
             assertThat(items.create("hdb:1234")).isNull();
             assertThat(items.build("hdb:1234")).isEqualTo(notReady);
             assertThat(items.build("1234")).isEqualTo(notReady);
@@ -1179,7 +1221,7 @@ final class CustomItemsTest {
             ((HeadDatabaseProvider) listeners.getFirst()).loaded(new DatabaseLoadEvent(3));
 
             assertThat(items.ready()).isTrue();
-            assertThat(items.statuses().getLast()).isEqualTo(new HookStatus("HeadDatabase", HookState.ON, "2.0", null));
+            assertThat(items.statuses().get(3)).isEqualTo(new HookStatus("HeadDatabase", HookState.ON, "2.0", null));
             assertThat(items.create("hdb:1234")).isSameAs(head);
             assertThat(items.build("1234").item()).isSameAs(head);
         }

@@ -5,6 +5,40 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `taffy-hooks`: `CustomItemPlugin.CRAFTENGINE` (plugin `CraftEngine`, key `craftengine`) and
+  `CustomItemPlugin.MMOITEMS` (plugin `MMOItems`, key `mmoitems`), after `HEADDATABASE` in resolution order and
+  with no alias. `CustomItems` builds a CraftEngine item from `craftengine:<namespace>:<id>` through
+  `CraftEngineItems.byId` and reads it back through `CraftEngineItems.getCustomItemId`, and builds an MMOItems
+  item from `mmoitems:<type>:<id>` through `MMOItems.getItem(String, String)` and reads it back through
+  `MMOItems.getTypeName` and `MMOItems.getID`, with the type and the id in the case MMOItems holds them in, as in
+  `mmoitems:SWORD:CUTLASS`. Built against CraftEngine 26.10 and MMOItems-API 6.10.1-SNAPSHOT. A `switch` over
+  `CustomItemPlugin` needs a `default` branch, as its Javadoc states from 0.4.0.
+- A plugin that passes `EnumSet.allOf(CustomItemPlugin.class)` to `CustomItems.detect` detects both: `statuses()`
+  holds six entries where it held four, the detection log line names six plugins, and an installed CraftEngine or
+  MMOItems that the plugin's `paper-plugin.yml` does not list under `dependencies.server` is `NOT_VISIBLE` and
+  warned about. A reference that starts with `craftengine:` or `mmoitems:` names that plugin and goes only to it,
+  and `CustomItemRef.hasKnownProvider()` is `true` for it; in 0.4.11 such a hint named no plugin and the whole
+  reference was offered to each plugin in turn.
+- For both plugins, an id without a colon or with nothing before or after its first colon, an id the plugin does
+  not know and an MMOItems type that does not exist give `Built.Reason.UNKNOWN_ID`. CraftEngine finishes its
+  first load after the server has started: it is `LOADING` and `build` gives `NOT_READY` until its
+  `CraftEngineReloadEvent`, or it is on at once when `CraftEngine.isFullyLoaded()` is `true` or an earlier
+  `detect` in this server run heard that event, and `resolve` reads its ids while it loads. MMOItems has loaded
+  its items by the time it is enabled, so it is on at once, and its items are built and read on the server
+  thread. A failure is reported under `hook.craftengine` or `hook.mmoitems`.
+- The `onItemsLoaded` callback of `CustomItems.detect` runs for CraftEngine inside `CraftEngineReloadEvent`, at
+  the end of its first load and of every reload. MMOItems has no event for the end of a load, so the callback runs
+  inside `MMOItemsReloadEvent`, which MMOItems fires on the server thread when its reload command starts, before
+  it reads its files again: work the callback hands on to a later tick finds the reloaded items.
+- Catalog entries `alaz.craftengine.bukkit` and `alaz.craftengine.core` (`net.momirealms:craft-engine-bukkit` and
+  `craft-engine-core` 26.10), `alaz.mmoitems.api` (`net.Indyuce:MMOItems-API` 6.10.1-SNAPSHOT) and
+  `alaz.mythiclib` (`io.lumine:MythicLib-dist` 1.7.1-SNAPSHOT, the supertypes of the MMOItems classes). MMOItems
+  and MythicLib publish snapshots only. `so.alaz.taffy.repositories` declares two more repositories before
+  `jitpack`: `momirealms` (`https://repo.momirealms.net/releases/`) for the group `net.momirealms`, and `phoenix`
+  (`https://nexus.phoenixdevt.fr/repository/maven-public/`) for the group `net.Indyuce` and the module
+  `io.lumine:MythicLib-dist`.
+
 ## [0.4.11] - 2026-11-23
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.33.0 and bStats 3.2.1.

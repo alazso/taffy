@@ -37,6 +37,12 @@ registries:
   packetevents:
     type: maven-repository
     url: https://repo.codemc.io/repository/maven-releases
+  momirealms:
+    type: maven-repository
+    url: https://repo.momirealms.net/releases
+  phoenix:
+    type: maven-repository
+    url: https://nexus.phoenixdevt.fr/repository/maven-public
 
 updates:
   - package-ecosystem: gradle
@@ -65,6 +71,9 @@ updates:
           - "io.th0rgal:*"
           - "com.nexomc:*"
           - "com.github.Arcaniax-Development:*"
+          - "net.momirealms:*"
+          - "net.Indyuce:*"
+          - "io.lumine:*"
           - "com.sk89q.worldguard:*"
           - "com.sk89q.worldedit:*"
           - "com.github.decentsoftware-eu:*"

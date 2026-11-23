@@ -24,7 +24,8 @@ class ConventionPluginsTest {
 
     private val repositoryNames = listOf(
         "MavenRepo", "papermc", "alazso", "alazsoSnapshots", "placeholderapi", "faststats", "vaultunlocked",
-        "playerpoints", "oraxen", "nexo", "enginehub", "fancyinnovations", "thenextlvl", "packetevents", "jitpack",
+        "playerpoints", "oraxen", "nexo", "enginehub", "fancyinnovations", "thenextlvl", "packetevents", "momirealms",
+        "phoenix", "jitpack",
     )
 
     /**
@@ -35,8 +36,8 @@ class ConventionPluginsTest {
         "io.papermc", "com.mojang", "net.md-5", "so.alaz", "me.clip", "dev.faststats.metrics", "net.milkbowl.vault",
         "org.black_ixx", "io.th0rgal", "md.thomas.hopper", "com.nexomc", "com.tcoded", "me.gabytm.util",
         "team.unnamed", "com.sk89q", "org.enginehub", "de.oliver", "net.thenextlvl", "com.github.retrooper",
-        "com.github.MilkBowl", "com.github.Arcaniax-Development", "com.github.decentsoftware-eu",
-        "com.github.HologramLib", "com.github.maximjsx.EntityLib", "org.example",
+        "net.momirealms", "net.Indyuce", "io.lumine", "com.github.MilkBowl", "com.github.Arcaniax-Development",
+        "com.github.decentsoftware-eu", "com.github.HologramLib", "com.github.maximjsx.EntityLib", "org.example",
     )
 
     private val centralOnly = """
@@ -2571,6 +2572,9 @@ class ConventionPluginsTest {
             "repository thenextlvl https://repo.thenextlvl.net/releases versions=any groups=[net.thenextlvl]",
             "repository packetevents https://repo.codemc.io/repository/maven-releases/ versions=any " +
                 "groups=[com.github.retrooper]",
+            "repository momirealms https://repo.momirealms.net/releases/ versions=any groups=[net.momirealms]",
+            "repository phoenix https://nexus.phoenixdevt.fr/repository/maven-public/ versions=any " +
+                "groups=[net.Indyuce]",
             "repository jitpack https://jitpack.io versions=any " +
                 "groups=[com.github.MilkBowl, com.github.Arcaniax-Development, com.github.decentsoftware-eu, " +
                 "com.github.HologramLib, com.github.maximjsx.EntityLib]",
@@ -2630,6 +2634,10 @@ class ConventionPluginsTest {
                 "de.oliver:missing:1.0",
                 "net.thenextlvl:missing:1.0",
                 "com.github.retrooper:missing:1.0",
+                "net.momirealms:missing:1.0",
+                "net.Indyuce:missing:1.0",
+                "io.lumine:missing:1.0",
+                "io.lumine:MythicLib-dist:1.0",
                 "com.github.MilkBowl:missing:1.0",
                 "com.github.Arcaniax-Development:missing:1.0",
                 "com.github.decentsoftware-eu:missing:1.0",
@@ -2678,6 +2686,10 @@ class ConventionPluginsTest {
             "asked de.oliver:missing:1.0=[MavenRepo, fancyinnovations]",
             "asked net.thenextlvl:missing:1.0=[MavenRepo, thenextlvl]",
             "asked com.github.retrooper:missing:1.0=[MavenRepo, packetevents]",
+            "asked net.momirealms:missing:1.0=[MavenRepo, momirealms]",
+            "asked net.Indyuce:missing:1.0=[MavenRepo, phoenix]",
+            "asked io.lumine:missing:1.0=[MavenRepo]",
+            "asked io.lumine:MythicLib-dist:1.0=[MavenRepo, phoenix]",
             "asked com.github.MilkBowl:missing:1.0=[MavenRepo, jitpack]",
             "asked com.github.Arcaniax-Development:missing:1.0=[MavenRepo, jitpack]",
             "asked com.github.decentsoftware-eu:missing:1.0=[MavenRepo, jitpack]",

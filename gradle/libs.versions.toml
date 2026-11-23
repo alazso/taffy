@@ -20,6 +20,9 @@ itemsadder       = "4.0.17"
 oraxen           = "1.220.1"
 nexo             = "1.30.2"
 headdatabase     = "1.3.0"
+craftengine      = "26.10"
+mmoitems         = "6.10.1-SNAPSHOT"  # MMOItems-API is published as snapshots only
+mythiclib        = "1.7.1-SNAPSHOT"   # the supertypes of the MMOItems classes; published as snapshots only
 worldguard       = "7.0.20"
 worldedit        = "7.4.4"  # the WorldEdit version WorldGuard 7.0.20 is built against
 decentholograms  = "2.10.2"
@@ -53,6 +56,10 @@ itemsadder-api            = { module = "beer.devs:itemsadder-api",              
 oraxen                    = { module = "io.th0rgal:oraxen",                                version.ref = "oraxen" }
 nexo                      = { module = "com.nexomc:nexo",                                  version.ref = "nexo" }
 headdatabase-api          = { module = "com.github.Arcaniax-Development:HeadDatabase-API", version.ref = "headdatabase" }
+craftengine-bukkit        = { module = "net.momirealms:craft-engine-bukkit",               version.ref = "craftengine" }
+craftengine-core          = { module = "net.momirealms:craft-engine-core",                 version.ref = "craftengine" }
+mmoitems-api              = { module = "net.Indyuce:MMOItems-API",                         version.ref = "mmoitems" }
+mythiclib                 = { module = "io.lumine:MythicLib-dist",                         version.ref = "mythiclib" }
 worldguard-bukkit         = { module = "com.sk89q.worldguard:worldguard-bukkit",           version.ref = "worldguard" }
 worldguard-core           = { module = "com.sk89q.worldguard:worldguard-core",             version.ref = "worldguard" }
 worldedit-bukkit          = { module = "com.sk89q.worldedit:worldedit-bukkit",             version.ref = "worldedit" }

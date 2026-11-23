@@ -10,7 +10,8 @@ final class CustomItemPluginTest {
     @Test
     void thePluginsAreDeclaredInResolutionOrder() {
         assertThat(CustomItemPlugin.values()).containsExactly(CustomItemPlugin.ITEMSADDER, CustomItemPlugin.NEXO,
-            CustomItemPlugin.ORAXEN, CustomItemPlugin.HEADDATABASE);
+            CustomItemPlugin.ORAXEN, CustomItemPlugin.HEADDATABASE, CustomItemPlugin.CRAFTENGINE,
+            CustomItemPlugin.MMOITEMS);
     }
 
     @Test
@@ -27,6 +28,13 @@ final class CustomItemPluginTest {
         assertThat(CustomItemPlugin.HEADDATABASE.plugin()).isEqualTo("HeadDatabase");
         assertThat(CustomItemPlugin.HEADDATABASE.key()).isEqualTo("headdatabase");
         assertThat(CustomItemPlugin.HEADDATABASE.probe()).isEqualTo("me.arcaniax.hdb.api.HeadDatabaseAPI");
+        assertThat(CustomItemPlugin.CRAFTENGINE.plugin()).isEqualTo("CraftEngine");
+        assertThat(CustomItemPlugin.CRAFTENGINE.key()).isEqualTo("craftengine");
+        assertThat(CustomItemPlugin.CRAFTENGINE.probe())
+            .isEqualTo("net.momirealms.craftengine.bukkit.api.CraftEngineItems");
+        assertThat(CustomItemPlugin.MMOITEMS.plugin()).isEqualTo("MMOItems");
+        assertThat(CustomItemPlugin.MMOITEMS.key()).isEqualTo("mmoitems");
+        assertThat(CustomItemPlugin.MMOITEMS.probe()).isEqualTo("net.Indyuce.mmoitems.MMOItems");
     }
 
     @Test
@@ -49,6 +57,8 @@ final class CustomItemPluginTest {
             assertThat(CustomItemPlugin.byKey("IA")).isSameAs(CustomItemPlugin.ITEMSADDER);
             assertThat(CustomItemPlugin.byKey(" Nexo ")).isSameAs(CustomItemPlugin.NEXO);
             assertThat(CustomItemPlugin.byKey("HDB")).isSameAs(CustomItemPlugin.HEADDATABASE);
+            assertThat(CustomItemPlugin.byKey("MMOITEMS")).isSameAs(CustomItemPlugin.MMOITEMS);
+            assertThat(CustomItemPlugin.byKey("CraftEngine")).isSameAs(CustomItemPlugin.CRAFTENGINE);
         });
     }
 

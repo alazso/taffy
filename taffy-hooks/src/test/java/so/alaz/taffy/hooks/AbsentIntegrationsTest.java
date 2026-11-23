@@ -60,7 +60,8 @@ final class AbsentIntegrationsTest {
         "dev.lone.itemsadder.", "com.nexomc.", "io.th0rgal.oraxen.", "me.arcaniax.hdb.", "net.milkbowl.vault.",
         "net.luckperms.api.", "com.sk89q.", "me.clip.placeholderapi.", "io.github.miniplaceholders.",
         "eu.decentsoftware.holograms.", "de.oliver.fancyholograms.", "net.thenextlvl.hologram.",
-        "com.maximde.hologramlib.", "org.geysermc.", "org.black_ixx."};
+        "com.maximde.hologramlib.", "org.geysermc.", "org.black_ixx.", "net.momirealms.", "net.Indyuce.",
+        "io.lumine."};
 
     private static final String VAULT_ECONOMY = "net.milkbowl.vault.economy.Economy";
 
@@ -100,7 +101,12 @@ final class AbsentIntegrationsTest {
         "com.nexomc.nexo.api.events.NexoItemsLoadedEvent", "com.nexomc.nexo.items.ItemBuilder",
         "io.th0rgal.oraxen.api.OraxenItems", "io.th0rgal.oraxen.api.events.OraxenItemsLoadedEvent",
         "io.th0rgal.oraxen.items.ItemBuilder", "me.arcaniax.hdb.api.DatabaseLoadEvent",
-        "me.arcaniax.hdb.api.HeadDatabaseAPI", VAULT_ECONOMY, "net.milkbowl.vault.economy.EconomyResponse", LUCKPERMS,
+        "me.arcaniax.hdb.api.HeadDatabaseAPI", "net.momirealms.craftengine.bukkit.api.CraftEngineItems",
+        "net.momirealms.craftengine.bukkit.api.event.CraftEngineReloadEvent",
+        "net.momirealms.craftengine.bukkit.item.BukkitItemDefinition",
+        "net.momirealms.craftengine.core.plugin.CraftEngine", "net.momirealms.craftengine.core.util.Key",
+        "net.Indyuce.mmoitems.MMOItems", "net.Indyuce.mmoitems.api.event.MMOItemsReloadEvent",
+        "io.lumine.mythic.lib.module.MMOPlugin", VAULT_ECONOMY, "net.milkbowl.vault.economy.EconomyResponse", LUCKPERMS,
         PLAYERPOINTS, "org.black_ixx.playerpoints.PlayerPoints",
         "net.luckperms.api.LuckPermsProvider", "net.luckperms.api.model.user.User", "net.luckperms.api.node.NodeType",
         WORLDGUARD_API[0], WORLDGUARD_API[1], WORLDGUARD_API[2], WORLDGUARD_API[3], WORLDGUARD_API[4],
@@ -183,7 +189,8 @@ final class AbsentIntegrationsTest {
         ClassLoader loader = hidden();
 
         assertThat(ON_TEST_CLASSPATH).contains(CustomItemPlugin.ITEMSADDER.probe(), CustomItemPlugin.NEXO.probe(),
-            CustomItemPlugin.ORAXEN.probe(), CustomItemPlugin.HEADDATABASE.probe());
+            CustomItemPlugin.ORAXEN.probe(), CustomItemPlugin.HEADDATABASE.probe(),
+            CustomItemPlugin.CRAFTENGINE.probe(), CustomItemPlugin.MMOITEMS.probe());
         for (String api : ON_TEST_CLASSPATH) {
             assertThatCode(() -> Class.forName(api, false, withApis()))
                 .as(api)
@@ -335,14 +342,18 @@ final class AbsentIntegrationsTest {
         assertThat(detected.getClass().getClassLoader()).isSameAs(loader);
         assertThat(described(loader, (List<?>) statuses.invoke(detected))).containsExactly(
             "ItemsAdder 3.0 lacks the API that is read", "Nexo 3.0 lacks the API that is read",
-            "Oraxen 3.0 lacks the API that is read", "HeadDatabase 3.0 lacks the API that is read");
+            "Oraxen 3.0 lacks the API that is read", "HeadDatabase 3.0 lacks the API that is read",
+            "CraftEngine 3.0 lacks the API that is read", "MMOItems 3.0 lacks the API that is read");
         assertThat(log.lines()).containsExactly(
             "WARNING ItemsAdder 3.0 lacks the API that is read, so it stays off.",
             "WARNING Nexo 3.0 lacks the API that is read, so it stays off.",
             "WARNING Oraxen 3.0 lacks the API that is read, so it stays off.",
             "WARNING HeadDatabase 3.0 lacks the API that is read, so it stays off.",
+            "WARNING CraftEngine 3.0 lacks the API that is read, so it stays off.",
+            "WARNING MMOItems 3.0 lacks the API that is read, so it stays off.",
             "INFO Custom item plugins: ItemsAdder 3.0 lacks the API that is read; Nexo 3.0 lacks the API that is"
-                + " read; Oraxen 3.0 lacks the API that is read; HeadDatabase 3.0 lacks the API that is read.");
+                + " read; Oraxen 3.0 lacks the API that is read; HeadDatabase 3.0 lacks the API that is read;"
+                + " CraftEngine 3.0 lacks the API that is read; MMOItems 3.0 lacks the API that is read.");
         verify(plugins, never()).registerEvents(any(Listener.class), any(Plugin.class));
 
         Object resolution = resolve.invoke(detected, gem);
@@ -351,6 +362,8 @@ final class AbsentIntegrationsTest {
         assertThat(idOrNull.invoke(detected, gem)).isNull();
         assertThat(create.invoke(detected, "ia:gems:ruby")).isNull();
         assertThat(create.invoke(detected, "ruby")).isNull();
+        assertThat(create.invoke(detected, "craftengine:default:topaz")).isNull();
+        assertThat(create.invoke(detected, "mmoitems:SWORD:CUTLASS")).isNull();
         assertThat((boolean) ready.invoke(detected)).isTrue();
         assertThat((boolean) available.invoke(detected, "nexo")).isFalse();
         assertThat((List<?>) active.invoke(detected)).isEmpty();
@@ -374,7 +387,8 @@ final class AbsentIntegrationsTest {
 
         assertThat(described(loader, (List<?>) statuses.invoke(detected))).containsExactly(
             "ItemsAdder 3.0 not visible to this plugin", "Nexo 3.0 not visible to this plugin",
-            "Oraxen 3.0 not visible to this plugin", "HeadDatabase 3.0 not visible to this plugin");
+            "Oraxen 3.0 not visible to this plugin", "HeadDatabase 3.0 not visible to this plugin",
+            "CraftEngine 3.0 not visible to this plugin", "MMOItems 3.0 not visible to this plugin");
         assertThat(log.lines()).first().isEqualTo("WARNING ItemsAdder 3.0 is not visible to this plugin, so it stays"
             + " off: this plugin's paper-plugin.yml does not list ItemsAdder under dependencies.server.");
         verify(plugins, never()).registerEvents(any(Listener.class), any(Plugin.class));
@@ -402,7 +416,8 @@ final class AbsentIntegrationsTest {
 
         assertThat(described(loader, (List<?>) statuses.invoke(detected))).containsExactly(
             "ItemsAdder 3.0 lacks the API that is read", "Nexo 3.0 lacks the API that is read",
-            "Oraxen 3.0 lacks the API that is read", "HeadDatabase 3.0 lacks the API that is read");
+            "Oraxen 3.0 lacks the API that is read", "HeadDatabase 3.0 lacks the API that is read",
+            "CraftEngine 3.0 lacks the API that is read", "MMOItems 3.0 lacks the API that is read");
         assertThat((boolean) ready.invoke(detected)).isTrue();
         assertThat(told).isEmpty();
         verify(plugins, never()).registerEvents(any(Listener.class), any(Plugin.class));
@@ -1027,9 +1042,9 @@ final class AbsentIntegrationsTest {
             states.add(stateOf(loader, status.invoke(holograms.invoke(owner, errors, false, plugin))));
         }
 
-        assertThat(states).hasSize(14).containsOnly(HookState.SWITCHED_OFF.name());
+        assertThat(states).hasSize(16).containsOnly(HookState.SWITCHED_OFF.name());
         verifyNoInteractions(plugins);
         assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder switched off; Nexo switched off;"
-            + " Oraxen switched off; HeadDatabase switched off.");
+            + " Oraxen switched off; HeadDatabase switched off; CraftEngine switched off; MMOItems switched off.");
     }
 }

@@ -17,7 +17,17 @@ public enum CustomItemPlugin {
     /** Oraxen, key {@code oraxen}. */
     ORAXEN("Oraxen", "oraxen", "io.th0rgal.oraxen.api.OraxenItems"),
     /** HeadDatabase, key {@code headdatabase}, also written {@code hdb}. */
-    HEADDATABASE("HeadDatabase", "headdatabase", "me.arcaniax.hdb.api.HeadDatabaseAPI", "hdb");
+    HEADDATABASE("HeadDatabase", "headdatabase", "me.arcaniax.hdb.api.HeadDatabaseAPI", "hdb"),
+    /**
+     * CraftEngine, key {@code craftengine}. Its own ids are a namespace, a colon and an id, as in
+     * {@code craftengine:default:topaz}.
+     */
+    CRAFTENGINE("CraftEngine", "craftengine", "net.momirealms.craftengine.bukkit.api.CraftEngineItems"),
+    /**
+     * MMOItems, key {@code mmoitems}. Its own ids are an item type, a colon and an id, both in the case MMOItems
+     * holds them in, as in {@code mmoitems:SWORD:CUTLASS}.
+     */
+    MMOITEMS("MMOItems", "mmoitems", "net.Indyuce.mmoitems.MMOItems");
 
     private final String plugin;
     private final String key;
