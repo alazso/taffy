@@ -6,25 +6,30 @@ All notable changes to Taffy are documented here. This project follows
 ## [Unreleased]
 
 ### Added
-- `PlaceholderExpansionBuilder` has the prefix placeholders `playerPrefix(String prefix, BiFunction<Player,
-  String, String>)`, `offlinePrefix(String prefix, BiFunction<OfflinePlayer, String, String>)` and
-  `globalPrefix(String prefix, Function<String, String>)`. A prefix answers every name that starts with it and a
-  `_`, and its handler takes the rest of the name as written: with the prefix `keys`, `%shop_keys_vote%` gives
-  the handler `vote`. In PlaceholderAPI a placeholder registered by its whole name answers first, then the
-  longest prefix that fits, and a global prefix wins over an offline or player one of the same prefix. In
-  MiniPlaceholders the rest is the argument of the tag, `<shop_keys:vote>`, with several arguments joined by
-  `:`, and the tag without an argument goes to the placeholder of that whole name. An offline prefix is
-  registered with PlaceholderAPI only. A handler that throws gives no value and is logged at most once a minute
-  for each prefix.
+- `PlaceholderExpansionBuilder` has the prefix placeholders
+  `playerPrefix(String prefix, BiFunction<Player, String, @Nullable String> handler)`,
+  `offlinePrefix(String prefix, BiFunction<OfflinePlayer, String, @Nullable String> handler)` and
+  `globalPrefix(String prefix, Function<String, @Nullable String> handler)`. A prefix answers every name that
+  starts with it and a `_`, and its handler takes the rest of the name as written: with the prefix `keys`,
+  `%shop_keys_vote%` gives the handler `vote`. The prefix is written without that `_`, and one that ends with
+  `_`, such as `keys_`, throws `IllegalArgumentException`. In PlaceholderAPI a placeholder registered by its
+  whole name answers first, then the longest prefix that fits, and a global prefix wins over an offline or
+  player one of the same prefix. In MiniPlaceholders the rest is the argument of the tag, `<shop_keys:vote>`,
+  with several arguments joined by `:`, and the tag without an argument goes to the placeholder of that whole
+  name. An offline prefix is registered with PlaceholderAPI only. A handler that throws gives no value and is
+  logged as `The prefix placeholder shop_keys_ failed`, at most once a minute for each prefix and apart from a
+  placeholder of the whole name `keys`.
 - `PlaceholderCache<K>` in taffy-hooks keeps the last known value of a placeholder whose source cannot be read on
   the thread that asks. `new PlaceholderCache<>(Duration timeToLive, int maximumEntries, Logger)` builds one, and
-  `get(K key, Supplier<CompletableFuture<String>> refresh)` returns the last known value without waiting and
-  starts a refresh when the key has no value yet or its value is at least `timeToLive` old, with at most one
-  refresh per key running. It returns `null` until the first refresh of a key completes. The cache owns no
-  thread: `refresh` returns the future of a `Scheduler.dispatch` or a storage call. A refresh that fails keeps
-  the last known value, is tried again no sooner than one `timeToLive` later and is logged at most once a minute
-  for the whole cache. A new key beyond `maximumEntries` drops the key asked for longest ago, `forget(K)` drops
-  one key, as for a player who quits, and `clear()` drops all of them, as in `onDisable`.
+  `get(K key, Supplier<CompletableFuture<@Nullable String>> refresh)` returns the last known value without
+  waiting and starts a refresh when the key has no value yet or its value is at least `timeToLive` old, with at
+  most one refresh per key running. It returns `null` until the first refresh of a key completes. The cache owns
+  no thread: `refresh` returns the future of a `Scheduler.dispatch` or a storage call. A refresh that fails
+  keeps the last known value, is tried again no sooner than one `timeToLive` later and is logged at most once a
+  minute for the whole cache. A new key beyond `maximumEntries` drops the key asked for longest ago among the
+  keys with no refresh running, and while every kept key has a refresh running, `get` returns `null` for a new
+  key and starts no refresh for it. `forget(K)` drops one key, as for a player who quits, and `clear()` drops
+  all of them, as in `onDisable`.
 - `Text` resolves PlaceholderAPI for a player who may be offline through `render(String, OfflinePlayer)`,
   `render(String, OfflinePlayer, TagResolver...)`, `resolve(String, OfflinePlayer)` and
   `plain(String, OfflinePlayer)`, and for no player through `renderGlobal(String)`,
@@ -32,7 +37,9 @@ All notable changes to Taffy are documented here. This project follows
   expansion with a `null` player. Both insert what a placeholder returns as text, as a render with a viewer
   does. MiniPlaceholders' audience tags are filled in only for a `Player`. A `null` `OfflinePlayer` skips
   PlaceholderAPI, as a `null` `Player` does, and `render(String)` still asks PlaceholderAPI for nothing. A call
-  that passes a literal `null` as the player still compiles and still picks the `Player` method.
+  that passes a literal `null` as the player still compiles and still picks the `Player` method. `resolve` and
+  `plain` are overloaded now, so a method reference such as `text::resolve` compiles only where its target type
+  names the player type, as `BiFunction<String, Player, String>` does.
 - `EconomyProvider.vault(VaultOptions options, @Nullable Detected<EconomyProvider> previous)` looks the Vault
   economy up as `vault(VaultOptions)` does and logs its warning, and reports a `FAILED` lookup, only when the
   status differs from `previous.status()` in plugin, state, version or reason, or when `previous` is `null`. A
@@ -44,7 +51,8 @@ All notable changes to Taffy are documented here. This project follows
   looks the economy up once more on the first tick through `Scheduler.global`, and gives each lookup the result
   before it, so a status is warned about once. `VaultWatch.current()` gives the latest `Detected` from any
   thread, and `close()` unregisters the listener and stops later lookups. Options that are switched off register
-  and schedule nothing.
+  and schedule nothing. With options that are switched on, a call while the owner is not enabled, before
+  `onEnable` or once it is disabled, throws `IllegalStateException` before anything is looked up or registered.
 - `EconomyProvider.playerPoints(Plugin owner, ErrorReports errors, boolean switchedOn)` detects PlayerPoints and
   gives an `EconomyProvider` on its points, built against PlayerPoints 3.3.5. The `Detected` is bound to the
   PlayerPoints plugin, so its status reads `NOT_ENABLED` while PlayerPoints is disabled, and the plugin lists

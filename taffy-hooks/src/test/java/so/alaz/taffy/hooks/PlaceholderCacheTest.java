@@ -208,15 +208,75 @@ final class PlaceholderCacheTest {
     }
 
     @Test
-    void aKeyWhoseFirstRefreshStillRunsCountsTowardsTheMaximum() {
+    void aKeyWhoseFirstRefreshStillRunsCountsTowardsTheMaximumAndIsNotDropped() {
         PlaceholderCache<String> cache = cache(5, 2);
 
         for (int i = 0; i < 50; i++) {
-            cache.get("key-" + i, refresh);
+            assertThat(cache.get("key-" + i, refresh)).isNull();
         }
 
         assertThat(cache.size()).isEqualTo(2);
-        assertThat(started).hasSize(50);
+        assertThat(started).hasSize(2);
+
+        started.get(1).complete("b");
+        started.getFirst().complete("a");
+
+        assertThat(cache.get("key-0", refresh)).isEqualTo("a");
+        assertThat(cache.get("key-1", refresh)).isEqualTo("b");
+        assertThat(started).hasSize(2);
+    }
+
+    @Test
+    void aKeyWhoseRefreshRunsIsNotLoadedASecondTimeWhenNewKeysArrive() {
+        PlaceholderCache<String> cache = cache(5, 1);
+
+        cache.get("ann", refresh);
+        assertThat(cache.get("bo", refresh)).isNull();
+        assertThat(cache.get("ann", refresh)).isNull();
+
+        assertThat(started).hasSize(1);
+        started.getFirst().complete("100");
+        assertThat(cache.get("ann", refresh)).isEqualTo("100");
+
+        assertThat(cache.get("bo", refresh)).isNull();
+        assertThat(started).hasSize(2);
+        assertThat(cache.size()).isEqualTo(1);
+    }
+
+    @Test
+    void aNewKeyDropsTheEldestKeyWithNoRefreshRunning() {
+        PlaceholderCache<String> cache = cache(5, 2);
+        cache.get("ann", () -> CompletableFuture.completedFuture("1"));
+        cache.get("bo", () -> CompletableFuture.completedFuture("2"));
+        pass(Duration.ofSeconds(5));
+        cache.get("ann", refresh);
+        cache.get("bo", () -> CompletableFuture.completedFuture("3"));
+
+        cache.get("cy", () -> CompletableFuture.completedFuture("4"));
+
+        assertThat(cache.size()).isEqualTo(2);
+        started.getFirst().complete("5");
+        assertThat(cache.get("ann", refresh)).isEqualTo("5");
+        assertThat(cache.get("cy", refresh)).isEqualTo("4");
+        assertThat(started).hasSize(1);
+    }
+
+    @Test
+    void anErrorFromTheSupplierLeavesGetAndTheKeyIsRefreshedAgainOneTimeToLiveLater() {
+        PlaceholderCache<String> cache = cache(5, 10);
+        cache.get("ann", () -> CompletableFuture.completedFuture("100"));
+        pass(Duration.ofSeconds(5));
+
+        assertThatThrownBy(() -> cache.get("ann", () -> {
+            throw new AssertionError("broken");
+        })).isInstanceOf(AssertionError.class).hasMessage("broken");
+
+        assertThat(cache.get("ann", refresh)).isEqualTo("100");
+        assertThat(started).isEmpty();
+        pass(Duration.ofSeconds(5));
+        assertThat(cache.get("ann", refresh)).isEqualTo("100");
+        assertThat(started).hasSize(1);
+        assertThat(log.lines()).isEmpty();
     }
 
     @Test

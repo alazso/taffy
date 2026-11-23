@@ -206,6 +206,10 @@ final class PlaceholderExpansionBuilderTest {
         assertThatThrownBy(() -> builder.globalPrefix("stock:low", rest -> "y"))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageStartingWith("invalid placeholder prefix 'stock:low'");
+        assertThatThrownBy(() -> builder.playerPrefix("keys_", (player, rest) -> "y"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("invalid placeholder prefix 'keys_': expected no '_' at the end, since the '_' between the"
+                + " prefix and the rest of the name is added");
         assertThatThrownBy(() -> builder.globalPrefix(null, rest -> "y"))
             .isInstanceOf(NullPointerException.class).hasMessage("prefix");
         assertThatThrownBy(() -> builder.playerPrefix("keys", null))
@@ -268,9 +272,9 @@ final class PlaceholderExpansionBuilderTest {
 
         assertThat(rendered).isEqualTo("<shop_keys:vote>|<shop_keys:daily>|<shop_stock:iron>");
         assertThat(log.lines()).containsExactly(
-            "WARNING The placeholder shop_keys failed, so it gives no value"
+            "WARNING The prefix placeholder shop_keys_ failed, so it gives no value"
                 + " (java.lang.IllegalStateException: closed).",
-            "WARNING The placeholder shop_stock failed, so it gives no value"
+            "WARNING The prefix placeholder shop_stock_ failed, so it gives no value"
                 + " (java.lang.IllegalArgumentException: bad iron).");
         assertThat(reports).isEmpty();
     }

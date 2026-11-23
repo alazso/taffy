@@ -116,6 +116,15 @@ public final class PlaceholderExpansionBuilder {
         return checked("name", name);
     }
 
+    private static String checkedPrefix(String prefix) {
+        checked("prefix", prefix);
+        if (prefix.endsWith("_")) {
+            throw new IllegalArgumentException("invalid placeholder prefix '" + prefix + "': expected no '_' at the"
+                + " end, since the '_' between the prefix and the rest of the name is added");
+        }
+        return prefix;
+    }
+
     private static String checked(String kind, String name) {
         Objects.requireNonNull(name, kind);
         if (name.isEmpty() || !name.chars().allMatch(PlaceholderExpansionBuilder::nameChar)) {
@@ -183,12 +192,12 @@ public final class PlaceholderExpansionBuilder {
      * @param prefix the start of the name after the identifier, without the {@code _} that ends it
      * @param handler gives the value for the player and the rest of the name, or {@code null} for no value
      * @return this builder
-     * @throws IllegalArgumentException if {@code prefix} is empty or holds a character other than the letters
-     *     {@code a} to {@code z} in lower case, the digits, {@code _} and {@code -}
+     * @throws IllegalArgumentException if {@code prefix} is empty, ends with {@code _} or holds a character other
+     *     than the letters {@code a} to {@code z} in lower case, the digits, {@code _} and {@code -}
      */
     public PlaceholderExpansionBuilder playerPrefix(String prefix,
                                                     BiFunction<Player, String, @Nullable String> handler) {
-        playerPrefixes.put(checked("prefix", prefix), Objects.requireNonNull(handler, "handler"));
+        playerPrefixes.put(checkedPrefix(prefix), Objects.requireNonNull(handler, "handler"));
         return this;
     }
 
@@ -199,12 +208,12 @@ public final class PlaceholderExpansionBuilder {
      * @param prefix the start of the name after the identifier, without the {@code _} that ends it
      * @param handler gives the value for the player and the rest of the name, or {@code null} for no value
      * @return this builder
-     * @throws IllegalArgumentException if {@code prefix} is empty or holds a character other than the letters
-     *     {@code a} to {@code z} in lower case, the digits, {@code _} and {@code -}
+     * @throws IllegalArgumentException if {@code prefix} is empty, ends with {@code _} or holds a character other
+     *     than the letters {@code a} to {@code z} in lower case, the digits, {@code _} and {@code -}
      */
     public PlaceholderExpansionBuilder offlinePrefix(String prefix,
                                                      BiFunction<OfflinePlayer, String, @Nullable String> handler) {
-        offlinePrefixes.put(checked("prefix", prefix), Objects.requireNonNull(handler, "handler"));
+        offlinePrefixes.put(checkedPrefix(prefix), Objects.requireNonNull(handler, "handler"));
         return this;
     }
 
@@ -216,11 +225,11 @@ public final class PlaceholderExpansionBuilder {
      * @param prefix the start of the name after the identifier, without the {@code _} that ends it
      * @param handler gives the value for the rest of the name, or {@code null} for no value
      * @return this builder
-     * @throws IllegalArgumentException if {@code prefix} is empty or holds a character other than the letters
-     *     {@code a} to {@code z} in lower case, the digits, {@code _} and {@code -}
+     * @throws IllegalArgumentException if {@code prefix} is empty, ends with {@code _} or holds a character other
+     *     than the letters {@code a} to {@code z} in lower case, the digits, {@code _} and {@code -}
      */
     public PlaceholderExpansionBuilder globalPrefix(String prefix, Function<String, @Nullable String> handler) {
-        globalPrefixes.put(checked("prefix", prefix), Objects.requireNonNull(handler, "handler"));
+        globalPrefixes.put(checkedPrefix(prefix), Objects.requireNonNull(handler, "handler"));
         return this;
     }
 
@@ -270,13 +279,13 @@ public final class PlaceholderExpansionBuilder {
         globals.forEach((name, handler) -> globalHandlers.put(name, () -> guarded(failures, id, name, handler)));
         Map<String, BiFunction<Player, String, @Nullable String>> playerPrefixHandlers = new LinkedHashMap<>();
         playerPrefixes.forEach((prefix, handler) -> playerPrefixHandlers.put(prefix,
-            (player, rest) -> guarded(failures, id, prefix, () -> handler.apply(player, rest))));
+            (player, rest) -> guardedPrefix(failures, id, prefix, () -> handler.apply(player, rest))));
         Map<String, BiFunction<OfflinePlayer, String, @Nullable String>> offlinePrefixHandlers = new LinkedHashMap<>();
         offlinePrefixes.forEach((prefix, handler) -> offlinePrefixHandlers.put(prefix,
-            (player, rest) -> guarded(failures, id, prefix, () -> handler.apply(player, rest))));
+            (player, rest) -> guardedPrefix(failures, id, prefix, () -> handler.apply(player, rest))));
         Map<String, Function<String, @Nullable String>> globalPrefixHandlers = new LinkedHashMap<>();
         globalPrefixes.forEach((prefix, handler) -> globalPrefixHandlers.put(prefix,
-            rest -> guarded(failures, id, prefix, () -> handler.apply(rest))));
+            rest -> guardedPrefix(failures, id, prefix, () -> handler.apply(rest))));
         PlaceholderPrefixes prefixes = new PlaceholderPrefixes(Map.copyOf(playerPrefixHandlers),
             Map.copyOf(offlinePrefixHandlers), Map.copyOf(globalPrefixHandlers));
 
@@ -335,6 +344,18 @@ public final class PlaceholderExpansionBuilder {
         } catch (RuntimeException failure) {
             failures.warn(identifier + "_" + name, "The placeholder " + identifier + "_" + name
                 + " failed, so it gives no value (" + failure + ").", failure);
+            return null;
+        }
+    }
+
+    // The source ends in '*', which no name holds, so a prefix and a whole name never share one.
+    private static @Nullable String guardedPrefix(ThrowLog failures, String identifier, String prefix,
+                                                  Supplier<@Nullable String> handler) {
+        try {
+            return handler.get();
+        } catch (RuntimeException failure) {
+            failures.warn(identifier + "_" + prefix + "_*", "The prefix placeholder " + identifier + "_" + prefix
+                + "_ failed, so it gives no value (" + failure + ").", failure);
             return null;
         }
     }

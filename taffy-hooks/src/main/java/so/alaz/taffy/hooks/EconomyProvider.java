@@ -167,18 +167,22 @@ public interface EconomyProvider {
     /**
      * Looks up the economy registered with Vault and keeps looking it up as economies register and leave. The
      * lookup of {@link #vault(VaultOptions)} runs before this returns. While {@code options} are switched on, an
-     * {@link EconomyWatcher} is registered for the owner, which looks the economy up again on each event unless the
-     * server is stopping, and one more lookup runs on the first tick through {@link Scheduler#global}; when the
-     * scheduler refuses that task, a warning is logged. Each of these lookups takes the result before it, as
-     * {@link #vault(VaultOptions, Detected)} does, so a status is warned about and a failed lookup reported once,
-     * and again only after the status changed. Options that are switched off register nothing and schedule nothing.
+     * {@link EconomyWatcher} is registered for the owner, which looks the economy up again when an economy
+     * registers, and when one leaves unless the server is stopping, and one more lookup runs on the first tick
+     * through {@link Scheduler#global}; when the scheduler refuses that task, a warning is logged. Each of these
+     * lookups takes the result before it, as {@link #vault(VaultOptions, Detected)} does, so a status is warned
+     * about and a failed lookup reported once, and again only after the status changed. Options that are switched
+     * off register nothing and schedule nothing.
      *
      * <p>The plugin calls this in {@code onEnable}, reads {@link VaultWatch#current()} wherever it needs the
-     * economy, and closes the watch in {@code onDisable} or before it starts another.
+     * economy, and closes the watch in {@code onDisable} or before it starts another. The server registers a
+     * listener only for a plugin that is enabled, so a call with options that are switched on before the owner is
+     * enabled, or once it is disabled, throws before anything is looked up, logged or registered.
      *
      * @param options what each lookup reads
      * @param scheduler runs the lookup of the first tick
      * @return the watch, whose {@link VaultWatch#current()} gives the latest lookup result
+     * @throws IllegalStateException if {@code options} are switched on and their owner is not enabled
      * @throws NullPointerException if {@code options} or {@code scheduler} is {@code null}
      */
     static VaultWatch watchVault(VaultOptions options, Scheduler scheduler) {

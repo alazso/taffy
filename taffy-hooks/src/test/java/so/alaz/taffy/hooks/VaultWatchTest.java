@@ -48,6 +48,8 @@ final class VaultWatchTest {
     void server() {
         when(owner.getServer()).thenReturn(server);
         when(owner.getLogger()).thenReturn(log.logger);
+        when(owner.getName()).thenReturn("Shop");
+        when(owner.isEnabled()).thenReturn(true);
         when(server.getServicesManager()).thenReturn(services);
         when(server.getPluginManager()).thenReturn(plugins);
         when(scheduler.global(any())).thenReturn(true);
@@ -201,6 +203,21 @@ final class VaultWatchTest {
         assertThat(log.lines()).containsExactly("WARNING The economy is not looked up again on the first tick, because"
             + " this plugin is not enabled.");
         verify(plugins).registerEvents(any(EconomyWatcher.class), any(Plugin.class));
+    }
+
+    @Test
+    void aSwitchedOnWatchForAnOwnerThatIsNotEnabledIsRefusedBeforeAnythingIsLookedUpOrRegistered() {
+        when(owner.isEnabled()).thenReturn(false);
+
+        assertThatThrownBy(() -> EconomyProvider.watchVault(options(), scheduler))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("the plugin Shop is not enabled: call watchVault in onEnable or later, and not in or after"
+                + " onDisable");
+
+        verifyNoInteractions(server, plugins, services, scheduler);
+        assertThat(log.lines()).isEmpty();
+        assertThat(EconomyProvider.watchVault(options().switchedOn(false), scheduler).current().status().state())
+            .isEqualTo(HookState.SWITCHED_OFF);
     }
 
     @Test

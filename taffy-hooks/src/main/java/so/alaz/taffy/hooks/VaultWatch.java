@@ -33,6 +33,10 @@ public final class VaultWatch implements AutoCloseable {
     static VaultWatch start(VaultOptions options, Scheduler scheduler) {
         Objects.requireNonNull(options, "options");
         Objects.requireNonNull(scheduler, "scheduler");
+        if (options.switchedOn() && !options.owner().isEnabled()) {
+            throw new IllegalStateException("the plugin " + options.owner().getName() + " is not enabled: call"
+                + " watchVault in onEnable or later, and not in or after onDisable");
+        }
         VaultWatch watch = new VaultWatch(options);
         if (options.switchedOn()) {
             watch.listen(scheduler);
@@ -43,6 +47,7 @@ public final class VaultWatch implements AutoCloseable {
     private synchronized void listen(Scheduler scheduler) {
         Plugin owner = options.owner();
         Server server = owner.getServer();
+        // Bukkit refuses a listener of a plugin that is not enabled with an IllegalPluginAccessException.
         watcher = new EconomyWatcher(this::lookUp, server::isStopping);
         server.getPluginManager().registerEvents(watcher, owner);
         if (!scheduler.global(this::lookUp)) {

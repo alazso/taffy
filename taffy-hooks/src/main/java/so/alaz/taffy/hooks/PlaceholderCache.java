@@ -4,6 +4,7 @@ import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.ThrowLog;
 
 import java.time.Duration;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -31,12 +32,16 @@ import java.util.logging.Logger;
  * <p>A refresh fails when the supplier throws or returns {@code null}, or when its future completes with a
  * failure. The last known value is then kept, the next refresh of that key starts no sooner than one time-to-live
  * later, and the failure is logged as {@link ThrowLog} does: the first with its stack trace, later ones at most
- * once per {@link ThrowLog#WINDOW} for the whole cache.
+ * once per {@link ThrowLog#WINDOW} for the whole cache. An {@link Error} other than a {@link LinkageError} that
+ * the supplier throws leaves {@link #get} and is not logged; the key is otherwise treated as after a failed
+ * refresh.
  *
  * <p>The cache keeps at most its maximum number of keys, counting a key whose first refresh is still running. A
- * new key beyond that drops the key that was asked for longest ago. {@link #forget} drops one key, as for a
- * player who quits, and {@link #clear} drops every key, as in {@code onDisable}. A refresh that completes after its
- * key was dropped stores nothing.
+ * new key beyond that drops the key that was asked for longest ago among the keys with no refresh running, so a
+ * refresh that runs is never started a second time for its key. While every kept key has a refresh running, a new
+ * key is not kept: {@link #get} returns {@code null} for it and starts no refresh. {@link #forget} drops one key,
+ * as for a player who quits, and {@link #clear} drops every key, as in {@code onDisable}. A refresh that completes
+ * after {@link #forget} or {@link #clear} dropped its key stores nothing.
  *
  * <p>Thread-safe: every method may be called from any thread.
  *
@@ -54,6 +59,7 @@ public final class PlaceholderCache<K> {
     }
 
     private final long timeToLiveNanos;
+    private final int maximumEntries;
     private final ThrowLog failures;
     private final LongSupplier nanoTime;
     private final Map<K, Entry> entries;
@@ -82,14 +88,10 @@ public final class PlaceholderCache<K> {
                 + " one");
         }
         this.timeToLiveNanos = nanos(timeToLive);
+        this.maximumEntries = maximumEntries;
         this.failures = new ThrowLog(logger);
         this.nanoTime = nanoTime;
-        this.entries = new LinkedHashMap<>(16, 0.75f, true) {
-            @Override
-            protected boolean removeEldestEntry(Map.Entry<K, Entry> eldest) {
-                return size() > maximumEntries;
-            }
-        };
+        this.entries = new LinkedHashMap<>(16, 0.75f, true);
     }
 
     private static long nanos(Duration duration) {
@@ -107,8 +109,8 @@ public final class PlaceholderCache<K> {
      * @param key the key of the value
      * @param refresh starts the read of a fresh value and returns its future; it is called on this thread, at most
      *     once per call, and must not block
-     * @return the value the last completed refresh gave, or {@code null} when none completed yet or it gave
-     *     {@code null}
+     * @return the value the last completed refresh gave, or {@code null} when none completed yet, it gave
+     *     {@code null}, or the key is not kept because every kept key has a refresh running
      * @throws NullPointerException if {@code key} or {@code refresh} is {@code null}
      */
     public @Nullable String get(K key, Supplier<CompletableFuture<@Nullable String>> refresh) {
@@ -116,7 +118,14 @@ public final class PlaceholderCache<K> {
         Objects.requireNonNull(refresh, "refresh");
         Entry entry;
         synchronized (entries) {
-            entry = entries.computeIfAbsent(key, absent -> new Entry());
+            entry = entries.get(key);
+            if (entry == null) {
+                if (entries.size() >= maximumEntries && !dropEldestAtRest()) {
+                    return null;
+                }
+                entry = new Entry();
+                entries.put(key, entry);
+            }
             boolean fresh = entry.checked && nanoTime.getAsLong() - entry.checkedAt < timeToLiveNanos;
             if (entry.refreshing || fresh) {
                 return entry.value;
@@ -129,16 +138,44 @@ public final class PlaceholderCache<K> {
         }
     }
 
+    // The map iterates from the key asked for longest ago. Called with the lock held.
+    private boolean dropEldestAtRest() {
+        Iterator<Entry> eldestFirst = entries.values().iterator();
+        while (eldestFirst.hasNext()) {
+            if (!eldestFirst.next().refreshing) {
+                eldestFirst.remove();
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Called without the lock, since the supplier is the caller's code and its future may complete at once.
     private void start(Entry entry, Supplier<CompletableFuture<@Nullable String>> refresh) {
-        CompletableFuture<@Nullable String> future;
+        CompletableFuture<@Nullable String> future = null;
+        Throwable thrown = null;
         try {
             future = Objects.requireNonNull(refresh.get(), "the refresh returned no future");
         } catch (RuntimeException | LinkageError failure) {
-            finish(entry, null, failure);
+            thrown = failure;
+        } finally {
+            if (future == null && thrown == null) {
+                settle(entry);
+            }
+        }
+        if (future == null) {
+            finish(entry, null, thrown);
             return;
         }
         future.whenComplete((value, failure) -> finish(entry, value, failure));
+    }
+
+    private void settle(Entry entry) {
+        synchronized (entries) {
+            entry.refreshing = false;
+            entry.checked = true;
+            entry.checkedAt = nanoTime.getAsLong();
+        }
     }
 
     private void finish(Entry entry, @Nullable String value, @Nullable Throwable failure) {

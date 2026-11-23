@@ -59,7 +59,7 @@ final class HeadDatabaseProvider implements CustomItemProvider, Listener {
         }
     }
 
-    // May run on any thread.
+    // A synchronous event: the server thread on Paper, a ticking thread on Folia.
     @EventHandler(priority = EventPriority.MONITOR)
     public void loaded(DatabaseLoadEvent event) {
         seenLoad = true;

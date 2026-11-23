@@ -54,7 +54,7 @@ final class ItemsAdderProvider implements CustomItemProvider, Listener {
         return ItemsAdder.areItemsLoaded();
     }
 
-    // May run on any thread.
+    // A synchronous event: the server thread on Paper, a ticking thread on Folia.
     @EventHandler(priority = EventPriority.MONITOR)
     public void loaded(ItemsAdderLoadDataEvent event) {
         loaded = true;

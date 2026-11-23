@@ -88,7 +88,7 @@ final class OraxenProvider implements CustomItemProvider, Listener {
         seenLoad = false;
     }
 
-    // May run on any thread.
+    // A synchronous event: the server thread on Paper, a ticking thread on Folia.
     @EventHandler(priority = EventPriority.MONITOR)
     public void loaded(OraxenItemsLoadedEvent event) {
         seenLoad = true;
