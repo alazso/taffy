@@ -5,6 +5,32 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `new ItemBuilder(ItemStack base)` starts from an existing stack. `build()` copies the stack with
+  `ItemStack.clone()` as it is at that call and never changes `base`, and the copy keeps the amount, name, lore,
+  glint and every other property that no setter was called for. An empty lore and `glow(false)` count as not
+  called. `new ItemBuilder(Material)` builds what it built before.
+- `ItemBuilder` has the setters `itemModel(NamespacedKey)`, `enchant(Enchantment, int level)`, which sets no
+  limit on the level, `unbreakable(boolean)`, `damage(int)`, `trim(ArmorTrim)`, `hideTooltip(boolean)`,
+  `color(Color)` for leather armour, a potion and a map, and `tag(PdcKey<P, C>, C)`, each applied in `build()`
+  through `ItemMeta`. An item that cannot be damaged, is not armour or has no colour ignores `damage`, `trim` or
+  `color`. From Paper 26.3 a map has no colour: `MapMeta.setColor` does nothing there.
+- `ItemBuilder.customModelData(List<Float> values, Logger logger)` sets the floats through the
+  `CUSTOM_MODEL_DATA` data component. When the data component API of the server cannot be linked, a list of one
+  whole number is set through `ItemMeta.setCustomModelData` and any other list is left out, with one warning to
+  `logger` for the first such build.
+- `ItemBuilder.glowStyle(GlowStyle)` chooses how `glow(true)` makes the item glint: `GlowStyle.GLINT_OVERRIDE`,
+  the default and what `glow` did before, or `GlowStyle.HIDDEN_ENCHANTMENT`, which adds `UNBREAKING` 1 with
+  `ItemFlag.HIDE_ENCHANTS` and leaves an item that already has an enchantment as it is, for a plugin whose
+  glowing items in players' hands were built that way. `ItemBuilder.applyGlow(ItemMeta, GlowStyle)` does the
+  same for an item meta.
+- `ItemBuilder.deserializeAnyOrThrow(String reference)` reads a `serialized:<base64>` reference as
+  `deserializeOrThrow` does, and also the bare base64 of `ItemStack.serializeAsBytes()` with no prefix. Without
+  the prefix, a reference that `Material.matchMaterial` finds is never decoded, so a material name that is also
+  valid base64, such as `DIRT`, throws `IllegalArgumentException` with no cause, and a reference that is not
+  base64 throws it with the decoder's exception as the cause. `deserialize` and `deserializeOrThrow` read what
+  they read before.
+
 ## [0.4.5] - 2026-11-22
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.
