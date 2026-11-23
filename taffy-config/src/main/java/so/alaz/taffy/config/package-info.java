@@ -14,6 +14,11 @@
  * the others. {@link so.alaz.taffy.config.ConfigProblem} is one warning or error as a record of file, path,
  * severity, line and fix, which {@link so.alaz.taffy.config.ConfigReader#problems()} and
  * {@link so.alaz.taffy.config.YamlFolder#loadReport} give beside the lines.
+ * {@link so.alaz.taffy.config.ConfigUpgrade} holds the steps that rename, move and remove keys when a file is
+ * brought to a newer layout version, for {@link so.alaz.taffy.config.ConfigLoader#upgrades} and for a
+ * {@link so.alaz.taffy.config.YamlFolder} of files that carry a version. {@link so.alaz.taffy.config.AtomicWriter}
+ * writes a file a plugin edits through a temporary file that replaces it in one step, creates a new file without
+ * replacing one, and replaces a file only while it holds the revision an edit started from, keeping copies.
  *
  * <h2>The settings model</h2>
  *
@@ -71,6 +76,7 @@
  * lead-in, and the lines of a {@link so.alaz.taffy.config.YamlFolder} start with the name of their file.
  *
  * <p>No class here keeps a plugin or a thread, and a logger is used only where the caller passes one in. File
- * reads and writes block the calling thread.
+ * reads and writes block the calling thread. {@link so.alaz.taffy.config.AtomicWriter} keeps a fixed set of
+ * locks, so that its writes of one file run one after another.
  */
 package so.alaz.taffy.config;

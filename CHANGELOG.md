@@ -45,6 +45,36 @@ All notable changes to Taffy are documented here. This project follows
   `StorageException` that names each one, before the SQLite backup and with the old version table left as it
   was. Names are compared ignoring case; types, constraints, indexes and extra tables and columns are not
   compared.
+- `AtomicWriter` in `taffy-config` writes a text file a plugin edits, as UTF-8, through `<name>.tmp` beside it:
+  the temporary file is flushed to the device and put in place in one step, a symbolic link is followed and the
+  POSIX permissions of the replaced file are kept. `create(Path, String)` writes a new file and throws
+  `FileAlreadyExistsException` for one that exists, `write(Path, String)` replaces a file, and
+  `replace(Path, String, String baseRevision, Path backups, int keep)` replaces it only while it has the
+  `revision(byte[])` the edit started from: it returns `AtomicWriter.Written` with the new revision and the copy
+  of the replaced content, or `AtomicWriter.Conflict` with the current revision and nothing written. The newest
+  `keep` copies of a file (1 to 1000) stay in `backups`. A write that fails leaves the file as it was and
+  removes its temporary file and the copy it took. Every call blocks the calling thread, and calls for one file
+  run one after another.
+- `ConfigUpgrade` holds steps that rename, move and remove keys, each registered with `from(int version, step)`
+  under the version it upgrades from. A step gets `ConfigUpgrade.Keys`: `move(String from, String to)` keeps the
+  owner's value and its comments, a section with every key beneath it, and what the file already holds at `to`
+  wins; `remove(String path)` deletes a key; `yaml()` gives the parsed file.
+  `ConfigLoader.upgrades(ConfigUpgrade)` returns a loader that runs the steps of an older `config.yml` before it
+  adds the shipped keys, so a renamed key keeps the owner's value where it got the shipped default before and
+  the old key stayed in the file. The `.bak` copy holds the file as it was before the steps. A step that throws
+  makes `load()` throw `ConfigLoadException` and nothing is written.
+- `ConfigLoader.refuseNewer()` returns a loader whose `load()` throws `ConfigLoadException` for a `config.yml`
+  with a `config-version` above the shipped one, with the message
+  `config.yml is version 3, newer than the version 2 this build knows, so it is not read`. Without it such a
+  file is still read as it is with a warning.
+- `new YamlFolder(Path folder, Logger, String versionKey, int currentVersion, ConfigUpgrade, boolean recursive)`
+  reads a layout version from each file under `versionKey`. An older file is upgraded with the steps before
+  the parser sees it and saved, with the previous file kept byte for byte as `<file name>.v<N>.bak` beside it.
+  A file newer than `currentVersion` is not parsed or written and adds the line
+  `<name>: <versionKey> is 3, newer than the version 2 this build knows, so the file is not read`. A step that
+  throws leaves its file unchanged and adds a line, and an upgrade that cannot be saved is logged and tried
+  again on the next load. With `recursive`, files in subfolders are read too, with ids such as `rare/gold`,
+  which `loadOne` takes as well. The other constructors still never write to the folder.
 
 ## [0.4.8] - 2026-11-23
 

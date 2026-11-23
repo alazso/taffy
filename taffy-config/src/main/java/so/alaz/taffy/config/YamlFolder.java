@@ -5,10 +5,12 @@ import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.Relocation;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -20,6 +22,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Reads a folder of YAML files in which each file is one entry, such as one menu or one kit per file.
@@ -37,9 +41,42 @@ import java.util.function.Consumer;
  * {@link ConfigProblem}. The line of {@link StrictYaml#readLenient} is not among them: it reaches only the
  * consumer given to {@link #lenient}.
  *
- * <p>The folder is never written to and nothing is kept between calls, so one instance may be used from any
- * thread. The reads block the calling thread, and the consumers given to the constructor and to
- * {@link #lenient} are called on it.
+ * <p>A reader built with {@link #YamlFolder(Path)} or {@link #YamlFolder(Path, BiConsumer)} never writes to the
+ * folder. Nothing is kept between calls, so one instance may be used from any thread. The reads block the
+ * calling thread, and the consumers given to the constructor and to {@link #lenient} are called on it.
+ *
+ * <h2>Files with a version</h2>
+ *
+ * <p>A reader built with {@link #YamlFolder(Path, Logger, String, int, ConfigUpgrade, boolean)} reads a layout
+ * version from each file, under the key the plugin names, as {@link ConfigLoader} reads {@code config-version}:
+ * a number, or text holding a whole number of at most nine digits, and 0 for a file without a usable one.
+ *
+ * <ul>
+ *   <li>A file of the current version is read as it is and never written.</li>
+ *   <li>An older file is upgraded before the parser sees it: the steps of the {@link ConfigUpgrade} registered
+ *       under its version up to, not including, the current one run on the parsed file, and the version key is
+ *       set to the current version, after the keys the file has when it had none. The previous file is then
+ *       written, byte for byte, to {@code <file name>.v<N>.bak} beside it (N is the old version, and a copy of
+ *       that name is replaced) and the upgraded file is saved, both as {@link AtomicWriter} writes a file. The
+ *       save rewrites the file as {@link ConfigLoader} describes for {@code config.yml}. The logger receives
+ *       {@code Upgraded <name> from version 1 to 2; the previous file is kept as <file name>.v1.bak.}</li>
+ *   <li>When that save fails, the file stays as it was, byte for byte, the parser still gets the upgraded file,
+ *       and the next load tries again. The logger receives a warning that starts with
+ *       {@code Could not save the upgraded <name>: } and states the reason. A file is not saved when its text
+ *       would not be read back as it is, when it changed on the disk since it was read, or when it holds bytes
+ *       that are not UTF-8 and was read through {@link #lenient}.</li>
+ *   <li>When a step throws, the file is not changed, the parser does not see it and the file adds the line
+ *       {@code <name>: the step that upgrades it from version 1 failed: }, then the simple class name of what
+ *       the step threw and its message. The logger receives a warning with what the step threw, so its stack
+ *       trace is in the log.</li>
+ *   <li>A file newer than the current version is never parsed, upgraded or written. It adds the line
+ *       {@code <name>: <version key> is 3, newer than the version 2 this build knows, so the file is not read}.
+ *       </li>
+ * </ul>
+ *
+ * <p>Such a reader writes to the folder only inside {@link #load}, {@link #loadReport} and {@link #loadOne},
+ * on the calling thread. Two loads of one folder that overlap both load every entry, and the one that comes
+ * second to a file logs that it could not save it.
  */
 public final class YamlFolder {
 
@@ -160,6 +197,12 @@ public final class YamlFolder {
     private final Path folder;
     private final @Nullable BiConsumer<String, Throwable> failures;
     private final @Nullable Consumer<String> lenientWarnings;
+    private final @Nullable Versions versions;
+    private final boolean recursive;
+
+    /** How a reader treats the layout version of a file. */
+    private record Versions(Logger logger, String key, int current, ConfigUpgrade upgrades) {
+    }
 
     /**
      * A reader of the files directly inside {@code folder}.
@@ -168,7 +211,7 @@ public final class YamlFolder {
      *     in its original package
      */
     public YamlFolder(Path folder) {
-        this(folder, null, null);
+        this(folder, null, null, null, false);
     }
 
     /**
@@ -184,17 +227,60 @@ public final class YamlFolder {
      *     in its original package
      */
     public YamlFolder(Path folder, BiConsumer<String, Throwable> failures) {
-        this(folder, Objects.requireNonNull(failures, "failures"), null);
+        this(folder, Objects.requireNonNull(failures, "failures"), null, null, false);
+    }
+
+    /**
+     * A reader of files that carry a layout version, which upgrades an older file and does not read a newer
+     * one, as the class description states.
+     *
+     * @param logger receives one line for each file that was upgraded, for each upgrade that could not be saved
+     *     and for each step that threw, on the thread that loads
+     * @param versionKey the key that holds the version of a file, as a full dotted path, such as
+     *     {@code crate-version}
+     * @param currentVersion the version of the layout the plugin reads, 1 or more
+     * @param upgrades the steps, each registered under the version it upgrades from; steps under
+     *     {@code currentVersion} or above never run
+     * @param recursive whether the files in subfolders are read too. The name of such a file, in the lines and
+     *     for the parser, is its path from {@code folder} with {@code /} between the parts, such as
+     *     {@code rare/gold.yml}, and its id is that name without the suffix, {@code rare/gold}. The files are
+     *     read in the order of those names. A folder whose name starts with a dot is skipped with everything
+     *     in it, a folder reached through a symbolic link is not entered, and a folder whose name ends in
+     *     {@code .yml} is entered like any other. With {@code false} only the files directly inside
+     *     {@code folder} are read.
+     * @throws IllegalArgumentException when {@code versionKey} is blank or {@code currentVersion} is below 1
+     * @throws IllegalStateException when {@link Relocation#check()} fails, because the plugin's jar holds Taffy
+     *     in its original package
+     */
+    public YamlFolder(Path folder, Logger logger, String versionKey, int currentVersion, ConfigUpgrade upgrades,
+                      boolean recursive) {
+        this(folder, null, null, versions(logger, versionKey, currentVersion, upgrades), recursive);
     }
 
     private YamlFolder(
         Path folder,
         @Nullable BiConsumer<String, Throwable> failures,
-        @Nullable Consumer<String> lenientWarnings) {
+        @Nullable Consumer<String> lenientWarnings,
+        @Nullable Versions versions,
+        boolean recursive) {
         Relocation.check();
         this.folder = folder;
         this.failures = failures;
         this.lenientWarnings = lenientWarnings;
+        this.versions = versions;
+        this.recursive = recursive;
+    }
+
+    private static Versions versions(Logger logger, String versionKey, int currentVersion, ConfigUpgrade upgrades) {
+        Objects.requireNonNull(logger, "logger");
+        Objects.requireNonNull(upgrades, "upgrades");
+        if (versionKey.isBlank()) {
+            throw new IllegalArgumentException("the version key is blank");
+        }
+        if (currentVersion < 1) {
+            throw new IllegalArgumentException("the current version is " + currentVersion + "; expected 1 or more");
+        }
+        return new Versions(logger, versionKey, currentVersion, upgrades);
     }
 
     /**
@@ -206,7 +292,7 @@ public final class YamlFolder {
      *     which names the file and the first line with a replaced character
      */
     public YamlFolder lenient(Consumer<String> warnings) {
-        return new YamlFolder(folder, failures, Objects.requireNonNull(warnings, "warnings"));
+        return new YamlFolder(folder, failures, Objects.requireNonNull(warnings, "warnings"), versions, recursive);
     }
 
     /**
@@ -260,14 +346,15 @@ public final class YamlFolder {
         if (!Files.isDirectory(folder)) {
             return new Report<>(entries, errors, problems);
         }
-        for (Path file : list()) {
-            String name = name(file);
+        for (Listed listed : list()) {
+            String name = listed.name();
             if (hasSuffix(name, LONG_SUFFIX)) {
                 String fix = "rename it to " + name.substring(0, name.length() - LONG_SUFFIX.length()) + SUFFIX;
                 fail(name, name + ": " + fix + " to have it read", fix, errors, problems);
                 continue;
             }
-            read(file, name, name.substring(0, name.length() - SUFFIX.length()), parser, entries, errors, problems);
+            read(listed.file(), name, name.substring(0, name.length() - SUFFIX.length()), parser, entries, errors,
+                problems);
         }
         return new Report<>(entries, errors, problems);
     }
@@ -280,22 +367,33 @@ public final class YamlFolder {
      * Windows and macOS, {@code id} may match a file whose name has another letter case, and the key then
      * differs from the id {@link #load} gives the same file.
      *
+     * <p>A reader that reads subfolders takes the id {@link #load} gives a file there, such as {@code rare/gold}.
+     * A reader of files with a version upgrades the file as {@link #load} does.
+     *
      * @return the entry or the error line, or {@code null} when {@code id} is empty or starts with a dot, when
      *     it is not a plain file name (it names another folder, or holds a character the file system does not
-     *     allow), or when the folder holds no regular file by that name
+     *     allow), or when the folder holds no regular file by that name. For a reader that reads subfolders,
+     *     {@code null} also when a part of {@code id} between two {@code /} is empty, starts with a dot or is
+     *     not a plain name.
      */
     public <T> @Nullable Loaded<T> loadOne(String id, Parser<T> parser) {
-        if (id.isEmpty() || id.startsWith(".")) {
-            return null;
-        }
         String name = id + SUFFIX;
-        Path file;
-        try {
-            file = folder.resolve(name);
-        } catch (InvalidPathException notAName) {
-            return null;
+        Path file = folder;
+        for (String part : recursive ? name.split("/", -1) : new String[] {name}) {
+            if (part.isEmpty() || part.startsWith(".")
+                || (file != folder && !Files.isDirectory(file, LinkOption.NOFOLLOW_LINKS))) {
+                return null;
+            }
+            try {
+                file = file.resolve(part);
+            } catch (InvalidPathException notAName) {
+                return null;
+            }
+            if (!part.equals(String.valueOf(file.getFileName()))) {
+                return null;
+            }
         }
-        if (!name.equals(String.valueOf(file.getFileName())) || !Files.isRegularFile(file)) {
+        if (id.isEmpty() || !Files.isRegularFile(file)) {
             return null;
         }
         Map<String, T> entries = new LinkedHashMap<>();
@@ -309,27 +407,41 @@ public final class YamlFolder {
             new Parsed<>(Objects.requireNonNull(parser.parse(id, name, yaml), "the parser returned null"), List.of());
     }
 
-    private List<Path> list() throws ConfigLoadException {
-        List<Path> files = new ArrayList<>();
-        try (DirectoryStream<Path> directory = Files.newDirectoryStream(folder)) {
-            for (Path file : directory) {
+    /** A file of the folder with the name it has in the lines: its path from the folder, with {@code /}. */
+    private record Listed(Path file, String name) {
+    }
+
+    private List<Listed> list() throws ConfigLoadException {
+        List<Listed> files = new ArrayList<>();
+        list(folder, "", files);
+        files.sort(Comparator.comparing(Listed::name));
+        return files;
+    }
+
+    private void list(Path directory, String prefix, List<Listed> files) throws ConfigLoadException {
+        List<Path> subfolders = new ArrayList<>();
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
+            for (Path file : entries) {
                 String name = name(file);
                 if (name.startsWith(".")) {
                     continue;
                 }
-                if (hasSuffix(name, SUFFIX) || (hasSuffix(name, LONG_SUFFIX) && Files.isRegularFile(file))) {
-                    files.add(file);
+                if (recursive && Files.isDirectory(file, LinkOption.NOFOLLOW_LINKS)) {
+                    subfolders.add(file);
+                } else if (hasSuffix(name, SUFFIX) || (hasSuffix(name, LONG_SUFFIX) && Files.isRegularFile(file))) {
+                    files.add(new Listed(file, prefix + name));
                 }
             }
         } catch (IOException | DirectoryIteratorException failure) {
             // A failure while iterating arrives unchecked, with the I/O error as its cause.
             Throwable reason = failure instanceof DirectoryIteratorException ? failure.getCause() : failure;
-            Path named = folder.getFileName() == null ? folder : folder.getFileName();
+            Path named = directory.getFileName() == null ? directory : directory.getFileName();
             throw new ConfigLoadException("cannot read the folder " + named + ": " + StrictYaml.describe(reason),
                 reason);
         }
-        files.sort(Comparator.comparing(YamlFolder::name));
-        return files;
+        for (Path subfolder : subfolders) {
+            list(subfolder, prefix + name(subfolder) + "/", files);
+        }
     }
 
     private static boolean hasSuffix(String name, String suffix) {
@@ -341,9 +453,13 @@ public final class YamlFolder {
         try {
             YamlConfiguration yaml;
             try {
+                byte[] content = StrictYaml.bytes(file, name);
                 yaml = lenientWarnings == null
-                    ? StrictYaml.read(file, name)
-                    : StrictYaml.readLenient(file, name, lenientWarnings);
+                    ? StrictYaml.parse(StrictYaml.decode(content, name), name)
+                    : StrictYaml.parseLenient(content, name, lenientWarnings);
+                if (versions != null && !upgraded(file, name, content, yaml, versions, errors, problems)) {
+                    return;
+                }
             } catch (ConfigLoadException unreadable) {
                 fail(name, unreadable.getMessage(), null, errors, problems);
                 return;
@@ -361,6 +477,54 @@ public final class YamlFolder {
                 failures.accept(name, failure);
             }
         }
+    }
+
+    /**
+     * Brings {@code yaml} to the current version and saves it, or adds the line of a file that is not read.
+     *
+     * @return whether the parser gets {@code yaml}
+     */
+    private boolean upgraded(Path file, String name, byte[] content, YamlConfiguration yaml, Versions versions,
+                             List<String> errors, List<ConfigProblem> problems) {
+        int version = ConfigLoader.version(yaml.get(versions.key()), 0);
+        if (version > versions.current()) {
+            fail(name, name + ": " + versions.key() + " is " + version + ", newer than the version "
+                + versions.current() + " this build knows, so the file is not read", null, errors, problems);
+            return false;
+        }
+        if (version == versions.current()) {
+            return true;
+        }
+        try {
+            versions.upgrades().run(yaml, version, versions.current());
+        } catch (ConfigUpgrade.Failure failure) {
+            fail(name, name + ": the step that upgrades it from version " + failure.version() + " failed: "
+                + failure.reason(), null, errors, problems);
+            versions.logger().log(Level.WARNING, "The step that upgrades " + name + " from version "
+                + failure.version() + " failed, so the file is not read.", failure.getCause());
+            return false;
+        }
+        yaml.set(versions.key(), versions.current());
+        Path backup = file.resolveSibling(file.getFileName() + ".v" + version + ".bak");
+        try {
+            if (StrictYaml.malformedLine(content) != 0) {
+                throw new ConfigLoadException("it is not saved as UTF-8");
+            }
+            byte[] text = ConfigLoader.upgradedText(yaml, name).getBytes(StandardCharsets.UTF_8);
+            try {
+                if (!AtomicWriter.replaceKeeping(file, content, backup, text)) {
+                    throw new ConfigLoadException("the file changed while it was read");
+                }
+            } catch (IOException failure) {
+                throw new ConfigLoadException("cannot write it: " + StrictYaml.describe(failure), failure);
+            }
+            versions.logger().info("Upgraded " + name + " from version " + version + " to " + versions.current()
+                + "; the previous file is kept as " + backup.getFileName() + ".");
+        } catch (ConfigLoadException failure) {
+            versions.logger().warning("Could not save the upgraded " + name + ": " + failure.getMessage()
+                + ". The upgraded entry is used and the save is tried again the next time the file is loaded.");
+        }
+        return true;
     }
 
     private static void fail(String name, String line, @Nullable String fix, List<String> errors,

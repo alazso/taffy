@@ -149,7 +149,12 @@ public final class StrictYaml {
      */
     public static YamlConfiguration readLenient(Path file, String source, Consumer<String> warnings)
         throws ConfigLoadException {
-        byte[] content = bytes(file, source);
+        return parseLenient(bytes(file, source), source, warnings);
+    }
+
+    /** Parses {@code content} as {@link #readLenient} parses the bytes of a file. */
+    static YamlConfiguration parseLenient(byte[] content, String source, Consumer<String> warnings)
+        throws ConfigLoadException {
         int line = malformedLine(content);
         if (line == 0) {
             return parse(decode(content, source), source);

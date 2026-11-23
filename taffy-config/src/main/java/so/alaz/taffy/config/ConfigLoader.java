@@ -8,20 +8,16 @@ import so.alaz.taffy.platform.Relocation;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.PosixFileAttributeView;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
@@ -42,7 +38,8 @@ import java.util.logging.Logger;
  *
  * <ul>
  *   <li>No file: the shipped text is written byte for byte and loaded.
- *   <li>An older file: every shipped key the file does not have is added with its comments, the version is set
+ *   <li>An older file: the steps given to {@link #upgrades} run first, then every shipped key the file does not
+ *       have is added with its comments, the version is set
  *       to the shipped one, the previous file is written to {@code config.yml.v<N>.bak} beside it (N is the old
  *       version, and a copy of that name from an earlier upgrade is replaced) and the upgraded file is saved.
  *       Keys and values the owner has are kept, unknown keys included. A shipped key is not added beneath a
@@ -52,7 +49,8 @@ import java.util.logging.Logger;
  *       missing: it gets the shipped value and comments when the shipped file has the key, and is left out of
  *       the saved file otherwise.
  *   <li>The same version: the file is read as it is, even when a shipped key is missing from it.
- *   <li>A newer file: the file is read as it is and a warning is logged.
+ *   <li>A newer file: the file is read as it is and a warning is logged. After {@link #refuseNewer()} the load
+ *       throws in place of that. The file is never changed.
  * </ul>
  *
  * <p>The save of an upgrade writes the file anew from the parsed settings, so every value is kept and the way it
@@ -89,6 +87,8 @@ import java.util.logging.Logger;
  * by {@code .tmp}), and that of the copy is the name of the copy followed by {@code .tmp}; one left behind by a
  * write that was cut off is removed by the next load or the next write of that name.
  *
+ * <p>The copy and the save are written as {@link AtomicWriter} writes a file.
+ *
  * <p>The loader holds no state between loads. Calls to {@link #load()} must not overlap.
  */
 public final class ConfigLoader {
@@ -106,6 +106,8 @@ public final class ConfigLoader {
     private final Logger logger;
     private final Map<String, Set<String>> ownerKeyed;
     private final int baseline;
+    private final ConfigUpgrade upgrades;
+    private final boolean refuseNewer;
 
     /**
      * A loader with no owner-keyed section: an upgrade adds every shipped key the file does not have.
@@ -144,7 +146,8 @@ public final class ConfigLoader {
         Supplier<@Nullable InputStream> shipped,
         Logger logger,
         Map<String, Set<String>> ownerKeyed) {
-        this(dataFolder.toAbsolutePath().resolve(FILE_NAME), shipped, logger, copyOf(ownerKeyed), 0);
+        this(dataFolder.toAbsolutePath().resolve(FILE_NAME), shipped, logger, copyOf(ownerKeyed), 0,
+            ConfigUpgrade.none(), false);
     }
 
     private ConfigLoader(
@@ -152,13 +155,17 @@ public final class ConfigLoader {
         Supplier<@Nullable InputStream> shipped,
         Logger logger,
         Map<String, Set<String>> ownerKeyed,
-        int baseline) {
+        int baseline,
+        ConfigUpgrade upgrades,
+        boolean refuseNewer) {
         Relocation.check();
         this.file = file;
         this.shipped = shipped;
         this.logger = logger;
         this.ownerKeyed = ownerKeyed;
         this.baseline = baseline;
+        this.upgrades = upgrades;
+        this.refuseNewer = refuseNewer;
     }
 
     private static Map<String, Set<String>> copyOf(Map<String, Set<String>> ownerKeyed) {
@@ -196,7 +203,41 @@ public final class ConfigLoader {
         if (version < 0) {
             throw new IllegalArgumentException("the baseline version is " + version + "; expected 0 or more");
         }
-        return new ConfigLoader(file, shipped, logger, ownerKeyed, version);
+        return new ConfigLoader(file, shipped, logger, ownerKeyed, version, upgrades, refuseNewer);
+    }
+
+    /**
+     * A copy of this loader that runs the steps of {@code upgrades} on an older file before the shipped keys it
+     * lacks are added, so a key the plugin renamed or moved keeps the owner's value, and a key it removed leaves
+     * the file. This loader is not changed.
+     *
+     * <p>For a file of version {@code v} and a shipped version {@code s}, the steps registered under {@code v}
+     * up to, not including, {@code s} run in ascending order on the parsed file. A file without a usable
+     * {@code config-version} counts as the baseline version. A key a step moved is not listed in the log line
+     * of the upgrade, which names the shipped keys that were added. The result goes through the same check,
+     * copy and save as an upgrade without steps: the copy holds the file as it was before the steps, and when
+     * the save fails the file stays as the owner left it and the next load runs the steps again on that file.
+     *
+     * <p>A step that throws stops the load: {@link #load()} throws a {@link ConfigLoadException}, nothing is
+     * written and no copy is made.
+     *
+     * @param upgrades the steps, each registered under the version it upgrades from; steps under the shipped
+     *     version or above never run
+     */
+    public ConfigLoader upgrades(ConfigUpgrade upgrades) {
+        Objects.requireNonNull(upgrades, "upgrades");
+        return new ConfigLoader(file, shipped, logger, ownerKeyed, baseline, upgrades, refuseNewer);
+    }
+
+    /**
+     * A copy of this loader that does not read a file whose {@code config-version} is above the shipped one, as
+     * a file has after the owner went back to an older build of the plugin: {@link #load()} throws a
+     * {@link ConfigLoadException} with the message
+     * {@code config.yml is version 3, newer than the version 2 this build knows, so it is not read} in place of
+     * the warning, and the file is left as it is. This loader is not changed.
+     */
+    public ConfigLoader refuseNewer() {
+        return new ConfigLoader(file, shipped, logger, ownerKeyed, baseline, upgrades, true);
     }
 
     /**
@@ -212,14 +253,18 @@ public final class ConfigLoader {
      *     {@code the config.yml inside the plugin jar has no whole number of 1 or more under config-version}),
      *     when the baseline version is above the shipped version (the message is
      *     {@code the baseline version 3 is above the config-version 2 of the config.yml inside the plugin jar}),
-     *     when the file in the data folder cannot be read, is not UTF-8 or is not valid YAML, or when a missing
-     *     file cannot be written. A file that exists in the data folder is not changed in any of these cases.
+     *     when the file in the data folder cannot be read, is not UTF-8 or is not valid YAML, when a missing
+     *     file cannot be written, when a step given to {@link #upgrades} throws (the message is
+     *     {@code the step that upgrades config.yml from version 1 failed: }, then the simple class name of what
+     *     the step threw, followed by a space and its message when it has one, and that exception is the cause),
+     *     or when the file is newer than the shipped one after {@link #refuseNewer()}. A file that exists in the
+     *     data folder is not changed in any of these cases.
      *     A message about a file that cannot be read or written names the file as {@code config.yml}, without
      *     its path, and has the I/O failure as its cause.
      */
     public YamlConfiguration load() throws ConfigLoadException {
         try {
-            Files.deleteIfExists(temporary(target()));
+            Files.deleteIfExists(AtomicWriter.temporary(AtomicWriter.target(file)));
         } catch (IOException leftoverKept) {
             // A leftover that cannot be removed here is removed or refused by the next write.
         }
@@ -241,11 +286,17 @@ public final class ConfigLoader {
         YamlConfiguration current = StrictYaml.parse(StrictYaml.decode(previous, FILE_NAME), FILE_NAME);
         int currentVersion = version(current.get(VERSION_KEY), baseline);
         if (currentVersion < shippedVersion) {
+            try {
+                upgrades.run(current, currentVersion, shippedVersion);
+            } catch (ConfigUpgrade.Failure failure) {
+                throw new ConfigLoadException("the step that upgrades " + FILE_NAME + " from version "
+                    + failure.version() + " failed: " + failure.reason(), failure.getCause());
+            }
             List<String> added = addMissing(current, defaults);
             current.set(VERSION_KEY, shippedVersion);
             Path backup = file.resolveSibling(FILE_NAME + ".v" + currentVersion + ".bak");
             try {
-                String upgraded = upgradedText(current);
+                String upgraded = upgradedText(current, FILE_NAME);
                 copy(previous, backup);
                 write(upgraded);
                 logger.info("Upgraded " + FILE_NAME + " from version " + currentVersion + " to " + shippedVersion
@@ -257,14 +308,22 @@ public final class ConfigLoader {
                     + " loaded.");
             }
         } else if (currentVersion > shippedVersion) {
+            if (refuseNewer) {
+                throw new ConfigLoadException(FILE_NAME + " is version " + currentVersion + ", newer than the version "
+                    + shippedVersion + " this build knows, so it is not read");
+            }
             logger.warning(FILE_NAME + " is version " + currentVersion + ", newer than the version " + shippedVersion
                 + " this build knows, so it is read as it is and nothing is changed.");
         }
         return current;
     }
 
-    /** The text {@code current} is saved as, checked to load back to the values {@code current} holds. */
-    private static String upgradedText(YamlConfiguration current) throws ConfigLoadException {
+    /**
+     * The text {@code current} is saved as, checked to load back to the values {@code current} holds.
+     *
+     * @param name the name of the file in the failure message
+     */
+    static String upgradedText(YamlConfiguration current, String name) throws ConfigLoadException {
         String text;
         try {
             text = current.saveToString();
@@ -274,7 +333,7 @@ public final class ConfigLoader {
         }
         YamlConfiguration written;
         try {
-            written = StrictYaml.parse(text, "the upgraded " + FILE_NAME);
+            written = StrictYaml.parse(text, "the upgraded " + name);
         } catch (ConfigLoadException unreadable) {
             throw new ConfigLoadException("its settings cannot be written as YAML (" + unreadable.getMessage() + ")");
         }
@@ -343,7 +402,7 @@ public final class ConfigLoader {
         return false;
     }
 
-    private static boolean underScalar(YamlConfiguration current, String path) {
+    static boolean underScalar(YamlConfiguration current, String path) {
         int dot = path.lastIndexOf('.');
         while (dot > 0) {
             String parent = path.substring(0, dot);
@@ -370,7 +429,7 @@ public final class ConfigLoader {
 
     private void copy(byte[] previous, Path backup) throws ConfigLoadException {
         try {
-            replace(backup, previous, target());
+            AtomicWriter.put(backup, previous, AtomicWriter.target(file));
         } catch (IOException failure) {
             throw new ConfigLoadException(
                 "cannot copy it to " + backup.getFileName() + ": " + StrictYaml.describe(failure), failure);
@@ -379,51 +438,11 @@ public final class ConfigLoader {
 
     private void write(String text) throws ConfigLoadException {
         try {
-            Path target = target();
+            Path target = AtomicWriter.target(file);
             Files.createDirectories(target.getParent());
-            replace(target, text.getBytes(StandardCharsets.UTF_8), target);
+            AtomicWriter.put(target, text.getBytes(StandardCharsets.UTF_8), target);
         } catch (IOException failure) {
             throw new ConfigLoadException("cannot write " + FILE_NAME + ": " + StrictYaml.describe(failure), failure);
         }
-    }
-
-    /**
-     * Writes {@code content} to a temporary file beside {@code target}, flushes it to the device and moves it
-     * over {@code target}. The file gets the POSIX permissions of {@code permissionsOf} when that file exists.
-     */
-    private static void replace(Path target, byte[] content, Path permissionsOf) throws IOException {
-        Path temporary = temporary(target);
-        Files.deleteIfExists(temporary);
-        FileChannel channel = FileChannel.open(temporary, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-        try {
-            try (channel) {
-                ByteBuffer bytes = ByteBuffer.wrap(content);
-                while (bytes.hasRemaining()) {
-                    channel.write(bytes);
-                }
-                // The bytes reach the device before the rename, so a power loss after it cannot leave an empty
-                // file.
-                channel.force(true);
-            }
-            if (Files.exists(permissionsOf)
-                && Files.getFileStore(permissionsOf).supportsFileAttributeView(PosixFileAttributeView.class)) {
-                Files.setPosixFilePermissions(temporary, Files.getPosixFilePermissions(permissionsOf));
-            }
-            try {
-                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (AtomicMoveNotSupportedException unsupported) {
-                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
-            }
-        } finally {
-            Files.deleteIfExists(temporary);
-        }
-    }
-
-    private Path target() throws IOException {
-        return Files.isSymbolicLink(file) ? file.toRealPath() : file;
-    }
-
-    private static Path temporary(Path target) {
-        return target.resolveSibling(target.getFileName() + ".tmp");
     }
 }
