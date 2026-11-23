@@ -183,6 +183,21 @@ final class TxTest {
     }
 
     @Test
+    void aBatchRefusesABinderThatBindsFewerValuesThanTheFirstBeforeItRunsAnything() throws SQLException {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+        String insert = "INSERT INTO p_probe (id, state) VALUES (?, ?)";
+
+        assertThatThrownBy(() -> tx.batch(insert,
+            List.of(params -> params.uuid(first).text("FIRST"), params -> params.uuid(second))))
+            .isInstanceOf(SQLException.class)
+            .hasMessage("the binder at index 1 bound 1 values and the first binder bound 2; each binder of a batch"
+                + " binds every placeholder: " + insert);
+
+        assertThat(tx.query("SELECT state FROM p_probe", Tx.Binder.NONE, row -> row.text("state"))).isEmpty();
+    }
+
+    @Test
     void aBatchRefusesANullBinderAndAnEndedTransaction() {
         List<Tx.Binder> withNull = new ArrayList<>();
         withNull.add(null);

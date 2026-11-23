@@ -499,6 +499,29 @@ abstract class CheckpointedStorageContract extends StorageContract {
         }
     }
 
+    @Test
+    void aBatchCountsEveryRunWhenThePluginTurnsTheRewriteOff() throws Exception {
+        String prefix = "rewrite_";
+        Storage plain = start(StorageSettings.server(dialect(),
+            server(prefix).properties(Map.of("rewriteBatchedStatements", "false"))));
+        String table = plain.table("probe");
+        List<Tx.Binder> binders = List.of(params -> params.uuid(UUID.randomUUID()).text("A"),
+            params -> params.uuid(UUID.randomUUID()).text("B"), params -> params.uuid(UUID.randomUUID()).text("C"));
+        try (Connection connection = connect()) {
+            try {
+                int[] counts = plain.async(tx -> {
+                    tx.execute(createProbe(table));
+                    return tx.batch("INSERT INTO " + table + " (id, state) VALUES (?, ?)", binders);
+                }).get(30, TimeUnit.SECONDS);
+
+                assertThat(counts).containsExactly(1, 1, 1);
+            } finally {
+                plain.close(Duration.ofSeconds(5));
+                ProbeSchema.drop(connection, dialect(), prefix);
+            }
+        }
+    }
+
     /** Starts storage with no migrations, recording them in {@code <prefix>schema_version}. */
     private Storage start(StorageSettings settings) {
         return TestPlugins.start(TestPlugins.plugin(name(), Path.of("unused"), Logger.getAnonymousLogger()),

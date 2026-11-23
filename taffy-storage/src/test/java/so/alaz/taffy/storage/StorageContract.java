@@ -846,6 +846,77 @@ abstract class StorageContract {
     }
 
     @Test
+    void workThatCatchesAFailedBatchHoldsOnlyTheRunsItsDatabaseKept() {
+        UUID kept = UUID.randomUUID();
+        UUID before = UUID.randomUUID();
+        UUID first = UUID.randomUUID();
+        UUID last = UUID.randomUUID();
+        insert(kept, "A", null, null, null, null);
+        String insert = "INSERT INTO " + probe() + " (id, state) VALUES (?, ?)";
+        String states = "SELECT state FROM " + probe() + " WHERE id IN (?, ?, ?) ORDER BY state";
+
+        CompletableFuture<List<String>> work = storage().async(tx -> {
+            tx.update(insert, params -> params.uuid(before).text("A"));
+            try {
+                tx.batch(insert, List.of(
+                    params -> params.uuid(first).text("B"),
+                    params -> params.uuid(kept).text("C"),
+                    params -> params.uuid(last).text("D")));
+            } catch (SQLException caught) {
+                // The work goes on, to show what its transaction holds.
+            }
+            return tx.query(states, params -> params.uuid(before).uuid(first).uuid(last), row -> row.text("state"));
+        });
+
+        if (dialect() == Dialect.POSTGRES) {
+            assertThatThrownBy(work::join).isInstanceOf(CompletionException.class)
+                .cause().isInstanceOf(SQLException.class);
+            assertThat(count()).isEqualTo(1);
+            return;
+        }
+        List<String> held = dialect() == Dialect.SQLITE ? List.of("A", "B") : List.of("A");
+        assertThat(work.join()).isEqualTo(held);
+        assertThat(count()).isEqualTo(held.size() + 1);
+        assertThat(state(kept)).isEqualTo("A");
+    }
+
+    @Test
+    void aBatchWhoseLaterBinderBindsFewerValuesIsRefusedAndWritesNothing() {
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+        String insert = "INSERT INTO " + probe() + " (id, state) VALUES (?, ?)";
+
+        assertThatThrownBy(() -> storage().async(tx -> tx.batch(insert,
+            List.of(params -> params.uuid(first).text("FIRST"), params -> params.uuid(second)))).join())
+            .isInstanceOf(CompletionException.class)
+            .cause().isInstanceOf(SQLException.class)
+            .hasMessage("the binder at index 1 bound 1 values and the first binder bound 2; each binder of a batch"
+                + " binds every placeholder: " + insert);
+
+        assertThat(count()).isZero();
+    }
+
+    @Test
+    void textIsRefusedAsAnIntAndOutsidePostgresAsABoolean() {
+        insert(UUID.randomUUID(), "true", null, null, null, null);
+        String select = "SELECT state FROM " + probe();
+
+        assertThatThrownBy(() -> storage().read(tx -> tx.query(select, Tx.Binder.NONE,
+            row -> row.intValue("state"))).join())
+            .isInstanceOf(CompletionException.class)
+            .cause().isInstanceOf(SQLException.class);
+        if (dialect() == Dialect.POSTGRES) {
+            assertThat(storage().read(tx -> tx.query(select, Tx.Binder.NONE, row -> row.bool("state"))).join())
+                .containsExactly(true);
+            return;
+        }
+        assertThatThrownBy(() -> storage().read(tx -> tx.query(select, Tx.Binder.NONE,
+            row -> row.bool("state"))).join())
+            .isInstanceOf(CompletionException.class)
+            .cause().isInstanceOf(SQLException.class);
+    }
+
+    @Test
     void aBackupIsTakenOnSqliteAndRefusedOnAServer() {
         if (dialect() == Dialect.SQLITE) {
             insert(UUID.randomUUID(), "A", null, null, null, null);

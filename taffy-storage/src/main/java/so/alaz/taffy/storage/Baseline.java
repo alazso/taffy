@@ -118,6 +118,14 @@ public final class Baseline {
      * created without a column list, as with {@code CREATE TABLE ... AS SELECT}, is expected to exist with any
      * columns.
      *
+     * <p>In a column list, and after {@code ADD}, the first word of an element names a column unless it starts a
+     * constraint ({@code CONSTRAINT}, {@code PRIMARY}, {@code UNIQUE}, {@code FOREIGN}, {@code CHECK},
+     * {@code EXCLUDE} on PostgreSQL), an index or a partition on MySQL and MariaDB ({@code KEY}, {@code INDEX},
+     * {@code FULLTEXT}, {@code SPATIAL}, {@code PARTITION}) or a {@code PERIOD FOR} on MariaDB. Any other table
+     * element is read as a column of that name, and the start stops for that column, which the database does not
+     * have. Line comments that start with {@code --} and block comments are skipped, as are line comments that
+     * start with {@code #} on MySQL and MariaDB.
+     *
      * <p>Names are compared without regard to case and without their quotes. Column types, constraints, indexes
      * and rows are not compared, and tables and columns the scripts do not create are allowed, so the database
      * may hold more than the scripts describe. With N at 0 no script is recorded as applied and nothing is

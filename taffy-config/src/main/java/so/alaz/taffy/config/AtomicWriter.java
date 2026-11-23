@@ -49,10 +49,11 @@ import java.util.regex.Pattern;
  * </ul>
  *
  * <p>{@link #write} and {@link #replace} follow a symbolic link to the file it names, so the link stays and the
- * file it leads to is replaced, and the temporary file is written beside that file. The new file gets the POSIX
- * permissions of the file it replaces where the file system has them. A file written where none existed gets
- * the permissions the file system gives any new file. A hard link of the target is not updated: the other names
- * keep the previous content.
+ * file it leads to is replaced, and the temporary file is written beside that file. A link that leads to a file
+ * that does not exist is not followed: both throw {@link NoSuchFileException} and write nothing. The new file
+ * gets the POSIX permissions of the file it replaces where the file system has them. A file written where none
+ * existed gets the permissions the file system gives any new file. A hard link of the target is not updated: the
+ * other names keep the previous content.
  *
  * <h2>What a failure leaves behind</h2>
  *
@@ -118,7 +119,7 @@ public final class AtomicWriter {
      * do as a check followed by a move.
      *
      * @throws FileAlreadyExistsException when {@code file} exists, a symbolic link included, whatever it leads
-     *     to. That file is not changed.
+     *     to. That file is not changed. Also when a parent of {@code file} exists and is not a folder.
      * @throws IOException when the file cannot be written. No file named {@code file} was created.
      */
     public static void create(Path file, String text) throws IOException {
@@ -153,6 +154,7 @@ public final class AtomicWriter {
     /**
      * Replaces {@code file} with {@code text}, or writes it when it does not exist.
      *
+     * @throws NoSuchFileException when {@code file} is a symbolic link that leads to a file that does not exist
      * @throws IOException when the file cannot be written, as the class description states
      */
     public static void write(Path file, String text) throws IOException {
@@ -181,10 +183,15 @@ public final class AtomicWriter {
      * <p>Before the write, the content about to be replaced is copied to {@code backups}, which is created when
      * missing, as {@code <file name>.<path id>.<yyyyMMdd-HHmmss-SSS>.bak}: the time is UTC, {@code -<n>} follows
      * it for a further copy of the same millisecond, and the path id is the first 12 hex digits of the SHA-256
-     * of the absolute path of the file (for a symbolic link, of the file it leads to), so files of one name in
-     * different folders can share one folder of copies. The copy holds the
-     * file byte for byte and gets its POSIX permissions where the file system has them, and no copy is taken
-     * when the newest copy of that file already holds the same bytes.
+     * of the absolute path of the file without its {@code .} and {@code ..} parts (for a symbolic link, of the
+     * file it leads to), so files of one name in different folders can share one folder of copies. The letter
+     * case of {@code file} as given is part of the name and of the id, so on a file system that ignores letter
+     * case a plugin passes one spelling of a file to keep its copies together. The copies are ordered by the
+     * time in their names alone, so a copy never gets a time before the one of the newest copy of its file: when
+     * the clock is behind that copy, the new one gets its time and the next {@code -<n>}. The copy holds the
+     * file byte for byte and gets its POSIX permissions where the file system has them, and no
+     * copy is taken when the newest copy of that file already holds the same bytes. A call whose text is what
+     * the file already holds is a write like any other and takes its copy.
      * After the write, the copies of that file beyond the newest {@code keep} are deleted; a delete that fails
      * leaves that copy and does not fail the call. A file that did not exist gives no copy.
      *
@@ -195,6 +202,7 @@ public final class AtomicWriter {
      * @return a {@link Written} with the new revision, or a {@link Conflict} with the current one when the file
      *     has another revision than {@code baseRevision}; nothing is written or copied then
      * @throws IllegalArgumentException when {@code keep} is below 1 or above 1000
+     * @throws NoSuchFileException when {@code file} is a symbolic link that leads to a file that does not exist
      * @throws IOException when the file cannot be read, copied or written, as the class description states
      */
     public static Result replace(Path file, String text, String baseRevision, Path backups, int keep)
@@ -250,7 +258,9 @@ public final class AtomicWriter {
             try {
                 List<Copy> copies = copiesOf(target, backups);
                 for (Copy old : copies.subList(Math.min(keep, copies.size()), copies.size())) {
-                    Files.deleteIfExists(old.path());
+                    if (!old.path().equals(backup)) {
+                        Files.deleteIfExists(old.path());
+                    }
                 }
             } catch (IOException copyKept) {
                 // The new content is in place, and a copy that cannot be deleted is tried again by the next call.
@@ -362,8 +372,9 @@ public final class AtomicWriter {
     }
 
     private static String copyPrefix(Path target) {
-        String pathId = revision(target.toString().getBytes(StandardCharsets.UTF_8)).substring(0, PATH_ID_LENGTH);
-        return target.getFileName() + "." + pathId + ".";
+        Path named = target.normalize();
+        String pathId = revision(named.toString().getBytes(StandardCharsets.UTF_8)).substring(0, PATH_ID_LENGTH);
+        return named.getFileName() + "." + pathId + ".";
     }
 
     /** A copy of a file: {@code attempt} orders the copies that share one time. */
@@ -372,15 +383,19 @@ public final class AtomicWriter {
 
     private static Path newCopy(Path target, Path backups, List<Copy> copies, Clock clock) {
         String stamp = LocalDateTime.now(clock.withZone(ZoneOffset.UTC)).format(BACKUP_TIME);
+        if (!copies.isEmpty() && copies.getFirst().stamp().compareTo(stamp) > 0) {
+            stamp = copies.getFirst().stamp();
+        }
         int attempt = 0;
         for (Copy copy : copies) {
             if (copy.stamp().equals(stamp)) {
                 attempt = Math.max(attempt, copy.attempt() + 1);
             }
         }
-        Path copy = backups.resolve(copyPrefix(target) + stamp + (attempt == 0 ? "" : "-" + attempt) + ".bak");
+        String prefix = copyPrefix(target);
+        Path copy = backups.resolve(prefix + stamp + (attempt == 0 ? "" : "-" + attempt) + ".bak");
         while (Files.exists(copy)) {
-            copy = backups.resolve(copyPrefix(target) + stamp + "-" + ++attempt + ".bak");
+            copy = backups.resolve(prefix + stamp + "-" + ++attempt + ".bak");
         }
         return copy;
     }

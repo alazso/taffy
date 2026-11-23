@@ -64,14 +64,15 @@ public final class Row {
      *
      * @param column the column name
      * @return the number, or {@code null} if the column holds SQL {@code NULL}
-     * @throws SQLException if the column cannot be read as a number, or holds a number below
-     *     {@link Integer#MIN_VALUE} or above {@link Integer#MAX_VALUE}
+     * @throws SQLException if the column cannot be read as a number, on SQLite holds text, a number with a
+     *     fraction or bytes, or holds a number below {@link Integer#MIN_VALUE} or above {@link Integer#MAX_VALUE}
      */
     public @Nullable Integer intValue(String column) throws SQLException {
-        long value = result.getLong(column);
-        if (result.wasNull()) {
+        Long whole = whole(column);
+        if (whole == null) {
             return null;
         }
+        long value = whole;
         if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) {
             throw new SQLException(column + " holds " + value + ", which does not fit an int");
         }
@@ -86,21 +87,44 @@ public final class Row {
      * @param column the column name
      * @return the boolean, or {@code null} if the column holds SQL {@code NULL}
      * @throws SQLException if the column cannot be read, on SQLite, MySQL and MariaDB holds a number other than 0
-     *     and 1, or on PostgreSQL holds a value the driver does not read as a boolean
+     *     and 1, on SQLite holds text, a number with a fraction or bytes, or on PostgreSQL holds a value the driver
+     *     does not read as a boolean
      */
     public @Nullable Boolean bool(String column) throws SQLException {
         if (dialect == Dialect.POSTGRES) {
             boolean value = result.getBoolean(column);
             return result.wasNull() ? null : value;
         }
-        long value = result.getLong(column);
-        if (result.wasNull()) {
+        Long whole = whole(column);
+        if (whole == null) {
             return null;
         }
+        long value = whole;
         if (value != 0 && value != 1) {
             throw new SQLException(column + " holds " + value + ", which is neither 0 nor 1");
         }
         return value == 1;
+    }
+
+    // The SQLite driver reads text that is not a number as 0 and cuts the fraction of a REAL value, and the MySQL
+    // driver throws NumberFormatException for text such as "true".
+    private @Nullable Long whole(String column) throws SQLException {
+        if (dialect == Dialect.SQLITE) {
+            Object value = result.getObject(column);
+            if (value == null) {
+                return null;
+            }
+            if (value instanceof Integer || value instanceof Long) {
+                return ((Number) value).longValue();
+            }
+            throw new SQLException(column + " holds a value that is not a whole number");
+        }
+        try {
+            long value = result.getLong(column);
+            return result.wasNull() ? null : value;
+        } catch (NumberFormatException notANumber) {
+            throw new SQLException(column + " holds text that is not a whole number", notANumber);
+        }
     }
 
     /**

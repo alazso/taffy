@@ -9,6 +9,7 @@ import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.attribute.DosFileAttributeView;
 import java.nio.file.attribute.PosixFilePermission;
@@ -62,6 +63,30 @@ final class AtomicWriterTest {
             .isInstanceOf(FileAlreadyExistsException.class);
 
         assertThat(folder.resolve("nowhere.yml")).doesNotExist();
+    }
+
+    @Test
+    void createRefusesAPathWhoseParentIsAFile() throws Exception {
+        Path notAFolder = Files.writeString(folder.resolve("vouchers"), "a file");
+
+        assertThatThrownBy(() -> AtomicWriter.create(notAFolder.resolve("gold.yml"), "name: Gold\n"))
+            .isInstanceOf(FileAlreadyExistsException.class);
+
+        assertThat(Files.readString(notAFolder)).isEqualTo("a file");
+        assertThat(names(folder)).containsExactly("vouchers");
+    }
+
+    @Test
+    void writeAndReplaceRefuseASymbolicLinkThatLeadsToNoFile() throws Exception {
+        Path link = folder.resolve("crate.yml");
+        link(link, folder.resolve("nowhere.yml"));
+
+        assertThatThrownBy(() -> AtomicWriter.write(link, "new: 2\n")).isInstanceOf(NoSuchFileException.class);
+        assertThatThrownBy(() -> AtomicWriter.replace(link, "new: 2\n", AtomicWriter.ABSENT,
+            folder.resolve("backups"), 5)).isInstanceOf(NoSuchFileException.class);
+
+        assertThat(Files.isSymbolicLink(link)).isTrue();
+        assertThat(names(folder)).containsExactly("crate.yml");
     }
 
     @Test
@@ -208,6 +233,38 @@ final class AtomicWriterTest {
 
         assertThat(second.backup()).isEqualTo(first.backup());
         assertThat(names(backups)).hasSize(1);
+    }
+
+    @Test
+    void replaceCountsTheCopiesOfOneFileUnderEverySpellingOfItsPath() throws Exception {
+        Path file = Files.writeString(folder.resolve("crate.yml"), "step: 0\n");
+        Path backups = folder.resolve("backups");
+        List<Path> spellings = List.of(file,
+            Files.createDirectory(folder.resolve("sub")).resolve("..").resolve("crate.yml"),
+            folder.resolve(".").resolve("crate.yml"));
+
+        for (int step = 1; step <= 6; step++) {
+            AtomicWriter.replace(spellings.get(step % spellings.size()), "step: " + step + "\n", revisionOf(file),
+                backups, 1);
+        }
+
+        assertThat(names(backups)).singleElement().asString().startsWith("crate.yml." + pathId(file) + ".");
+        assertThat(Files.readString(backups.resolve(names(backups).getFirst()))).isEqualTo("step: 5\n");
+    }
+
+    @Test
+    void replaceKeepsTheCopyItTookWhenAnotherCopyCarriesALaterTime() throws Exception {
+        Path file = Files.writeString(folder.resolve("crate.yml"), "old: 1\n");
+        Path backups = Files.createDirectory(folder.resolve("backups"));
+        String later = "crate.yml." + pathId(file) + ".20270101-000000-000";
+        Files.writeString(backups.resolve(later + ".bak"), "older: 0\n");
+
+        AtomicWriter.Written written = (AtomicWriter.Written) AtomicWriter.replace(file, "new: 2\n",
+            revisionOf(file), backups, 1, NOON, AtomicWriterTest::move);
+
+        assertThat(written.backup()).isEqualTo(backups.resolve(later + "-1.bak"));
+        assertThat(Files.readString(written.backup())).isEqualTo("old: 1\n");
+        assertThat(names(backups)).containsExactly(later + "-1.bak");
     }
 
     @Test

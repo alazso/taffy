@@ -124,7 +124,7 @@ final class ScriptSchema {
         if (at < tokens.size() && tokens.get(at).symbol("(")) {
             for (List<Token> item : items(tokens, at + 1, true)) {
                 Token first = item.getFirst();
-                if (first.word() && !first.in(CONSTRAINTS) && !first.is("LIKE") && !startsIndex(first)) {
+                if (first.word() && !first.is("LIKE") && !startsOther(item, 0)) {
                     columns.add(key(first));
                 }
             }
@@ -171,8 +171,7 @@ final class ScriptSchema {
                         columns.add(key(item.getFirst()));
                     }
                 }
-            } else if (action.get(at).word()
-                && (column || !action.get(at).in(CONSTRAINTS) && !startsIndex(action.get(at)))) {
+            } else if (action.get(at).word() && (column || !startsOther(action, at))) {
                 columns.add(key(action.get(at)));
             }
         } else if (verb.is("DROP")) {
@@ -258,6 +257,26 @@ final class ScriptSchema {
         columns.add(key(to));
     }
 
+    // Whether the tokens from the index on start a table element other than a column. EXCLUDE on PostgreSQL and
+    // PERIOD on MariaDB may name a column, so they count only with the word or parenthesis their element needs.
+    // MySQL and MariaDB reserve PARTITION.
+    private boolean startsOther(List<Token> tokens, int at) {
+        Token first = tokens.get(at);
+        if (first.in(CONSTRAINTS) || startsIndex(first)) {
+            return true;
+        }
+        if (at + 1 >= tokens.size()) {
+            return false;
+        }
+        Token next = tokens.get(at + 1);
+        return switch (dialect) {
+            case POSTGRES -> first.is("EXCLUDE") && (next.is("USING") || next.symbol("("));
+            case MARIADB -> first.is("PARTITION") || first.is("PERIOD") && next.is("FOR");
+            case MYSQL -> first.is("PARTITION");
+            case SQLITE -> false;
+        };
+    }
+
     private boolean startsIndex(Token token) {
         return (dialect == Dialect.MYSQL || dialect == Dialect.MARIADB) && token.in(INDEXES);
     }
@@ -310,7 +329,8 @@ final class ScriptSchema {
     }
 
     // Words, quoted identifiers without their quotes, and single symbols. String literals and block comments are
-    // dropped. A bracketed identifier is read on SQLite only, since PostgreSQL writes array types with brackets.
+    // dropped, as is a comment from # to the end of its line on MySQL and MariaDB. A bracketed identifier is read
+    // on SQLite only, since PostgreSQL writes array types with brackets.
     private List<Token> tokens(String statement) {
         List<Token> tokens = new ArrayList<>();
         int length = statement.length();
@@ -322,6 +342,9 @@ final class ScriptSchema {
             } else if (character == '/' && at + 1 < length && statement.charAt(at + 1) == '*') {
                 int close = statement.indexOf("*/", at + 2);
                 at = close < 0 ? length : close + 2;
+            } else if (character == '#' && (dialect == Dialect.MYSQL || dialect == Dialect.MARIADB)) {
+                int end = statement.indexOf('\n', at);
+                at = end < 0 ? length : end + 1;
             } else if (character == '\'') {
                 at = closing(statement, at, '\'') + 1;
             } else if (character == '"' || character == '`' || character == '[' && dialect == Dialect.SQLITE) {

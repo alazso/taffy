@@ -125,24 +125,33 @@ public final class Tx {
      * inside this transaction, so a server receives the rows in fewer round trips than one {@link #update} for
      * each. An empty list runs nothing and returns an empty array.
      *
-     * <p>Each binder binds every placeholder of the statement. The result holds one element for each binder, in
-     * the order of the list: the count {@link #update} gives for that run of the statement, or
-     * {@link Statement#SUCCESS_NO_INFO} where the driver ran the row and does not know its count. MySQL connections
-     * are opened with {@code rewriteBatchedStatements=true}, so the driver sends a batch as one multi-row statement
-     * or as several statements in one packet, and reports {@link Statement#SUCCESS_NO_INFO} for the rows of a
-     * rewritten batch. Work that needs the count of every row on MySQL runs {@link #update} for each.
+     * <p>Each binder binds every placeholder of the statement. A JDBC driver runs a placeholder a binder leaves out
+     * with the value the binder before it bound, so a binder that binds another number of values than the first
+     * one makes the method throw {@link SQLException} before any run is sent.
+     *
+     * <p>The result holds one element for each binder, in the order of the list: the count {@link #update} gives
+     * for that run of the statement, or {@link Statement#SUCCESS_NO_INFO} where the driver ran the row and does
+     * not know its count. MySQL connections are opened with {@code rewriteBatchedStatements=true}, so the driver
+     * sends a batch as one multi-row statement or as several statements in one packet, and reports
+     * {@link Statement#SUCCESS_NO_INFO} for the rows of a rewritten batch. Work that needs the count of every row
+     * on MySQL runs {@link #update} for each. A plugin that passes {@code rewriteBatchedStatements} through
+     * {@link StorageSettings.Server#properties} replaces that value: with {@code false} the MySQL driver sends
+     * each run by itself and counts it.
      *
      * <p>When a run of the statement fails, the method throws what the driver threw, usually a
-     * {@link java.sql.BatchUpdateException}. The runs before the failing one stay part of this transaction, like
-     * every statement before them: they are written only when the work returns and its transaction commits, and
-     * are rolled back with the rest when the work throws. On PostgreSQL a failed statement ends the transaction,
-     * so the work can only throw; on the other databases, work that catches the exception and returns commits what
-     * the earlier runs and statements wrote.
+     * {@link java.sql.BatchUpdateException}. Which runs of the batch the open transaction then holds is not
+     * defined, because it depends on the database, the driver and the statement. SQLite holds the runs before the
+     * failing one. MySQL and MariaDB, as storage opens them, hold no run of an {@code INSERT} batch; of an
+     * {@code UPDATE} or {@code DELETE} batch they hold the runs before the failing one and also run the ones after
+     * it. On PostgreSQL the failed statement ends the transaction. So the work lets the exception through, and
+     * every run is rolled back with the rest of its transaction. Work that catches the exception and returns
+     * reads a row back before it relies on it.
      *
      * @param sql the statement, with a {@code ?} for each value
      * @param binders binds the values of one run of the statement each
      * @return the count of each run, in order, as described above
-     * @throws SQLException if a binder or a run of the statement fails
+     * @throws SQLException if a binder or a run of the statement fails, or a binder binds another number of values
+     *     than the first one
      * @throws NullPointerException if the list or one of its binders is {@code null}
      * @throws IllegalStateException if called from another thread or after the work has returned
      */
@@ -153,8 +162,17 @@ public final class Tx {
             return new int[0];
         }
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
-            for (Binder binder : runs) {
-                binder.bind(new Params(statement, dialect));
+            int placeholders = 0;
+            for (int run = 0; run < runs.size(); run++) {
+                Params params = new Params(statement, dialect);
+                runs.get(run).bind(params);
+                if (run == 0) {
+                    placeholders = params.bound();
+                } else if (params.bound() != placeholders) {
+                    throw new SQLException("the binder at index " + run + " bound " + params.bound()
+                        + " values and the first binder bound " + placeholders
+                        + "; each binder of a batch binds every placeholder: " + sql);
+                }
                 statement.addBatch();
             }
             return statement.executeBatch();

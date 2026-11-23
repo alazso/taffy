@@ -92,6 +92,50 @@ final class ScriptSchemaTest {
             .containsExactly("accounts.name");
     }
 
+    @Test
+    void anExclusionConstraintOnPostgresIsNotAColumnAndAColumnNamedExcludeIs() {
+        ScriptSchema schema = schema(Dialect.POSTGRES,
+            "CREATE TABLE t (id INT, during tsrange, exclude TEXT, EXCLUDE USING gist (during WITH &&))",
+            "ALTER TABLE t ADD EXCLUDE (id WITH =), ADD period INT");
+
+        assertThat(schema.missingFrom(Map.of("t", Set.of())))
+            .containsExactly("t.id", "t.during", "t.exclude", "t.period");
+    }
+
+    @Test
+    void aPeriodOnMariaDbIsNotAColumnAndAColumnNamedPeriodIs() {
+        ScriptSchema schema = schema(Dialect.MARIADB,
+            "CREATE TABLE t (id INT, a DATE, b DATE, period INT, PERIOD FOR p (a, b))",
+            "ALTER TABLE t ADD PERIOD FOR q (a, b)");
+
+        assertThat(schema.missingFrom(Map.of("t", Set.of()))).containsExactly("t.id", "t.a", "t.b", "t.period");
+    }
+
+    @Test
+    void anAddedPartitionOnMysqlAndMariaDbIsNotAColumn() {
+        for (Dialect dialect : List.of(Dialect.MYSQL, Dialect.MARIADB)) {
+            ScriptSchema schema = schema(dialect,
+                "CREATE TABLE t (id INT) PARTITION BY RANGE (id) (PARTITION p0 VALUES LESS THAN (10))",
+                "ALTER TABLE t ADD PARTITION (PARTITION p1 VALUES LESS THAN (20))",
+                "ALTER TABLE t DROP PARTITION p0");
+
+            assertThat(schema.missingFrom(Map.of("t", Set.of("id")))).isEmpty();
+        }
+    }
+
+    @Test
+    void aHashCommentOnMysqlAndMariaDbIsSkipped() {
+        for (Dialect dialect : List.of(Dialect.MYSQL, Dialect.MARIADB)) {
+            ScriptSchema schema = schema(dialect, """
+                CREATE TABLE t (
+                    id INT, # the key, primary
+                    name TEXT # it's the last column
+                )""");
+
+            assertThat(schema.missingFrom(Map.of("t", Set.of()))).containsExactly("t.id", "t.name");
+        }
+    }
+
     private static ScriptSchema schema(Dialect dialect, String... statements) {
         ScriptSchema schema = new ScriptSchema(dialect);
         List.of(statements).forEach(schema::apply);

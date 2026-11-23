@@ -8,21 +8,28 @@ All notable changes to Taffy are documented here. This project follows
 ### Added
 - `Tx.batch(String sql, List<Tx.Binder> binders)` runs one `INSERT`, `UPDATE` or `DELETE` once for each binder
   as a JDBC batch inside the transaction, and returns one count for each binder, in order. An empty list runs
-  nothing and returns an empty array. When a run fails, it throws what the driver threw, usually a
-  `BatchUpdateException`: the runs before it stay in the open transaction and are rolled back with it when the
-  work throws. On PostgreSQL a failed statement ends the transaction, so the work can only throw. MySQL
-  connections are now opened with `rewriteBatchedStatements=true`, so the driver sends a batch in one packet
-  and reports `Statement.SUCCESS_NO_INFO` in place of the count of a rewritten row. No other statement is
-  affected by that property.
+  nothing and returns an empty array. A binder that binds another number of values than the first one makes it
+  throw `SQLException` before any run is sent, where a JDBC driver would run the statement with the value the
+  binder before it bound. When a run fails, it throws what the driver threw, usually a `BatchUpdateException`,
+  and which runs of the batch the open transaction then holds is not defined: SQLite holds the runs before the
+  failing one, MySQL and MariaDB hold no run of an `INSERT` batch and also run the `UPDATE` and `DELETE` runs
+  after the failing one, and PostgreSQL ends the transaction. Work lets the exception through, which rolls
+  every run back, or reads a row back before it relies on it. MySQL connections are now opened with
+  `rewriteBatchedStatements=true`, so the driver sends a batch in one packet and reports
+  `Statement.SUCCESS_NO_INFO` in place of the count of a rewritten row. No other statement is affected by that
+  property, and a plugin replaces it through `StorageSettings.Server.properties`, which accepts the name: with
+  `false` the MySQL driver sends and counts each run by itself.
 - `Params.intValue(int)`, `Params.intValue(Integer)` and `Row.intValue(String)` bind and read a whole number
   that fits an `int`. A `null` `Integer` binds `NULL` typed `INTEGER`, `Row.intValue` returns `null` for `NULL`,
   and it throws `SQLException` for a number outside the range of an `int` on every database, in place of the
-  cut or the driver's own failure a narrowing read gives.
+  cut or the driver's own failure a narrowing read gives. On SQLite it also throws `SQLException` for a column
+  that holds text, a number with a fraction or bytes, which the driver reads as 0 or cuts.
 - `Params.bool(boolean)`, `Params.bool(Boolean)` and `Row.bool(String)` bind and read a boolean: the whole
   number 1 or 0 on SQLite, MySQL and MariaDB, and a native `boolean` on PostgreSQL. A column declared `BOOLEAN`
   fits all four. A `null` `Boolean` binds `NULL` typed `BOOLEAN`, and `Row.bool` returns `null` for `NULL`. On
-  SQLite, MySQL and MariaDB it throws `SQLException` for a number other than 0 and 1. PostgreSQL refuses a
-  boolean for a whole-number column, so such a column there is bound with `intValue`.
+  SQLite, MySQL and MariaDB it throws `SQLException` for a number other than 0 and 1, and for text such as
+  `'true'`, which the SQLite driver reads as 0. PostgreSQL refuses a boolean for a whole-number column, so such
+  a column there is bound with `intValue`.
 - `Storage.backup(String label, int keep)` copies a running SQLite database to
   `backups/manual-<label>-<UTC yyyyMMdd-HHmmss>.db` and completes its future with that file. The copy is taken
   with `VACUUM INTO` on the writer thread, behind the writes submitted before it, so it holds each of them in
@@ -44,7 +51,9 @@ All notable changes to Taffy are documented here. This project follows
   `RENAME TABLE` and `DROP TABLE` statements. A missing table or column stops the start with a
   `StorageException` that names each one, before the SQLite backup and with the old version table left as it
   was. Names are compared ignoring case; types, constraints, indexes and extra tables and columns are not
-  compared.
+  compared. A table element the reader does not know is read as a column, which then stops the start; it knows
+  the constraints, `EXCLUDE` on PostgreSQL, the index words and `PARTITION` of MySQL and MariaDB, and
+  `PERIOD FOR` on MariaDB.
 - `AtomicWriter` in `taffy-config` writes a text file a plugin edits, as UTF-8, through `<name>.tmp` beside it:
   the temporary file is flushed to the device and put in place in one step, a symbolic link is followed and the
   POSIX permissions of the replaced file are kept. `create(Path, String)` writes a new file and throws
@@ -52,9 +61,10 @@ All notable changes to Taffy are documented here. This project follows
   `replace(Path, String, String baseRevision, Path backups, int keep)` replaces it only while it has the
   `revision(byte[])` the edit started from: it returns `AtomicWriter.Written` with the new revision and the copy
   of the replaced content, or `AtomicWriter.Conflict` with the current revision and nothing written. The newest
-  `keep` copies of a file (1 to 1000) stay in `backups`. A write that fails leaves the file as it was and
-  removes its temporary file and the copy it took. Every call blocks the calling thread, and calls for one file
-  run one after another.
+  `keep` copies of a file (1 to 1000) stay in `backups`, counted for the path without its `.` and `..` parts
+  in the letter case given. A write that fails leaves the file as it was and removes its temporary file and the
+  copy it took. `write` and `replace` throw `NoSuchFileException` for a symbolic link that leads to no file.
+  Every call blocks the calling thread, and calls for one file run one after another.
 - `ConfigUpgrade` holds steps that rename, move and remove keys, each registered with `from(int version, step)`
   under the version it upgrades from. A step gets `ConfigUpgrade.Keys`: `move(String from, String to)` keeps the
   owner's value and its comments, a section with every key beneath it, and what the file already holds at `to`
@@ -70,10 +80,11 @@ All notable changes to Taffy are documented here. This project follows
 - `new YamlFolder(Path folder, Logger, String versionKey, int currentVersion, ConfigUpgrade, boolean recursive)`
   reads a layout version from each file under `versionKey`. An older file is upgraded with the steps before
   the parser sees it and saved, with the previous file kept byte for byte as `<file name>.v<N>.bak` beside it.
-  A file newer than `currentVersion` is not parsed or written and adds the line
+  A file newer than `currentVersion` is not handed to the parser, upgraded or written and adds the line
   `<name>: <versionKey> is 3, newer than the version 2 this build knows, so the file is not read`. A step that
   throws leaves its file unchanged and adds a line, and an upgrade that cannot be saved is logged and tried
-  again on the next load. With `recursive`, files in subfolders are read too, with ids such as `rare/gold`,
+  again on the next load, as is one whose dotted `versionKey` lies beneath a key that holds a value, which
+  stays as the owner wrote it. With `recursive`, files in subfolders are read too, with ids such as `rare/gold`,
   which `loadOne` takes as well. The other constructors still never write to the folder.
 
 ## [0.4.8] - 2026-11-23

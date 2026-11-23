@@ -33,13 +33,13 @@ import java.util.logging.Logger;
  * case the file has. A name that starts with a dot is skipped without a line, as the hidden files and the
  * {@code ._<name>.yml} files macOS writes beside a file on a foreign file system are. A regular file whose name
  * ends in {@code .yaml} is not read: {@link #load} reports it with a line that tells the owner to rename it.
- * Files in subfolders are not read, and {@link #load} reports a subfolder whose name ends in {@code .yml} as a
- * file that cannot be read. Each file is read with {@link StrictYaml#read}, or with
- * {@link StrictYaml#readLenient} after {@link #lenient}, and handed to a {@link Parser}. A file that fails is
- * reported in {@link Loaded#errors()} and the other files still load. {@link #loadReport} reads the folder the
- * same way and also gives each failure, and each problem the parser hands over for a file that loaded, as a
- * {@link ConfigProblem}. The line of {@link StrictYaml#readLenient} is not among them: it reaches only the
- * consumer given to {@link #lenient}.
+ * Unless the reader was built to read subfolders, files in subfolders are not read, and {@link #load} reports a
+ * subfolder whose name ends in {@code .yml} as a file that cannot be read. Each file is read with
+ * {@link StrictYaml#read}, or with {@link StrictYaml#readLenient} after {@link #lenient}, and handed to a
+ * {@link Parser}. A file that fails is reported in {@link Loaded#errors()} and the other files still load.
+ * {@link #loadReport} reads the folder the same way and also gives each failure, and each problem the parser
+ * hands over for a file that loaded, as a {@link ConfigProblem}. The line of {@link StrictYaml#readLenient} is
+ * not among them: it reaches only the consumer given to {@link #lenient}.
  *
  * <p>A reader built with {@link #YamlFolder(Path)} or {@link #YamlFolder(Path, BiConsumer)} never writes to the
  * folder. Nothing is kept between calls, so one instance may be used from any thread. The reads block the
@@ -63,13 +63,15 @@ import java.util.logging.Logger;
  *   <li>When that save fails, the file stays as it was, byte for byte, the parser still gets the upgraded file,
  *       and the next load tries again. The logger receives a warning that starts with
  *       {@code Could not save the upgraded <name>: } and states the reason. A file is not saved when its text
- *       would not be read back as it is, when it changed on the disk since it was read, or when it holds bytes
- *       that are not UTF-8 and was read through {@link #lenient}.</li>
+ *       would not be read back as it is, when it changed on the disk since it was read, when it holds bytes
+ *       that are not UTF-8 and was read through {@link #lenient}, or when the version key is a dotted path
+ *       beneath a key of the file that holds a value, which stays as the owner wrote it.</li>
  *   <li>When a step throws, the file is not changed, the parser does not see it and the file adds the line
  *       {@code <name>: the step that upgrades it from version 1 failed: }, then the simple class name of what
  *       the step threw and its message. The logger receives a warning with what the step threw, so its stack
  *       trace is in the log.</li>
- *   <li>A file newer than the current version is never parsed, upgraded or written. It adds the line
+ *   <li>A file newer than the current version is never handed to the parser, upgraded or written. It adds the
+ *       line
  *       {@code <name>: <version key> is 3, newer than the version 2 this build knows, so the file is not read}.
  *       </li>
  * </ul>
@@ -504,9 +506,13 @@ public final class YamlFolder {
                 + failure.version() + " failed, so the file is not read.", failure.getCause());
             return false;
         }
-        yaml.set(versions.key(), versions.current());
         Path backup = file.resolveSibling(file.getFileName() + ".v" + version + ".bak");
         try {
+            if (ConfigLoader.underScalar(yaml, versions.key())) {
+                throw new ConfigLoadException(versions.key() + " lies beneath a key that holds a value, so the"
+                    + " version cannot be written");
+            }
+            yaml.set(versions.key(), versions.current());
             if (StrictYaml.malformedLine(content) != 0) {
                 throw new ConfigLoadException("it is not saved as UTF-8");
             }

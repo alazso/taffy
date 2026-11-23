@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir;
 import so.alaz.taffy.test.CapturedLog;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -189,6 +190,47 @@ final class YamlFolderVersionTest {
 
         assertThat(Files.readString(file)).contains("crate-version: 2");
         assertThat(Files.readString(blockedBackup)).isEqualTo(OLD);
+    }
+
+    @Test
+    void anUpgradeDoesNotReplaceAFileThatChangedOnTheDiskWhileItWasRead() throws Exception {
+        Path file = write("gold.yml", OLD);
+        String edited = OLD.replace("DIAMOND", "EMERALD");
+        ConfigUpgrade upgrades = ConfigUpgrade.none().from(1, keys -> {
+            keys.move("prize", "reward");
+            try {
+                Files.writeString(file, edited);
+            } catch (IOException failure) {
+                throw new UncheckedIOException(failure);
+            }
+        });
+
+        YamlFolder.Loaded<String> loaded = new YamlFolder(folder(), log.logger, KEY, 2, upgrades, false).load(REWARD);
+
+        assertThat(loaded.errors()).isEmpty();
+        assertThat(loaded.entries()).containsExactly(Map.entry("gold", "gold.yml=DIAMOND"));
+        assertThat(Files.readString(file)).isEqualTo(edited);
+        assertThat(names(folder())).containsExactly("gold.yml");
+        assertThat(log.lines()).containsExactly("WARNING Could not save the upgraded gold.yml: the file changed"
+            + " while it was read. The upgraded entry is used and the save is tried again the next time the file is"
+            + " loaded.");
+    }
+
+    @Test
+    void aVersionKeyBeneathAKeyThatHoldsAValueLeavesTheFileAndTheValue() throws Exception {
+        String owned = "meta: owner text\nreward: DIAMOND\n";
+        Path file = write("gold.yml", owned);
+        YamlFolder folder = new YamlFolder(folder(), log.logger, "meta.version", 1, ConfigUpgrade.none(), false);
+
+        YamlFolder.Loaded<String> loaded = folder.load((id, name, yaml) -> yaml.getString("meta"));
+
+        assertThat(loaded.errors()).isEmpty();
+        assertThat(loaded.entries()).containsExactly(Map.entry("gold", "owner text"));
+        assertThat(Files.readString(file)).isEqualTo(owned);
+        assertThat(names(folder())).containsExactly("gold.yml");
+        assertThat(log.lines()).containsExactly("WARNING Could not save the upgraded gold.yml: meta.version lies"
+            + " beneath a key that holds a value, so the version cannot be written. The upgraded entry is used and"
+            + " the save is tried again the next time the file is loaded.");
     }
 
     @Test

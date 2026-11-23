@@ -258,6 +258,23 @@ final class ParamsRowTest {
             .hasMessage("at holds 2, which is neither 0 nor 1");
     }
 
+    @Test
+    void textAndANumberWithAFractionAreRefusedAsAnIntAndAsABoolean() throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE legacy (flag VARCHAR(8), word TEXT, part REAL, digits TEXT)");
+            statement.execute("INSERT INTO legacy VALUES ('true', 'abc', 1.7, '1')");
+        }
+
+        for (String column : List.of("flag", "word", "part", "digits")) {
+            assertThatThrownBy(() -> query("SELECT * FROM legacy", params -> { }, row -> row.bool(column)))
+                .isInstanceOf(SQLException.class)
+                .hasMessage(column + " holds a value that is not a whole number");
+            assertThatThrownBy(() -> query("SELECT * FROM legacy", params -> { }, row -> row.intValue(column)))
+                .isInstanceOf(SQLException.class)
+                .hasMessage(column + " holds a value that is not a whole number");
+        }
+    }
+
     private void insert(UUID id, @Nullable String state, @Nullable BigDecimal amount, @Nullable Instant at,
         @Nullable String doc, byte @Nullable [] data) throws SQLException {
         update("INSERT INTO probe (id, state, amount, at, doc, data) VALUES (?, ?, ?, ?, ?, ?)",

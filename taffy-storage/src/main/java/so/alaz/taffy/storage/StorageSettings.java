@@ -518,6 +518,9 @@ public final class StorageSettings {
          * {@code autoReconnectForPools} are refused as well, in any letter case: with either, the MySQL driver
          * replaces a dropped connection without an error, and the new session no longer holds the migration lock.
          *
+         * <p>{@code rewriteBatchedStatements}, which storage sets to {@code true} on MySQL, is accepted here, and
+         * the value given replaces the one storage sets. {@link Tx#batch} states what each value gives.
+         *
          * @param properties the driver properties by name; copied, so a later change to the map changes nothing
          * @return a copy of this server with {@code properties} replaced
          * @throws NullPointerException if {@code properties}, a name or a value is {@code null}

@@ -252,6 +252,11 @@ public final class Params {
         return this;
     }
 
+    /** The number of placeholders bound so far. */
+    int bound() {
+        return index;
+    }
+
     private Params nullBigint() throws SQLException {
         statement.setNull(++index, Types.BIGINT);
         return this;

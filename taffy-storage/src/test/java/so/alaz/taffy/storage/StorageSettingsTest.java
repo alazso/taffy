@@ -117,6 +117,8 @@ final class StorageSettingsTest {
         assertThat(server.properties(Map.of("connectTimeout", "5000")))
             .isEqualTo(server.properties(Map.of("connectTimeout", "5000")))
             .hasSameHashCodeAs(server.properties(Map.of("connectTimeout", "5000")));
+        assertThat(server.properties(Map.of("rewriteBatchedStatements", "false")).properties())
+            .containsExactly(Map.entry("rewriteBatchedStatements", "false"));
         assertThat(server.socketTimeout(Duration.ofSeconds(1)).socketTimeout()).isEqualTo(Duration.ofSeconds(1));
         assertThat(server.socketTimeout(Duration.ofSeconds(2_147_483)).socketTimeout())
             .isEqualTo(Duration.ofSeconds(2_147_483));
