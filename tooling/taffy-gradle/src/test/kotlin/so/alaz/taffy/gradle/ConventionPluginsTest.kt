@@ -1839,6 +1839,377 @@ class ConventionPluginsTest {
     }
 
     @Test
+    fun aBuildThatDoesNotGenerateALoaderHasTheJarAndTheGeneratedSourceOfRelease044() {
+        project()
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            paperPlugin {
+                runtimeLibraries.add("com.zaxxer:HikariCP:7.1.0")
+            }
+            tasks.register("showConventionExclusions") {
+                val exclusions = coverage.conventionExclusions
+                doLast {
+                    println("excluded=" + exclusions.get())
+                }
+            }
+            """,
+        )
+        write("src/main/resources/paper-plugin.yml", "name: Demo\nloader: so.alaz.demo.DemoLoader\n")
+        write("src/main/java/so/alaz/demo/Demo.java", uncovered)
+
+        val result = run("assemble", "showConventionExclusions")
+
+        assertThat(result.output).contains("excluded=[**/RuntimeLibraries.class]")
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            assertThat(jar.entries().asSequence().map { it.name }.toList()).containsExactlyInAnyOrder(
+                "META-INF/",
+                "META-INF/MANIFEST.MF",
+                "META-INF/LICENSE",
+                "paper-plugin.yml",
+                "so/",
+                "so/alaz/",
+                "so/alaz/demo/",
+                "so/alaz/demo/Demo.class",
+                "so/alaz/demo/RuntimeLibraries.class",
+            )
+        }
+        val generated = projectDirectory.resolve("build/generated/sources/runtimeLibraries/java/main")
+        assertThat(generated.walk().filter { it.isFile }.map { it.toRelativeString(generated) }.toList())
+            .containsExactly(File("so/alaz/demo/RuntimeLibraries.java").path)
+        assertThat(generated.resolve("so/alaz/demo/RuntimeLibraries.java").readText()).isEqualTo(
+            """
+            package so.alaz.demo;
+
+            import java.util.List;
+
+            /** Generated from the version catalog at build time. Do not edit. */
+            final class RuntimeLibraries {
+
+                /** Maven coordinates of the libraries Paper downloads before the plugin loads. */
+                static final List<String> COORDINATES = List.of(
+                    "com.zaxxer:HikariCP:7.1.0");
+
+                private RuntimeLibraries() {
+                }
+            }
+            """.trimIndent() + "\n",
+        )
+    }
+
+    @Test
+    fun generateLoaderAddsALoaderThatHandsTheCoordinatesToAResolverOverPapersMirror() {
+        project()
+        write(
+            "settings.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.settings")
+            }
+            rootProject.name = "demo"
+            dependencyResolutionManagement {
+                repositories.withType<MavenArtifactRepository>().matching { it.name.startsWith("alazso") }
+                    .configureEach { url = uri("$testRepository") }
+            }
+            """,
+        )
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            dependencies {
+                compileOnly(alaz.paper.api)
+                testImplementation(alaz.paper.api)
+            }
+            paperPlugin {
+                runtimeLibraries.add("com.zaxxer:HikariCP:7.1.0")
+                runtimeLibraries.add("org.lwjgl:lwjgl:jar:natives-windows:3.3.3")
+                generateLoader.set(true)
+            }
+            tasks.register("showConventionExclusions") {
+                val exclusions = coverage.conventionExclusions
+                doLast {
+                    println("excluded=" + exclusions.get())
+                }
+            }
+            """,
+            junit,
+        )
+        write("src/main/resources/paper-plugin.yml", "name: Demo\nloader: so.alaz.demo.RuntimeLibrariesLoader\n")
+        write(
+            "src/test/java/so/alaz/other/GeneratedLoaderTest.java",
+            """
+            package so.alaz.other;
+
+            import io.papermc.paper.plugin.bootstrap.PluginProviderContext;
+            import io.papermc.paper.plugin.loader.PluginClasspathBuilder;
+            import io.papermc.paper.plugin.loader.PluginLoader;
+            import io.papermc.paper.plugin.loader.library.ClassPathLibrary;
+            import io.papermc.paper.plugin.loader.library.impl.MavenLibraryResolver;
+            import java.lang.reflect.Constructor;
+            import java.lang.reflect.Field;
+            import java.util.ArrayList;
+            import java.util.List;
+            import org.eclipse.aether.graph.Dependency;
+            import org.eclipse.aether.repository.RemoteRepository;
+            import org.junit.jupiter.api.Test;
+
+            class GeneratedLoaderTest {
+
+                @Test
+                void handsEveryCoordinateToOneResolver() throws Exception {
+                    Constructor<?> constructor = Class.forName("so.alaz.demo.RuntimeLibrariesLoader")
+                        .getDeclaredConstructor();
+                    constructor.setAccessible(true);
+                    PluginLoader loader = (PluginLoader) constructor.newInstance();
+                    List<ClassPathLibrary> libraries = new ArrayList<>();
+
+                    loader.classloader(new PluginClasspathBuilder() {
+                        @Override
+                        public PluginClasspathBuilder addLibrary(ClassPathLibrary library) {
+                            libraries.add(library);
+                            return this;
+                        }
+
+                        @Override
+                        public PluginProviderContext getContext() {
+                            throw new UnsupportedOperationException();
+                        }
+                    });
+
+                    if (libraries.size() != 1) {
+                        throw new AssertionError(libraries);
+                    }
+                    List<String> repositories = new ArrayList<>();
+                    for (Object repository : read(libraries.get(0), "repositories")) {
+                        RemoteRepository remote = (RemoteRepository) repository;
+                        repositories.add(remote.getId() + " " + remote.getContentType() + " " + remote.getUrl());
+                    }
+                    String mirror = "central default " + MavenLibraryResolver.MAVEN_CENTRAL_DEFAULT_MIRROR;
+                    if (!repositories.equals(List.of(mirror)) || mirror.contains("maven.org")
+                            || mirror.contains("maven.apache.org")) {
+                        throw new AssertionError(repositories);
+                    }
+                    List<String> dependencies = new ArrayList<>();
+                    for (Object dependency : read(libraries.get(0), "dependencies")) {
+                        dependencies.add(((Dependency) dependency).getArtifact().toString());
+                    }
+                    if (!dependencies.equals(List.of(
+                            "com.zaxxer:HikariCP:jar:7.1.0", "org.lwjgl:lwjgl:jar:natives-windows:3.3.3"))) {
+                        throw new AssertionError(dependencies);
+                    }
+                }
+
+                private static List<?> read(Object resolver, String name) throws Exception {
+                    Field field = MavenLibraryResolver.class.getDeclaredField(name);
+                    field.setAccessible(true);
+                    return (List<?>) field.get(resolver);
+                }
+            }
+            """,
+        )
+
+        val result = run("assemble", "test", "compileAgainstPaperFloor", "showConventionExclusions")
+
+        assertThat(result.task(":test")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(projectDirectory.resolve("build/test-results/test/TEST-so.alaz.other.GeneratedLoaderTest.xml"))
+            .content().contains("tests=\"1\"", "failures=\"0\"", "errors=\"0\"", "skipped=\"0\"")
+        assertThat(result.task(":compileAgainstPaperFloor")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(projectDirectory.resolve("build/classes/java/paperFloor/so/alaz/demo/RuntimeLibrariesLoader.class"))
+            .exists()
+        assertThat(result.output)
+            .contains("excluded=[**/RuntimeLibraries.class, **/RuntimeLibrariesLoader.class]")
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            assertThat(jar.entries().asSequence().map { it.name }.toList()).containsExactlyInAnyOrder(
+                "META-INF/",
+                "META-INF/MANIFEST.MF",
+                "META-INF/LICENSE",
+                "paper-plugin.yml",
+                "so/",
+                "so/alaz/",
+                "so/alaz/demo/",
+                "so/alaz/demo/RuntimeLibraries.class",
+                "so/alaz/demo/RuntimeLibrariesLoader.class",
+            )
+        }
+        val generated = projectDirectory.resolve("build/generated/sources/runtimeLibraries/java/main")
+        assertThat(generated.walk().filter { it.isFile }.map { it.toRelativeString(generated) }.toList())
+            .containsExactlyInAnyOrder(
+                File("so/alaz/demo/RuntimeLibraries.java").path,
+                File("so/alaz/demo/RuntimeLibrariesLoader.java").path,
+            )
+        assertThat(generated.resolve("so/alaz/demo/RuntimeLibrariesLoader.java").readText()).isEqualTo(
+            """
+            package so.alaz.demo;
+
+            import io.papermc.paper.plugin.loader.PluginClasspathBuilder;
+            import io.papermc.paper.plugin.loader.PluginLoader;
+            import io.papermc.paper.plugin.loader.library.impl.MavenLibraryResolver;
+            import org.eclipse.aether.artifact.DefaultArtifact;
+            import org.eclipse.aether.graph.Dependency;
+            import org.eclipse.aether.repository.RemoteRepository;
+
+            /** Generated at build time. Do not edit. */
+            final class RuntimeLibrariesLoader implements PluginLoader {
+
+                /** Has Paper download {@link RuntimeLibraries#COORDINATES} from its Maven Central mirror. */
+                @Override
+                public void classloader(PluginClasspathBuilder classpathBuilder) {
+                    MavenLibraryResolver resolver = new MavenLibraryResolver();
+                    resolver.addRepository(new RemoteRepository.Builder(
+                        "central", "default", MavenLibraryResolver.MAVEN_CENTRAL_DEFAULT_MIRROR).build());
+                    for (String coordinates : RuntimeLibraries.COORDINATES) {
+                        resolver.addDependency(new Dependency(new DefaultArtifact(coordinates), null));
+                    }
+                    classpathBuilder.addLibrary(resolver);
+                }
+            }
+            """.trimIndent() + "\n",
+        )
+
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            dependencies {
+                compileOnly(alaz.paper.api)
+            }
+            paperPlugin {
+                runtimeLibraries.add("com.zaxxer:HikariCP:7.1.0")
+                generateLoader.set(false)
+            }
+            """,
+        )
+
+        val switchedOff = run("generateRuntimeLibraries", "--configuration-cache")
+
+        assertThat(switchedOff.task(":generateRuntimeLibraries")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(generated.walk().filter { it.isFile }.map { it.toRelativeString(generated) }.toList())
+            .containsExactly(File("so/alaz/demo/RuntimeLibraries.java").path)
+    }
+
+    @Test
+    fun generateLoaderWritesNoClassWithoutARuntimeLibrary() {
+        project()
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            paperPlugin {
+                generateLoader.set(true)
+            }
+            """,
+        )
+        write("src/main/resources/paper-plugin.yml", "name: Demo\n")
+        write("src/main/java/so/alaz/demo/Demo.java", uncovered)
+
+        val result = run("assemble", "--configuration-cache")
+
+        assertThat(result.task(":verifyPluginLoader")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(projectDirectory.resolve("build/generated/sources/runtimeLibraries/java/main").walk().toList())
+            .noneMatch { it.isFile }
+        ZipFile(projectDirectory.resolve("build/libs/demo-1.2.3.jar")).use { jar ->
+            assertThat(jar.entries().asSequence().map { it.name }.filter { it.endsWith(".class") }.toList())
+                .containsExactly("so/alaz/demo/Demo.class")
+        }
+    }
+
+    @Test
+    fun aLoaderKeyThatNamesTheGeneratedLoaderFailsTheBuildWithoutARuntimeLibrary() {
+        project()
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            paperPlugin {
+                generateLoader.set(providers.gradleProperty("generated").map { it.toBoolean() })
+            }
+            """,
+        )
+        val descriptors = listOf(
+            "loader: so.alaz.demo.RuntimeLibrariesLoader",
+            "loader: \"so.alaz.demo.RuntimeLibrariesLoader\" # generated",
+            "'loader':\n  # generated\n  'so.alaz.demo.RuntimeLibrariesLoader'",
+        )
+        for (descriptor in descriptors) {
+            write("src/main/resources/paper-plugin.yml", "name: Demo\n$descriptor\n")
+
+            val named = runner("processResources", "-Pgenerated=true").buildAndFail()
+
+            assertThat(named.task(":verifyPluginLoader")?.outcome).`as`(descriptor).isEqualTo(TaskOutcome.FAILED)
+            assertThat(named.output).`as`(descriptor).contains(
+                "src/main/resources/paper-plugin.yml names the loader so.alaz.demo.RuntimeLibrariesLoader, which " +
+                    "paperPlugin.generateLoader generates only while paperPlugin.runtimeLibraries lists a library. " +
+                    "The list is empty, so the jar would hold no such class and Paper could not load the plugin. " +
+                    "Remove the loader key or list a library: " +
+                    "https://alaz.so/taffy/docs/gradle-plugins#generated-loader",
+            )
+        }
+
+        val off = run("processResources", "-Pgenerated=false")
+        assertThat(off.task(":verifyPluginLoader")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+
+        for (descriptor in listOf("loader: so.alaz.demo.DemoLoader", "other:\n  loader: x\n# loader: y")) {
+            write("src/main/resources/paper-plugin.yml", "name: Demo\n$descriptor\n")
+
+            val other = run("processResources", "-Pgenerated=true", "--configuration-cache")
+
+            assertThat(other.task(":verifyPluginLoader")?.outcome).`as`(descriptor).isEqualTo(TaskOutcome.SUCCESS)
+        }
+    }
+
+    @Test
+    fun aMissingLoaderKeyFailsWithTheNameOfTheGeneratedLoaderAndAnotherClassPasses() {
+        project()
+        write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+            }
+            paperPlugin {
+                runtimeLibraries.add("com.zaxxer:HikariCP:7.1.0")
+                generateLoader.set(true)
+            }
+            """,
+        )
+        write("src/main/resources/paper-plugin.yml", "name: Demo\n")
+
+        val missing = runner("processResources").buildAndFail()
+
+        assertThat(missing.task(":verifyPluginLoader")?.outcome).isEqualTo(TaskOutcome.FAILED)
+        assertThat(missing.output).contains(
+            "paperPlugin.runtimeLibraries lists 1 library and src/main/resources/paper-plugin.yml has no top-level " +
+                "loader key, so Paper downloads none and the plugin fails at its first use of one. Add loader: " +
+                "so.alaz.demo.RuntimeLibrariesLoader, the PluginLoader class paperPlugin.generateLoader generates: " +
+                "https://alaz.so/taffy/docs/gradle-plugins#runtime-libraries",
+        )
+
+        for (loader in listOf("so.alaz.demo.RuntimeLibrariesLoader", "so.alaz.demo.DemoLoader")) {
+            write("src/main/resources/paper-plugin.yml", "name: Demo\nloader: $loader\n")
+
+            val present = run("processResources", "--configuration-cache")
+
+            assertThat(present.task(":verifyPluginLoader")?.outcome).`as`(loader).isEqualTo(TaskOutcome.SUCCESS)
+        }
+    }
+
+    @Test
     fun paperPluginYmlKeepsItsBackslashesAndTheDollarEscapeAndFailsOnAnotherExpression() {
         project()
         write("settings.gradle.kts", "rootProject.name = \"demo\"", centralOnly)

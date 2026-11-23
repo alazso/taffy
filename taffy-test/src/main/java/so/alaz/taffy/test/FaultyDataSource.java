@@ -35,7 +35,10 @@ import javax.sql.DataSource;
  * Closing a wrapper closes the connection it wraps, which returns a pooled connection to its pool.
  * {@link Faults#kill()} makes every later checked call fail, as if the process had died; a new data source on the
  * same database is the next process. A kill closes nothing: a wrapped data source and the connections already
- * taken from it stay open until their owner closes them.
+ * taken from it stay open until their owner closes them. Apart from {@code getConnection}, {@code unwrap} and
+ * {@code isWrapperFor}, no method of this data source calls a wrapped one: the log writer and the login timeout
+ * are as their methods here say, and {@code createConnectionBuilder} and {@code createShardingKeyBuilder} are the
+ * defaults of {@link DataSource}, which throw.
  *
  * <p>The JDBC driver for a URL must be on the class path. This class brings none.
  */
@@ -298,9 +301,11 @@ public final class FaultyDataSource implements DataSource {
 
     /**
      * This data source when it is an instance of {@code type}, otherwise the data source given at construction
-     * when that is one. A data source built from a URL wraps no other object.
+     * when that is one, otherwise what {@code unwrap} of that data source returns, so a pool passed in still
+     * unwraps to what it wraps. A data source built from a URL wraps no other object.
      *
-     * @throws SQLException if neither is an instance of {@code type}
+     * @throws SQLException if this data source was built from a URL and is not an instance of {@code type}, or
+     *     if the {@code unwrap} of the data source given at construction throws it
      */
     @Override
     public <T> T unwrap(Class<T> type) throws SQLException {
@@ -310,13 +315,27 @@ public final class FaultyDataSource implements DataSource {
         if (type.isInstance(source)) {
             return type.cast(source);
         }
+        if (source != null) {
+            return source.unwrap(type);
+        }
         throw new SQLException("not a wrapper");
     }
 
-    /** Whether this data source, or the data source given at construction, is an instance of {@code type}. */
+    /**
+     * Whether this data source, or the data source given at construction, is an instance of {@code type}, or
+     * that data source answers {@code true} for {@code type} itself. An {@link SQLException} it throws counts
+     * as {@code false}.
+     */
     @Override
     public boolean isWrapperFor(Class<?> type) {
-        return type.isInstance(this) || type.isInstance(source);
+        if (type.isInstance(this) || type.isInstance(source)) {
+            return true;
+        }
+        try {
+            return source != null && source.isWrapperFor(type);
+        } catch (SQLException unanswered) {
+            return false;
+        }
     }
 
     private static Object call(Object target, Method method, Object[] args) throws Throwable {

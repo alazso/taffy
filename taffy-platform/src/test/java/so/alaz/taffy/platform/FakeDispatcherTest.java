@@ -116,6 +116,26 @@ final class FakeDispatcherTest {
     }
 
     @Test
+    void runHeldEndsAHoldThatHoldsNoTask() {
+        dispatcher.hold();
+
+        dispatcher.runHeld();
+
+        assertThat(dispatcher.dispatch(ThreadTag.GLOBAL, runs::incrementAndGet)).isCompletedWithValue(1);
+        assertThat(dispatcher.held()).isZero();
+    }
+
+    @Test
+    void runHeldWithNoTaskHeldLeavesARefusingDispatcherRefusing() {
+        dispatcher.refuse();
+
+        dispatcher.runHeld();
+
+        assertThat(dispatcher.dispatch(ThreadTag.GLOBAL, runs::incrementAndGet)).isCompletedExceptionally();
+        assertThat(runs).hasValue(0);
+    }
+
+    @Test
     void aRefusedGlobalOrAsyncDispatchFailsWithRejectedExecutionAndNeverRuns() {
         dispatcher.refuse();
 

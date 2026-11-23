@@ -5,6 +5,7 @@ import org.bukkit.Server;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -26,6 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.IntStream;
 
@@ -408,6 +410,37 @@ final class PlayerCacheTest {
             .filter(method -> method.isAnnotationPresent(EventHandler.class)).toList();
 
         assertThat(handlers).hasSize(2).allMatch(method -> Modifier.isPublic(method.getModifiers()));
+    }
+
+    @Test
+    void theJoinIsHandledAtLowestAndTheQuitAtMonitor() throws Exception {
+        Method join = PlayerCache.Events.class.getDeclaredMethod("onJoin", PlayerJoinEvent.class);
+        Method quit = PlayerCache.Events.class.getDeclaredMethod("onQuit", PlayerQuitEvent.class);
+
+        assertThat(join.getAnnotation(EventHandler.class).priority()).isEqualTo(EventPriority.LOWEST);
+        assertThat(quit.getAnnotation(EventHandler.class).priority()).isEqualTo(EventPriority.MONITOR);
+    }
+
+    @Test
+    void aJoinHandledWhileTheListenerIsRegisteredIsNotLoadedAgainByTheOnlinePass() {
+        Player player = mock(Player.class);
+        when(player.getUniqueId()).thenReturn(alex);
+        Consumer<Listener> register = listener -> {
+            try {
+                executor("onJoin", PlayerJoinEvent.class).execute(listener,
+                    new PlayerJoinEvent(player, Component.empty()));
+            } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+            }
+        };
+
+        PlayerCache<String> cache = new PlayerCache<>(log.logger, errors, dispatcher, this::retry, this::load,
+            register, unregistered::add, () -> List.of(alex, sam));
+
+        assertThat(loaded).containsExactly(alex, sam);
+        assertThat(dispatcher.tags()).containsExactly(ThreadTag.ASYNC, ThreadTag.ASYNC);
+        loads.get(0).complete("first");
+        assertThat(cache.get(alex)).contains("first");
     }
 
     @Test

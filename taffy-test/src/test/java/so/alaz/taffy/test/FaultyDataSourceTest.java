@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.lang.reflect.Proxy;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.Driver;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -450,14 +451,33 @@ class FaultyDataSourceTest {
     @Test
     void aWrapperUnwrapsToItselfAndToTheDataSourceItWraps() throws SQLException {
         FaultyDataSource wrapping = new FaultyDataSource(source);
-        FaultyDataSource outer = new FaultyDataSource(pool(new ArrayList<>()));
+        FaultyDataSource outer = new FaultyDataSource(wrapping);
 
         assertThat(wrapping.unwrap(FaultyDataSource.class)).isSameAs(wrapping);
         assertThat(wrapping.unwrap(DataSource.class)).isSameAs(wrapping);
         assertThat(wrapping.isWrapperFor(FaultyDataSource.class)).isTrue();
+        assertThat(outer.unwrap(FaultyDataSource.class)).isSameAs(outer);
         assertThat(outer.isWrapperFor(Connection.class)).isFalse();
         assertThatThrownBy(() -> outer.unwrap(Connection.class)).isInstanceOf(SQLException.class)
             .hasMessage("not a wrapper");
+    }
+
+    @Test
+    void aWrapperUnwrapsThroughTheDataSourceItWrapsToWhatThatWraps() throws SQLException {
+        Driver driver = DriverManager.getDriver(url);
+        DataSource pool = mock(DataSource.class);
+        when(pool.isWrapperFor(Driver.class)).thenReturn(true);
+        when(pool.unwrap(Driver.class)).thenReturn(driver);
+        when(pool.isWrapperFor(Connection.class)).thenThrow(new SQLException("pool closed"));
+        when(pool.unwrap(Connection.class)).thenThrow(new SQLException("pool closed"));
+        FaultyDataSource wrapping = new FaultyDataSource(pool);
+
+        assertThat(wrapping.isWrapperFor(Driver.class)).isTrue();
+        assertThat(wrapping.unwrap(Driver.class)).isSameAs(driver);
+        assertThat(wrapping.isWrapperFor(Statement.class)).isFalse();
+        assertThat(wrapping.isWrapperFor(Connection.class)).isFalse();
+        assertThatThrownBy(() -> wrapping.unwrap(Connection.class)).isInstanceOf(SQLException.class)
+            .hasMessage("pool closed");
     }
 
     @Test

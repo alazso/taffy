@@ -31,7 +31,9 @@ import java.util.logging.Logger;
  *
  * <p>The cache registers its own join and quit listener when it is built and loads every player already online
  * then, as it loads a player who joins. A join starts a load at {@link EventPriority#LOWEST}, and a quit forgets
- * the player at {@link EventPriority#MONITOR}, so the plugin's own quit handlers still read the value. Nothing is
+ * the player at {@link EventPriority#MONITOR}, so a quit handler of a lower priority still reads the value. A
+ * quit handler at {@code MONITOR} reads it only when its listener was registered before the cache was built, as
+ * the server calls the handlers of one priority in the order they were registered. Nothing is
  * loaded at {@code AsyncPlayerPreLoginEvent} and no login is denied: until a load succeeds, {@link #get} is
  * empty and {@link #ready} is {@code false}, and the caller decides what a player without a value may do. Nothing
  * is saved at a quit or at {@link #close()}.
@@ -86,6 +88,11 @@ public final class PlayerCache<T> implements AutoCloseable {
      * Creates the cache, registers its listener with the plugin manager of the owner's server as a listener of
      * {@code owner}, and starts a load for every player online now. Call while the plugin is enabled, such as
      * in {@code onEnable}, on the thread that enables it.
+     *
+     * <p>On Folia a quit is handled on a region thread while this constructor runs on another. A player who was
+     * online and whose quit is handled before the constructor reaches them keeps their entry, with its value or
+     * the retries of its failed load, until that player joins or quits again or the cache is closed. On Paper the
+     * quit and the constructor share the main thread, so this cannot happen.
      *
      * @param owner the plugin the listener belongs to, whose logger takes the warning of a failed load
      * @param errors where a failed load is reported, as {@link #SOURCE}

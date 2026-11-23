@@ -16,6 +16,11 @@ val paperPlugin = extensions.create<PaperPluginExtension>("paperPlugin")
 
 extensions.configure<CoverageExtension> {
     conventionExclusions.add("**/RuntimeLibraries.class")
+    conventionExclusions.addAll(
+        paperPlugin.generateLoader.map { generated ->
+            if (generated) listOf("**/" + GenerateRuntimeLibraries.LOADER_NAME + ".class") else emptyList()
+        },
+    )
 }
 
 tasks.withType<JavaCompile>().configureEach {
@@ -26,6 +31,7 @@ tasks.withType<JavaCompile>().configureEach {
 val generateRuntimeLibraries = tasks.register<GenerateRuntimeLibraries>("generateRuntimeLibraries") {
     packageName.set(provider { project.group.toString() })
     coordinates.set(paperPlugin.runtimeLibraries)
+    generateLoader.set(paperPlugin.generateLoader)
     outputDirectory.set(layout.buildDirectory.dir("generated/sources/runtimeLibraries/java/main"))
 }
 
@@ -72,6 +78,15 @@ val verifyPluginLoader = tasks.register<VerifyPluginLoader>("verifyPluginLoader"
     group = "verification"
     description = "Fails when runtime libraries are listed and paper-plugin.yml has no top-level loader key."
     coordinates.set(paperPlugin.runtimeLibraries)
+    generatedLoader.set(
+        provider {
+            if (paperPlugin.generateLoader.get()) {
+                project.group.toString() + "." + GenerateRuntimeLibraries.LOADER_NAME
+            } else {
+                null
+            }
+        },
+    )
     descriptors.from(
         sourceSets.named("main").map { main -> main.resources.matching { include("paper-plugin.yml") } },
     )

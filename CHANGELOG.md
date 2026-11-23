@@ -14,7 +14,7 @@ All notable changes to Taffy are documented here. This project follows
   every dispatch in call order. A new instance runs each task on the calling thread and returns a completed
   future, which carries whatever the task threw.
 - `FakeDispatcher.hold()` queues the tasks dispatched from then on, `held()` counts them, and `runHeld()` runs
-  them on the calling thread in dispatch order and ends the hold. `refuse()` fails every later dispatch without
+  them on the calling thread in dispatch order and ends the hold, also a hold with no task held. `refuse()` fails every later dispatch without
   running its task, with `RejectedExecutionException` for `ThreadTag.GLOBAL` and `ThreadTag.ASYNC` and with
   `EntityUnavailableException` for an entity tag, and refuses the held tasks the same way, as `Scheduler.close()`
   refuses a dispatch that has not started. `drop()` accepts every later dispatch, never runs its task and never
@@ -23,8 +23,10 @@ All notable changes to Taffy are documented here. This project follows
 - `new FaultyDataSource(DataSource source)` in `taffy-test` wraps the connections of an existing data source, so
   the faults sit above a pool passed to it or below a pool built on it. `getConnection(String user, String
   password)` of such a data source calls the same method of the wrapped one, and `unwrap` and `isWrapperFor`
-  also answer for the wrapped data source. A kill closes neither the wrapped data source nor its connections.
-  `new FaultyDataSource(String url, Properties properties)` behaves as before.
+  also answer for the wrapped data source and for what it wraps: a type neither is an instance of is passed to
+  the `unwrap` and `isWrapperFor` of the wrapped data source, so a pool still unwraps to its driver data source.
+  No other method calls the wrapped data source. A kill closes neither the wrapped data source nor its
+  connections. `new FaultyDataSource(String url, Properties properties)` behaves as before.
 - `MenuTesting` in `taffy-gui` builds a `Menus` for a plugin's menu tests, which run with no server:
   `new MenuTesting(parts).menus()` over the plugin's own `Menus.Parts`. Its menu inventories are fakes that
   record what each slot shows: `icon(Inventory inventory, int slot)` gives the `Icon`, `title(Inventory
@@ -41,15 +43,31 @@ All notable changes to Taffy are documented here. This project follows
   CompletableFuture<T>> loader)`, such as `new PlayerCache<>(this, errors, scheduler, scheduler::delayedAsync,
   loader)`. It registers its own join and quit listener on the owner when it is built and loads every player
   already online then. A join starts a load, which calls the loader through the dispatcher with
-  `ThreadTag.ASYNC`, and a quit forgets the player. `get(UUID player)` gives an `Optional` of the value and
-  `ready(UUID player)` tells whether there is one, from any thread: they stay empty and `false` until a load
-  succeeds. A failed load is reported to the `ErrorReports` as `PlayerCache.SOURCE` (`player-cache.load`),
+  `ThreadTag.ASYNC`, and a quit forgets the player at `EventPriority.MONITOR`, after the quit handlers of a
+  lower priority and after a `MONITOR` handler registered before the cache was built. `get(UUID player)` gives
+  an `Optional` of the value and `ready(UUID player)` tells whether there is one, from any thread: they stay
+  empty and `false` until a load succeeds. A failed load is reported to the `ErrorReports` as `PlayerCache.SOURCE` (`player-cache.load`),
   logged through a `ThrowLog` of the owner's logger and tried again after `PlayerCache.FIRST_RETRY_DELAY`
   (2 seconds), then after twice the delay before it, up to `PlayerCache.LONGEST_RETRY_DELAY` (5 minutes), while
   the player stays online. The result of a load that ends after the player quit, or after a newer load of that
   player started, is dropped. `refresh(UUID player)` loads an online player again and keeps the value held until
   the new load succeeds. `close()` unregisters the listener and forgets every player. The cache loads nothing at
-  `AsyncPlayerPreLoginEvent`, denies no login and saves nothing at a quit or at `close()`.
+  `AsyncPlayerPreLoginEvent`, denies no login and saves nothing at a quit or at `close()`. On Folia, a player
+  whose quit is handled on another thread while the constructor runs may keep an entry until they join or quit
+  again or the cache is closed.
+- `paperPlugin.generateLoader` in `so.alaz.taffy.paper-plugin`, off unless a build sets it to `true`. With runtime
+  libraries listed, `generateRuntimeLibraries` then also writes `RuntimeLibrariesLoader` beside
+  `RuntimeLibraries`, in the package named by the project group: a package-private Paper `PluginLoader` that hands
+  each entry of `RuntimeLibraries.COORDINATES` to one `MavenLibraryResolver` over the repository
+  `MavenLibraryResolver.MAVEN_CENTRAL_DEFAULT_MIRROR`, so the plugin writes no loader class. The plugin still
+  writes `loader: <group>.RuntimeLibrariesLoader` in `paper-plugin.yml` and needs paper-api on its compile
+  classpath. Paper makes the constructor of the class under `loader` accessible before it calls it, from the
+  oldest supported build on. While the setting is on, `**/RuntimeLibrariesLoader.class` is in
+  `coverage.conventionExclusions`, and the `verifyPluginLoader` failure for a missing `loader` key names the
+  generated class. The check does not read the class, so a `loader` key that names another class passes. With no
+  runtime library listed, no class is generated, and `verifyPluginLoader` fails when the `loader` key still names
+  `<group>.RuntimeLibrariesLoader`, with a message that says to remove the key or list a library. A build that
+  leaves the setting off has the generated source and the jar it had on 0.4.4.
 
 ## [0.4.4] - 2026-11-22
 

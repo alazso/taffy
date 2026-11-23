@@ -111,8 +111,8 @@ public final class FakeDispatcher implements Dispatcher {
 
     /**
      * Runs the held tasks on the calling thread, in the order they were dispatched, and ends the hold: a task
-     * dispatched from now runs on its caller's thread again, one dispatched by a held task included. Does
-     * nothing when no task is held, and then leaves a dispatcher that refuses or drops as it is.
+     * dispatched from now runs on its caller's thread again, one dispatched by a held task included. With
+     * no task held it runs nothing: it still ends a hold, and leaves a dispatcher that refuses or drops as it is.
      */
     public void runHeld() {
         List<Held<?>> runs;
