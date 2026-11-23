@@ -18,11 +18,14 @@ All notable changes to Taffy are documented here. This project follows
   as plain text. A section whose supplier throws holds the one line `could not be read: <exception class>` and
   the failure is logged on the plugin's logger, so the rest of the report is kept. A report is bounded: 32
   sections after the standard one, 64 lines in a section, 64 characters in a label and 512 in a value, with
-  what is left out counted in a line of its own, and no line holds a line break.
+  what is left out counted in a line of its own, and no line holds a line break or a section sign, so no part
+  reads as a legacy colour code.
 - `DiagnosticReport.Line.of(String)` is a line without a label, `Line.redacted(String, String)` passes a text
   the plugin did not write through `Redaction.hide`, and `Line.pendingRestart(Collection<String>)` is the line
   `Waiting for a restart` for the paths `RestartKeys.changed` returns: it names up to 32 paths and never a
-  value, and reads `none` for no path.
+  value, and reads `none` for no path. A `HookStatus.line()` goes into a report as
+  `Line.redacted("", status.line())`, since the reason of a `FAILED` status holds the class and message of an
+  exception another plugin threw.
 - `Storage.diagnostics()` gives the lines of a storage section without taking a connection: `Database` with
   `SQLite`, `MySQL`, `MariaDB` or `PostgreSQL`, `State` with `open` or `closed`, and for each connection pool
   (`Write pool` and `Read pool` on SQLite, `Pool` on a server) its connections in use, idle connections, waiting
@@ -38,9 +41,10 @@ All notable changes to Taffy are documented here. This project follows
 - `Redaction` in `taffy-platform` hides secrets and personal data in free text such as an exception message.
   `Redaction.hide(String)` applies the 19 rules `taffy-metrics` gives every FastStats error tracker (connection
   URLs, credentials, tokens, email addresses, UUIDs, database users and names, SQL statements, file paths and
-  host names) and then replaces each IPv4 and IPv6 address with `[address hidden]`. `Redaction.rules()` returns
-  the rules as `Redaction.Rule(pattern, replacement)`. The rules moved from `taffy-metrics` unchanged, so what
-  FastStats error tracking receives is as in 0.4.9.
+  host names), then hides what is left of a Unix path behind a character the path rule does not read, as in
+  `/home/john+smith/server/data.db`, and replaces each IPv4 and IPv6 address with `[address hidden]`.
+  `Redaction.rules()` returns the rules as `Redaction.Rule(pattern, replacement)`. The rules moved from
+  `taffy-metrics` unchanged, so what FastStats error tracking receives is as in 0.4.9.
 - `CommandHelpers` in `taffy-platform` holds what a plugin's commands repeat.
   `CommandHelpers.permission(String)` returns the `Predicate<CommandSourceStack>` for `requires` of a Brigadier
   node: whether the sender of the source holds the node. `CommandHelpers.matching(String, Collection<String>)`
@@ -63,8 +67,12 @@ All notable changes to Taffy are documented here. This project follows
   is not a semantic version logs one warning and sends nothing. With `enabled` false nothing is sent or logged.
   The check owns no thread and downloads nothing. The request goes over HTTPS to `api.github.com` or
   `api.modrinth.com`, follows no redirect, names the plugin and its version in `User-Agent` and holds nothing
-  about players or the server, waits at most 10 seconds to connect and for each read and 30 seconds in all, and
+  about players or the server, waits at most 10 seconds to connect and for each read, ends the read of the
+  status line and headers 30 seconds after the request began and starts no read of the body after that, and
   reads at most 262144 bytes and 100 entries. A failed check logs one warning and throws nothing into enable.
+- `ApiRules.signatureViolations` in `taffy-test` also accepts the types of `com.mojang.brigadier`, the command
+  library Paper's command API is built on, in a public signature of a Taffy module. It reported them in 0.4.9.
+  `CommandHelpers` names `Suggestions` and `SuggestionsBuilder`.
 
 ### Changed
 - `taffy-metrics` is built for and tested with FastStats 0.33.0, up from 0.32.2, and a plugin jar must shade
@@ -75,16 +83,26 @@ All notable changes to Taffy are documented here. This project follows
   shades 0.33.0 without a change; a build that declares `dev.faststats.metrics:bukkit` itself raises it to
   0.33.0. `Metrics.fastStatsSdk()` reads `bukkit 0.33.0`. The first run that sends nothing, the keys of
   `plugins/faststats/config.properties`, the final send at `Metrics.shutdown()` and the `Metrics` readers
-  behave as in 0.4.9.
-- A FastStats context that cannot be made ready, as when `MetricsBuilder.start()` runs before the plugin is
-  enabled, logs two lines on the owner's logger: FastStats' own error
+  behave as in 0.4.9. FastStats 0.33.0 tracks the errors Paper reports for the plugin whatever the server owner
+  allows, so on a first run and with `enabled` or `submitErrors` off `taffy-metrics` makes the tracker ignore
+  every error, and none is held, as in 0.4.9.
+- `MetricsBuilder.start()` called before the plugin is enabled refuses the FastStats start before FastStats
+  reads or writes a file, with the one warning
+  `FastStats metrics failed to start: the plugin is not enabled, start metrics in or after onEnable`. In 0.4.9
+  the warning was `FastStats metrics failed to start: <cause>`, and on a server without
+  `plugins/faststats/config.properties` FastStats wrote the file and printed its first-run notice before the
+  start failed; now the next start that succeeds is that server's first run.
+- A FastStats context that cannot be made ready for another reason, as when the server refuses its listener,
+  logs two lines on the owner's logger: FastStats' own error
   `Failed to make the FastStats context for <plugin> ready: <cause>` with its stack trace, then the warning
   `FastStats metrics failed to start: FastStats could not make its context ready`. With FastStats 0.32.2 it
   was the one warning `FastStats metrics failed to start: <cause>`. The context is shut down without a send
   and enable goes on, as before.
-- `ApiRules.signatureViolations` in `taffy-test` also allows the types of `com.mojang.brigadier`, the command
-  library Paper's command API is built on, in a public signature of a Taffy module. It reported them in 0.4.9.
-  `CommandHelpers` names `Suggestions` and `SuggestionsBuilder`.
+
+### Fixed
+- `MetricsBuilder.start()` logs the one warning `FastStats metrics failed to start: <class>` and goes on when
+  the FastStats classes cannot be loaded, as in a jar that shades no FastStats. In 0.4.9 it threw
+  `NoClassDefFoundError` into the plugin's enable.
 
 ## [0.4.9] - 2026-11-23
 

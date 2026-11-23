@@ -17,7 +17,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 
 /**
@@ -49,9 +52,11 @@ import java.util.logging.Logger;
  * Its headers are {@code Host}, {@code Connection}, {@code Cache-Control: no-cache}, {@code Pragma: no-cache},
  * {@code Accept}, for GitHub {@code X-GitHub-Api-Version}, and a {@code User-Agent} of the plugin's name and
  * version, as {@code Shop/1.4.0}. It holds no player data and nothing about the server.
- * Connecting and each read wait at most 10 seconds and the whole answer at most 30. At most 262144 bytes of the
- * answer are read, and of them the first 100 entries: what is complete within that is compared, since both
- * sources answer newest first.
+ * Connecting and each read wait at most 10 seconds. The read of the status line and headers is ended 30 seconds
+ * after the request began, and no read of the body starts after that, so a request whose connection is made in
+ * time ends within 40 seconds. How long the host name takes to resolve is the system's, and the TLS handshake is
+ * bound by the 10 seconds of each read alone. At most 262144 bytes of the answer are read, and of them the first
+ * 100 entries: what is complete within that is compared, since both sources answer newest first.
  *
  * <p>Nothing here throws into enable for a failed check. An answer other than status 200, a failed or timed out
  * connection, an answer that is not a list of releases, an executor that refuses the task and an executor that
@@ -136,7 +141,7 @@ public final class UpdateCheck {
     /**
      * The newest published version when it is above the running one, as {@code major.minor.patch} with
      * {@code -} and the pre-release identifiers when it has any, such as {@code 1.5.0} or {@code 1.5.0-rc.1}. It
-     * holds only ASCII letters, digits, {@code .} and {@code -}, at most 64 characters.
+     * holds only ASCII letters, digits, {@code .} and {@code -}, at most 66 characters.
      *
      * @return the newer version, or null while the check is switched off, before the answer is read, after a
      *     failed check and when no newer version is published
@@ -192,6 +197,8 @@ public final class UpdateCheck {
         URI endpoint = source.endpoint();
         long deadline = System.nanoTime() + limits.totalMillis() * 1_000_000L;
         HttpURLConnection connection = (HttpURLConnection) endpoint.toURL().openConnection();
+        CompletableFuture<Void> answered = new CompletableFuture<>();
+        AtomicBoolean waiting = new AtomicBoolean(true);
         try {
             connection.setRequestMethod("GET");
             connection.setInstanceFollowRedirects(false);
@@ -203,7 +210,31 @@ public final class UpdateCheck {
             for (Map.Entry<String, String> header : source.headers().entrySet()) {
                 connection.setRequestProperty(header.getKey(), header.getValue());
             }
-            int status = connection.getResponseCode();
+            connection.connect();
+            long left = deadline - System.nanoTime();
+            if (left <= 0) {
+                throw new SocketTimeoutException("answer not read in time");
+            }
+            // The read timeout bounds one read, and a server can send the headers a byte at a time. disconnect()
+            // closes the socket under the read of the headers; under a read of the body it would wait for that read.
+            answered.orTimeout(left, TimeUnit.NANOSECONDS).exceptionally(late -> {
+                if (waiting.compareAndSet(true, false)) {
+                    connection.disconnect();
+                }
+                return null;
+            });
+            int status;
+            try {
+                status = connection.getResponseCode();
+            } catch (IOException | RuntimeException ex) {
+                if (!waiting.get()) {
+                    throw new SocketTimeoutException("answer not read in time");
+                }
+                throw ex;
+            }
+            if (!waiting.compareAndSet(true, false)) {
+                throw new SocketTimeoutException("answer not read in time");
+            }
             if (status != HttpURLConnection.HTTP_OK) {
                 throw new Unusable(endpoint.getHost() + " answered with status " + status);
             }
@@ -224,6 +255,7 @@ public final class UpdateCheck {
             }
             return releases;
         } finally {
+            answered.complete(null);
             connection.disconnect();
         }
     }

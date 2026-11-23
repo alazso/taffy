@@ -146,9 +146,16 @@ import java.util.regex.Pattern;
  * <p>Outside a URI and those words, a host name of one label, such as {@code cache} or {@code localhost}, stays,
  * and so does a host name with another ending.
  *
- * <p>After the rules, {@link #hide} replaces each IPv4 and IPv6 address with {@code [address hidden]}. A run of two
- * or more groups of up to four hex digits that each end in a colon reads as an IPv6 address, a time of day such as
- * {@code 12:34:56} included.
+ * <p>After the rules, {@link #hide} hides what the Unix path rule left of a path: the text behind
+ * {@code [path hidden]} up to the next whitespace or quote, when it holds a {@code /} or a backslash. The rule reads
+ * only letters, digits, {@code _}, {@code .} and {@code -} in a folder name, so it ends at the {@code +} of
+ * {@code /home/john+smith/server/data.db}. What follows a space in such a folder name stays.
+ *
+ * <p>Then {@link #hide} replaces each IPv4 and IPv6 address with {@code [address hidden]}. Four numbers of up to
+ * three digits with dots between them read as an IPv4 address, also before the full stop of a sentence and as the
+ * version {@code 5.4.0.1}; a fifth number, as in {@code 1.2.3.4.5}, makes it none. A run of two or more groups of up
+ * to four hex digits that each end in a colon reads as an IPv6 address when it holds a hex digit, a time of day such
+ * as {@code 12:34:56} and a short word such as {@code a::b} included. A {@code ::} alone stays.
  *
  * <p>The rules read text written by a JDBC driver, a connection pool, an HTTP client and the like. They are no proof
  * that nothing personal is left: a name in a sentence of its own, such as a player name, stays.
@@ -287,10 +294,13 @@ public final class Redaction {
     private static final Pattern[] PATTERNS = RULES.stream().map(rule -> Pattern.compile(rule.pattern()))
         .toArray(Pattern[]::new);
 
-    private static final Pattern IPV4 = Pattern.compile("(?<![\\w.])\\d{1,3}(?:\\.\\d{1,3}){3}(?![\\w.])");
+    private static final Pattern PATH_REST =
+        Pattern.compile("\\[path hidden\\][^\\s\"'/\\\\]*[/\\\\][^\\s\"']*");
 
-    private static final Pattern IPV6 =
-        Pattern.compile("(?i)(?<![\\w:.])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\\w:])");
+    private static final Pattern IPV4 = Pattern.compile("(?<![\\w.])\\d{1,3}(?:\\.\\d{1,3}){3}(?!\\w|\\.\\d)");
+
+    private static final Pattern IPV6 = Pattern.compile(
+        "(?i)(?<![\\w:.])(?=[0-9a-f:]{0,39}[0-9a-f])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\\w:])");
 
     private Redaction() {
     }
@@ -306,7 +316,8 @@ public final class Redaction {
     }
 
     /**
-     * {@code text} with every rule applied and each IPv4 and IPv6 address replaced by {@value #ADDRESS}.
+     * {@code text} with every rule applied, the rest of a path behind {@code [path hidden]} hidden with it, and
+     * each IPv4 and IPv6 address replaced by {@value #ADDRESS}.
      *
      * @param text the text to hide in
      * @return the hidden form of {@code text}
@@ -318,6 +329,7 @@ public final class Redaction {
         for (int i = 0; i < PATTERNS.length; i++) {
             result = PATTERNS[i].matcher(result).replaceAll(RULES.get(i).replacement());
         }
+        result = PATH_REST.matcher(result).replaceAll("[path hidden]");
         result = IPV4.matcher(result).replaceAll(ADDRESS);
         return IPV6.matcher(result).replaceAll(ADDRESS);
     }

@@ -12,7 +12,10 @@ import so.alaz.taffy.platform.UpdateCheck.Limits;
 import so.alaz.taffy.test.CapturedLog;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -356,6 +359,40 @@ final class UpdateCheckTest {
         assertThat(check.latest()).isNull();
         assertThat(lines(Level.WARNING)).containsExactly(
             "Update check failed: could not read from 127.0.0.1 (java.net.SocketTimeoutException)");
+    }
+
+    @Test
+    void headersThatDripPastTheTotalTimeEndTheRequest() throws IOException {
+        byte[] head = ("HTTP/1.1 200 OK\r\nX-Pad: " + "x".repeat(200) + "\r\n\r\n")
+            .getBytes(StandardCharsets.US_ASCII);
+        try (ServerSocket dripping = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            Thread drip = new Thread(() -> {
+                try (Socket socket = dripping.accept()) {
+                    for (byte one : head) {
+                        socket.getOutputStream().write(one);
+                        socket.getOutputStream().flush();
+                        Thread.sleep(50);
+                    }
+                } catch (IOException | InterruptedException ended) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            drip.setDaemon(true);
+            drip.start();
+            UpdateSource source = UpdateSource.github("alaz", "shop")
+                .withBase("http://127.0.0.1:" + dripping.getLocalPort());
+            Limits limits = new Limits(10_000, 10_000, 400, 262_144, 100);
+            long began = System.nanoTime();
+
+            UpdateCheck check = UpdateCheck.start(plugin, errors, true, source, DIRECT, limits);
+
+            assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - began)).isLessThan(5_000);
+            assertThat(check.latest()).isNull();
+            assertThat(log.records).hasSize(1);
+            assertThat(lines(Level.WARNING)).containsExactly(
+                "Update check failed: could not read from 127.0.0.1 (java.net.SocketTimeoutException)");
+            assertThat(reported).isEmpty();
+        }
     }
 
     @Test

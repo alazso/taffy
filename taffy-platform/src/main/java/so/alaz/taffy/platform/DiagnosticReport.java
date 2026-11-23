@@ -12,6 +12,7 @@ import java.util.Objects;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Pattern;
 
 /**
  * A plugin's diagnostics report for the server owner: titled sections of lines, built when asked and rendered as
@@ -27,17 +28,20 @@ import java.util.logging.Logger;
  * <pre>{@code
  * DiagnosticReport report = DiagnosticReport.builder(plugin, scheduler.mode())
  *     .section("Storage", () -> Storage.diagnostics(storageStart))
- *     .section("Integrations", () -> hooks.stream().map(status -> DiagnosticReport.Line.of(status.line())).toList())
+ *     .section("Integrations", () -> hooks.stream()
+ *         .map(status -> DiagnosticReport.Line.redacted("", status.line())).toList())
  *     .section("Config", () -> List.of(DiagnosticReport.Line.pendingRestart(waitingPaths)))
  *     .build();
  * report.components().forEach(sender::sendMessage);
  * }</pre>
  *
  * <p>Server owners paste a report into public support channels, so a line holds no password, token, connection URL,
- * address, player name or player UUID. The standard section and the lines of the other Taffy modules hold none; the
- * message of a failed storage start, the one text among them that Taffy did not write, is shown as
- * {@link Redaction#hide} leaves it. A plugin keeps them out of the lines it writes itself, and passes text it did not
- * write, such as the message of an exception, through {@link Line#redacted}.
+ * address, player name or player UUID. The standard section and the lines {@code Storage.diagnostics} and
+ * {@code Metrics.diagnostics} give hold none; the message of a failed storage start, which Taffy did not write, is
+ * shown as {@link Redaction#hide} leaves it. The reason of a {@code HookStatus} in the state {@code FAILED} holds the
+ * class and message of an exception another plugin threw, so a status line goes through {@link Line#redacted}, as
+ * above. A plugin keeps them out of the lines it writes itself, and passes text it did not write, such as the message
+ * of an exception, through {@link Line#redacted}.
  *
  * <p>{@link Builder#build()} runs every section's supplier on the thread that calls it, once, in the order the
  * sections were added. A supplier must not block, and reads only what that thread may read: on Folia a command runs
@@ -76,6 +80,8 @@ public final class DiagnosticReport {
 
     private static final String INDENT = "  ";
 
+    private static final Pattern COUNT = Pattern.compile("1 more line not shown|\\d+ more lines not shown");
+
     private final List<Section> sections;
 
     private DiagnosticReport(List<Section> sections) {
@@ -86,8 +92,9 @@ public final class DiagnosticReport {
      * One line of a report: a label and a value, shown as {@code <label>: <value>}, or a value alone when the label
      * is empty.
      *
-     * <p>Each ISO control character and each Unicode line or paragraph separator in the label and in the value is
-     * replaced by a space, so a line never breaks, and whitespace at either end is removed. A label longer than
+     * <p>Each ISO control character, each Unicode line or paragraph separator and each section sign ({@code U+00A7})
+     * in the label and in the value is replaced by a space, so a line never breaks and holds no legacy colour code,
+     * and whitespace at either end is removed. A label longer than
      * {@value DiagnosticReport#MAX_LABEL} characters and a value longer than {@value DiagnosticReport#MAX_VALUE} are
      * cut to that length, ending in {@code ...}.
      *
@@ -181,7 +188,8 @@ public final class DiagnosticReport {
      *
      * @param title the title, cleaned and cut as the label of a {@link Line} is
      * @param lines the lines, unmodifiable: at most {@value DiagnosticReport#MAX_LINES} of the lines given, followed
-     *     by the line {@code <n> more lines not shown} when more were given
+     *     by the line {@code <n> more lines not shown}, or {@code 1 more line not shown}, when more were given. The
+     *     lines of a section give an equal section
      */
     public record Section(String title, List<Line> lines) {
 
@@ -197,9 +205,11 @@ public final class DiagnosticReport {
                 throw new IllegalArgumentException("title is blank");
             }
             List<Line> copy = List.copyOf(Objects.requireNonNull(lines, "lines"));
-            if (copy.size() > MAX_LINES) {
+            boolean counted = copy.size() == MAX_LINES + 1 && COUNT.matcher(copy.getLast().plain()).matches();
+            if (copy.size() > MAX_LINES && !counted) {
+                int more = copy.size() - MAX_LINES;
                 List<Line> kept = new ArrayList<>(copy.subList(0, MAX_LINES));
-                kept.add(Line.of((copy.size() - MAX_LINES) + " more lines not shown"));
+                kept.add(Line.of(more == 1 ? "1 more line not shown" : more + " more lines not shown"));
                 copy = List.copyOf(kept);
             }
             lines = copy;
@@ -370,14 +380,14 @@ public final class DiagnosticReport {
     }
 
     /**
-     * {@code text} with each control character and line separator as a space, without whitespace at either end,
-     * cut to {@code max} characters.
+     * {@code text} with each control character, line separator and section sign as a space, without whitespace at
+     * either end, cut to {@code max} characters.
      */
     private static String clean(String text, int max) {
         StringBuilder cleaned = new StringBuilder(text.length());
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
-            cleaned.append(Character.isISOControl(c) || c == 0x2028 || c == 0x2029 ? ' ' : c);
+            cleaned.append(Character.isISOControl(c) || c == 0x2028 || c == 0x2029 || c == 0x00A7 ? ' ' : c);
         }
         String result = cleaned.toString().strip();
         if (result.length() <= max) {

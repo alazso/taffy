@@ -1,5 +1,6 @@
 package so.alaz.taffy.metrics;
 
+import dev.faststats.ErrorTracker;
 import org.bstats.charts.CustomChart;
 import org.bstats.json.JsonObjectBuilder;
 import org.bukkit.event.Listener;
@@ -13,7 +14,12 @@ import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.test.CapturedLog;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
@@ -24,8 +30,10 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -549,6 +557,99 @@ class MetricsBuilderTest {
     }
 
     @Test
+    void anOwnerThatIsNotEnabledWritesNoFastStatsConfigSoTheNextStartKeepsItsFirstRun() {
+        when(fixture.plugin.isEnabled()).thenReturn(false);
+
+        Metrics refused = start(new MetricsBuilder(fixture.plugin, errors, true)
+            .usageChart(false)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN));
+
+        assertThat(refused.fastStats).isNull();
+        assertThat(plugins.resolve("faststats")).doesNotExist();
+        assertThat(System.getProperty("faststats.first-run")).isNull();
+        assertThat(fixture.log.lines()).containsExactly("WARNING FastStats metrics failed to start: "
+            + "the plugin is not enabled, start metrics in or after onEnable");
+
+        when(fixture.plugin.isEnabled()).thenReturn(true);
+        Metrics next = start(new MetricsBuilder(fixture.plugin, new ErrorReports(), true)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN));
+
+        assertThat(next.fastStats).isNotNull();
+        assertThat(next.fastStats.metrics()).isEmpty();
+        assertThat(next.fastStats.errorTrackerService()).isEmpty();
+        assertThat(System.getProperty("faststats.first-run")).isEqualTo("true");
+        next.shutdown();
+        assertThat(sink.requests).isEmpty();
+    }
+
+    @Test
+    void aFastStatsThatCannotBeLoadedLogsOneWarningAndThrowsNothing() throws Throwable {
+        String name = MetricsBuilder.class.getName();
+        ClassLoader visible = MetricsBuilder.class.getClassLoader();
+        ClassLoader withoutFastStats = new ClassLoader(visible) {
+            @Override
+            protected Class<?> loadClass(String wanted, boolean resolve) throws ClassNotFoundException {
+                if (wanted.startsWith("dev.faststats.")) {
+                    throw new ClassNotFoundException(wanted);
+                }
+                if (!wanted.equals(name)) {
+                    return super.loadClass(wanted, resolve);
+                }
+                synchronized (getClassLoadingLock(wanted)) {
+                    Class<?> loaded = findLoadedClass(wanted);
+                    if (loaded != null) {
+                        return loaded;
+                    }
+                    try (InputStream in = visible.getResourceAsStream(wanted.replace('.', '/') + ".class")) {
+                        byte[] bytes = Objects.requireNonNull(in, wanted).readAllBytes();
+                        return defineClass(wanted, bytes, 0, bytes.length);
+                    } catch (IOException ex) {
+                        throw new ClassNotFoundException(wanted, ex);
+                    }
+                }
+            }
+        };
+        Class<?> builder = withoutFastStats.loadClass(name);
+        MethodHandle startFastStats = MethodHandles.privateLookupIn(builder, MethodHandles.lookup()).findStatic(
+            builder, "startFastStats", MethodType.methodType(FastStatsRun.class, Plugin.class, String.class,
+                List.class, boolean.class, Logger.class, String.class));
+
+        Object run = startFastStats.invoke(fixture.plugin, MetricsFixture.FASTSTATS_TOKEN, List.of(), true,
+            fixture.log.logger, MetricsBuilder.FASTSTATS_FAILED);
+
+        assertThat(run).isNull();
+        assertThat(fixture.log.lines())
+            .containsExactly("WARNING FastStats metrics failed to start: dev/faststats/FastStatsContext");
+        assertThat(plugins.resolve("faststats")).doesNotExist();
+    }
+
+    @Test
+    void aContextThatSendsNoErrorsHoldsNoneOnItsGlobalTracker() throws IOException, ReflectiveOperationException {
+        for (boolean[] keys : new boolean[][] {null, {false, true, true}, {true, true, false}, {true, true, true}}) {
+            System.clearProperty("faststats.first-run");
+            Files.deleteIfExists(fixture.fastStatsConfig);
+            if (keys != null) {
+                fixture.writeFastStatsConfig(keys[0], keys[1], keys[2]);
+            }
+            boolean sends = keys != null && keys[0] && keys[2];
+
+            Metrics metrics = start(new MetricsBuilder(fixture.plugin, new ErrorReports(), true)
+                .usageChart(false)
+                .fastStats(MetricsFixture.FASTSTATS_TOKEN));
+
+            assertThat(metrics.fastStats).isNotNull();
+            ErrorTracker tracker = metrics.fastStats.context.errorTrackerService().orElseThrow()
+                .globalErrorTracker();
+            tracker.trackError(new IllegalStateException("command failed"));
+            tracker.trackError(new IllegalArgumentException());
+            Method held = tracker.getClass().getDeclaredMethod("getFullData");
+            held.setAccessible(true);
+            assertThat(held.invoke(tracker).toString().equals("[]")).isEqualTo(!sends);
+            metrics.shutdown();
+        }
+    }
+
+    @Test
     void theReservedChartIdsAreExactlyTheFieldsFastStatsFillsItself() throws IOException {
         fixture.writeFastStatsConfig(true, true, true);
         Metrics metrics = start(new MetricsBuilder(fixture.plugin, errors, true)
@@ -685,11 +786,8 @@ class MetricsBuilderTest {
         assertThat(metrics.usage).isNotNull();
         assertThat(metrics.usage.fastStats).isNull();
         assertThat(metrics.fastStatsSdk()).isNull();
-        assertThat(fixture.log.lines()).hasSize(2);
-        assertThat(fixture.log.lines().get(0))
-            .startsWith("SEVERE Failed to make the FastStats context for Owner ready: ");
-        assertThat(fixture.log.lines().get(1))
-            .isEqualTo("WARNING FastStats metrics failed to start: " + MetricsBuilder.NOT_READY);
+        assertThat(fixture.log.lines()).containsExactly("WARNING FastStats metrics failed to start: "
+            + "the plugin is not enabled, start metrics in or after onEnable");
         verify(fixture.asyncScheduler, never())
             .runAtFixedRate(any(Plugin.class), any(), anyLong(), anyLong(), any(TimeUnit.class));
         verify(fixture.pluginManager, never()).registerEvents(any(Listener.class), any(Plugin.class));

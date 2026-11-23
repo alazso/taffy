@@ -61,6 +61,35 @@ final class RedactionTest {
     }
 
     @Test
+    void anAddressBeforeAFullStopIsHidden() {
+        assertThat(Redaction.hide("Could not connect to 10.0.0.5."))
+            .isEqualTo("Could not connect to [address hidden].");
+        assertThat(Redaction.hide("Host '10.0.0.5' is blocked. Peer 10.0.0.6. Retrying"))
+            .isEqualTo("Host '[address hidden]' is blocked. Peer [address hidden]. Retrying");
+        assertThat(Redaction.hide("built from 1.2.3.4.5 today")).isEqualTo("built from 1.2.3.4.5 today");
+    }
+
+    @Test
+    void aDoubleColonWithoutAHexDigitIsNoAddress() {
+        String line = "Schema version 7 is newer than 5 :: refusing";
+
+        assertThat(Redaction.hide(line)).isEqualTo(line);
+        assertThat(Redaction.hide("bound to ::1 only")).isEqualTo("bound to [address hidden] only");
+        assertThat(Redaction.hide("failed for key a::b")).isEqualTo("failed for key [address hidden]");
+    }
+
+    @Test
+    void theRestOfAUnixPathBehindACharacterTheRuleDoesNotReadIsHidden() {
+        assertThat(Redaction.hide("path /home/j\u00F6hn/server/plugins/Shop/data.db is not writable"))
+            .isEqualTo("path [path hidden] is not writable");
+        assertThat(Redaction.hide("/home/john+smith/server/data.db")).isEqualTo("[path hidden]");
+        assertThat(Redaction.hide("'/home/john@pc/server/data.db' (No such file)"))
+            .isEqualTo("'[path hidden]' (No such file)");
+        assertThat(Redaction.hide("Cannot read /home/john/server/data.db: denied, see /var/log/x.log."))
+            .isEqualTo("Cannot read [path hidden]: denied, see [path hidden]");
+    }
+
+    @Test
     void ordinaryTextStaysAsWritten() {
         String line = "The table shop_orders was set up by a newer version of the plugin (schema 7, this is 5)";
 

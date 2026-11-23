@@ -239,6 +239,40 @@ final class DiagnosticReportTest {
     }
 
     @Test
+    void aSectionBuiltFromTheLinesOfACappedSectionIsEqualToIt() {
+        List<Line> lines = IntStream.rangeClosed(1, 70).mapToObj(i -> Line.of("line " + i)).toList();
+        Section capped = new Section("Many", lines);
+
+        assertThat(new Section(capped.title(), capped.lines())).isEqualTo(capped);
+        assertThat(new Section("One over", lines.subList(0, 65)).lines()).hasSize(65)
+            .endsWith(Line.of("line 64"), Line.of("1 more line not shown"));
+    }
+
+    @Test
+    void aSectionSignIsASpaceSoNoPartReadsAsALegacyColourCode() {
+        DiagnosticReport report = builder()
+            .section("\u00A7cHooks", List.of(new Line("\u00A7aVault", "\u00A7cFAILED \u00A7kxxxx"),
+                Line.redacted("", "java.lang.IllegalStateException: \u00A74down")))
+            .build();
+
+        assertThat(report.plainText()).noneMatch(line -> line.indexOf('\u00A7') >= 0)
+            .contains("cHooks", "  aVault: cFAILED  kxxxx", "  java.lang.IllegalStateException:  4down");
+        assertThat(report.components()).noneMatch(
+            component -> PlainTextComponentSerializer.plainText().serialize(component).indexOf('\u00A7') >= 0);
+    }
+
+    @Test
+    void aFailedHookStatusLineLosesTheSecretsOfTheExceptionItQuotes() {
+        String line = "Vault 1.7.3 failed. The economy could not be read (java.lang.IllegalStateException:"
+            + " jdbc:mysql://eco:hunter2@10.0.0.5/eco unreachable from 10.0.0.9).";
+
+        assertThat(Line.redacted("", line).plain()).isEqualTo("Vault 1.7.3 failed. The economy could not be read"
+            + " (java.lang.IllegalStateException: jdbc:[redacted] unreachable from [address hidden]).");
+        assertThat(Line.redacted("", "Vault 1.7.3 has nothing registered with it. Install an economy plugin.").plain())
+            .isEqualTo("Vault 1.7.3 has nothing registered with it. Install an economy plugin.");
+    }
+
+    @Test
     void sectionsPastTheLimitAreCountedAndNeverRun() {
         AtomicInteger runs = new AtomicInteger();
         DiagnosticReport.Builder builder = builder();

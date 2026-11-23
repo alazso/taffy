@@ -48,6 +48,12 @@ public final class MetricsBuilder {
     /** The cause a failed start reports when FastStats could not make the context ready and logged why itself. */
     static final String NOT_READY = "FastStats could not make its context ready";
 
+    /** The cause a failed start reports for an owner that is not enabled. */
+    static final String NOT_ENABLED = "the plugin is not enabled, start metrics in or after onEnable";
+
+    /** Matches every error message, the empty one included. */
+    private static final Pattern EVERY_ERROR = Pattern.compile("(?s).*");
+
     /** The form FastStats requires of a project token. */
     static final Pattern TOKEN = Pattern.compile("[a-z0-9]{32}");
 
@@ -95,7 +101,7 @@ public final class MetricsBuilder {
      * A {@code null} or blank token leaves FastStats off, so an unset token needs no check by the caller. A
      * token that does not match {@code [a-z0-9]{32}}, such as a placeholder, or a jar without
      * {@code META-INF/faststats.properties}, is refused at {@link #start()} and logged as one warning, before
-     * FastStats reads or writes any file.
+     * FastStats reads or writes any file. So is an owner that is not enabled.
      *
      * <p>Error tracking receives, among others, the reports made through the error sink, a chart supplier that
      * throws (see {@link MetricChart}) and the exceptions Paper reports for the owner in a
@@ -157,8 +163,8 @@ public final class MetricsBuilder {
     /**
      * Starts every provider whose credential is set, when the owner's switch is on, and returns the handle. Call
      * it once, at the end of enable. FastStats starts only for an owner that is enabled: called earlier, as from the
-     * plugin's constructor or {@code onLoad}, FastStats logs one error on the owner's logger, and the FastStats start
-     * fails with its one warning.
+     * plugin's constructor or {@code onLoad}, the FastStats start fails with its one warning before FastStats reads
+     * or writes any file.
      *
      * <p>When FastStats starts with its error service, the handle is installed into the error sink: the reports
      * the sink still holds are delivered to FastStats error tracking on the calling thread, and every later
@@ -251,23 +257,32 @@ public final class MetricsBuilder {
     /**
      * Creates and readies a FastStats context with {@code charts}, or logs one warning on {@code logger},
      * {@code failure} followed by the cause's message, and returns {@code null}. A token that does not match
-     * {@link #TOKEN} is refused before FastStats reads or writes its config file, and so is a class loader that does
-     * not hold {@code META-INF/faststats.properties}, so a refused start leaves the server's first run to the next
-     * plugin that starts FastStats.
+     * {@link #TOKEN} is refused before FastStats reads or writes its config file, and so are an owner that is not
+     * enabled and a class loader that does not hold {@code META-INF/faststats.properties}, so a refused start leaves
+     * the server's first run to the next plugin that starts FastStats. A FastStats class that cannot be loaded is a
+     * failed start too.
      *
      * <p>With {@code errorTracking}, the context gets a context-unaware global tracker carrying the
      * {@link Anonymizers} rules. It installs no JVM default uncaught exception handler, so this method leaves that
-     * handler as it found it. A start that fails after the context exists shuts the context down, with submission
-     * turned off first so that the shutdown sends nothing.
+     * handler as it found it. When the context does not send errors, on a server's first run or with error tracking
+     * turned off by the server owner, the tracker ignores every error, so it holds none. A start that fails after
+     * the context exists shuts the context down, with submission turned off first so that the shutdown sends
+     * nothing.
      *
-     * <p>A {@code ready()} that fails, as it does for an owner that is not enabled, does not throw: FastStats logs
-     * one error line with the cause on the owner's logger. Such a context is a failed start whose warning ends in
-     * {@link #NOT_READY}.
+     * <p>A {@code ready()} that fails, as it does when a listener cannot be registered, does not throw: FastStats
+     * logs one error line with the cause on the owner's logger. Such a context is a failed start whose warning ends
+     * in {@link #NOT_READY}.
      */
     static @Nullable FastStatsRun startFastStats(Plugin owner, String token, List<MetricChart> charts,
                                                  boolean errorTracking, Logger logger, String failure) {
-        return startFastStats(owner, token, charts, errorTracking, logger, failure,
-            FastStatsContext.class.getClassLoader());
+        ClassLoader sdkLoader;
+        try {
+            sdkLoader = FastStatsContext.class.getClassLoader();
+        } catch (LinkageError ex) {
+            logger.warning(failure + ": " + ex.getMessage());
+            return null;
+        }
+        return startFastStats(owner, token, charts, errorTracking, logger, failure, sdkLoader);
     }
 
     /**
@@ -279,6 +294,10 @@ public final class MetricsBuilder {
                                                  ClassLoader sdkLoader) {
         if (!TOKEN.matcher(token).matches()) {
             logger.warning(failure + ": Invalid token '" + token + "', must match '" + TOKEN.pattern() + "'");
+            return null;
+        }
+        if (!owner.isEnabled()) {
+            logger.warning(failure + ": " + NOT_ENABLED);
             return null;
         }
         if (sdkLoader.getResource(SDK_PROPERTIES) == null) {
@@ -294,15 +313,22 @@ public final class MetricsBuilder {
                 .token(token)
                 .metrics(metricsFactory -> FastStatsCharts.addTo(metricsFactory, charts).create())
                 .onReady(readied -> ready.set(true));
-            if (errorTracking) {
-                builder = builder.errorTrackerService(Anonymizers.apply(ErrorTracker.contextUnaware()));
+            ErrorTracker tracker = errorTracking ? Anonymizers.apply(ErrorTracker.contextUnaware()) : null;
+            if (tracker != null) {
+                builder = builder.errorTrackerService(tracker);
             }
             context = builder.build();
             context.ready();
             if (!ready.get()) {
                 throw new IllegalStateException(NOT_READY);
             }
-            return new FastStatsRun(context, !Boolean.getBoolean(FastStatsRun.FIRST_RUN));
+            FastStatsRun run = new FastStatsRun(context, !Boolean.getBoolean(FastStatsRun.FIRST_RUN));
+            if (tracker != null && run.errorTrackerService().isEmpty()) {
+                // FastStats 0.33.0 tracks the owner's ServerExceptionEvent errors on this tracker whatever the
+                // config says, and clears a tracker only after an accepted send or at shutdown.
+                tracker.ignoreError(EVERY_ERROR);
+            }
+            return run;
         } catch (RuntimeException | LinkageError ex) {
             if (context != null) {
                 FastStatsContext failed = context;
