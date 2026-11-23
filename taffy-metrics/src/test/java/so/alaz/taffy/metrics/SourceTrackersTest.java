@@ -1,7 +1,8 @@
 package so.alaz.taffy.metrics;
 
 import dev.faststats.ErrorTracker;
-import dev.faststats.bukkit.BukkitContext;
+import dev.faststats.FastStatsContext;
+import dev.faststats.bukkit.FastStatsBukkit;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bukkit.plugin.Plugin;
 import org.junit.jupiter.api.AfterEach;
@@ -38,7 +39,7 @@ class SourceTrackersTest {
 
     private LoopbackSink sink;
     private MetricsFixture fixture;
-    private BukkitContext context;
+    private FastStatsContext context;
     private SourceTrackers trackers;
 
     @BeforeEach
@@ -48,9 +49,10 @@ class SourceTrackersTest {
         sink.point();
         fixture = new MetricsFixture(plugins);
         fixture.writeFastStatsConfig(true, true, true);
-        context = new BukkitContext.Factory(fixture.plugin, MetricsFixture.FASTSTATS_TOKEN)
+        context = FastStatsBukkit.builder(fixture.plugin)
+            .token(MetricsFixture.FASTSTATS_TOKEN)
             .errorTrackerService(ErrorTracker.contextUnaware())
-            .create();
+            .build();
         context.ready();
         trackers = new SourceTrackers(context.errorTrackerService().orElseThrow(), fixture.log.logger);
     }

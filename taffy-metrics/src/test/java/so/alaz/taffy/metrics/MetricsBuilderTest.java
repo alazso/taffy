@@ -1,6 +1,5 @@
 package so.alaz.taffy.metrics;
 
-import dev.faststats.bukkit.BukkitContext;
 import org.bstats.charts.CustomChart;
 import org.bstats.json.JsonObjectBuilder;
 import org.bukkit.event.Listener;
@@ -54,7 +53,7 @@ class MetricsBuilderTest {
     private final ErrorReports errors = new ErrorReports();
     private final List<String> delivered = new ArrayList<>();
     private final List<Metrics> started = new ArrayList<>();
-    private final List<BukkitContext> contexts = new ArrayList<>();
+    private final List<FastStatsRun> contexts = new ArrayList<>();
 
     @BeforeEach
     void setUp() throws IOException {
@@ -73,7 +72,7 @@ class MetricsBuilderTest {
         for (Metrics metrics : started) {
             metrics.shutdown();
         }
-        contexts.forEach(BukkitContext::shutdown);
+        contexts.forEach(FastStatsRun::shutdown);
         sink.close();
         System.clearProperty("faststats.first-run");
         System.clearProperty(TaffyUsage.BSTATS_HOLDER);
@@ -525,7 +524,7 @@ class MetricsBuilderTest {
 
     @Test
     void aLoaderWithoutFastStatsPropertiesWritesNoFastStatsConfigSoTheNextStartKeepsItsFirstRun() throws IOException {
-        BukkitContext refused;
+        FastStatsRun refused;
         try (URLClassLoader empty = new URLClassLoader(new URL[0], null)) {
             refused = MetricsBuilder.startFastStats(fixture.plugin, MetricsFixture.FASTSTATS_TOKEN, List.of(), true,
                 fixture.log.logger, MetricsBuilder.FASTSTATS_FAILED, empty);
@@ -662,12 +661,92 @@ class MetricsBuilderTest {
 
             assertThat(metrics.fastStats).isNull();
             assertThat(metrics.sources).isNull();
-            assertThat(fixture.log.lines())
-                .containsExactly("WARNING FastStats metrics failed to start: listener refused");
+            assertThat(fixture.log.lines()).containsExactly(
+                "SEVERE Failed to make the FastStats context for Owner ready: listener refused",
+                "WARNING FastStats metrics failed to start: FastStats could not make its context ready");
             assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(savedHandler);
             assertThat(sink.requests).isEmpty();
         }
         verify(fixture.task, times(4)).cancel();
+    }
+
+    @Test
+    void anOwnerThatIsNotEnabledIsAFailedStartThatSchedulesAndSendsNothing() throws IOException {
+        fixture.writeFastStatsConfig(true, true, true);
+        when(fixture.plugin.isEnabled()).thenReturn(false);
+        ErrorReports fresh = new ErrorReports();
+        fresh.report("hook.example", new IllegalStateException("hook failed"));
+
+        Metrics metrics = start(new MetricsBuilder(fixture.plugin, fresh, true)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN));
+
+        assertThat(metrics.fastStats).isNull();
+        assertThat(metrics.sources).isNull();
+        assertThat(metrics.usage).isNotNull();
+        assertThat(metrics.usage.fastStats).isNull();
+        assertThat(metrics.fastStatsSdk()).isNull();
+        assertThat(fixture.log.lines()).hasSize(2);
+        assertThat(fixture.log.lines().get(0))
+            .startsWith("SEVERE Failed to make the FastStats context for Owner ready: ");
+        assertThat(fixture.log.lines().get(1))
+            .isEqualTo("WARNING FastStats metrics failed to start: " + MetricsBuilder.NOT_READY);
+        verify(fixture.asyncScheduler, never())
+            .runAtFixedRate(any(Plugin.class), any(), anyLong(), anyLong(), any(TimeUnit.class));
+        verify(fixture.pluginManager, never()).registerEvents(any(Listener.class), any(Plugin.class));
+        assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(savedHandler);
+        metrics.shutdown();
+        assertThat(sink.requests).isEmpty();
+    }
+
+    @Test
+    void aFirstRunHoldsTheServicesFastStatsAttachedAndSendsNothingThroughThem() {
+        ErrorReports fresh = new ErrorReports();
+        fresh.report("hook.example", new IllegalStateException("hook failed"));
+
+        Metrics metrics = start(new MetricsBuilder(fixture.plugin, fresh, true)
+            .fastStats(MetricsFixture.FASTSTATS_TOKEN)
+            .addChart(MetricChart.number("item_count", () -> 1)));
+
+        assertThat(metrics.fastStats).isNotNull();
+        assertThat(metrics.fastStats.context.metrics()).isPresent();
+        assertThat(metrics.fastStats.context.errorTrackerService()).isPresent();
+        assertThat(metrics.fastStats.submitting()).isFalse();
+        assertThat(metrics.sources).isNull();
+        assertThat(metrics.fastStatsSubmitting()).isFalse();
+        assertThat(metrics.fastStatsCharts()).isFalse();
+        assertThat(metrics.fastStatsErrorTracking()).isFalse();
+        verify(fixture.asyncScheduler, never())
+            .runAtFixedRate(any(Plugin.class), any(), anyLong(), anyLong(), any(TimeUnit.class));
+        List<String> received = new ArrayList<>();
+        fresh.install((source, error) -> received.add(source));
+        assertThat(received).isEmpty();
+        metrics.shutdown();
+        assertThat(sink.requests).isEmpty();
+    }
+
+    @Test
+    void anOptedOutServerHoldsTheServicesFastStatsAttachedAndSendsNothingThroughThem() throws IOException {
+        for (boolean[] keys : new boolean[][] {{false, true, true}, {true, false, true}, {true, true, false}}) {
+            fixture.writeFastStatsConfig(keys[0], keys[1], keys[2]);
+            ErrorReports fresh = new ErrorReports();
+
+            Metrics metrics = start(new MetricsBuilder(fixture.plugin, fresh, true)
+                .usageChart(false)
+                .fastStats(MetricsFixture.FASTSTATS_TOKEN));
+
+            assertThat(metrics.fastStats).isNotNull();
+            assertThat(metrics.fastStats.context.metrics()).isPresent();
+            assertThat(metrics.fastStats.context.errorTrackerService()).isPresent();
+            assertThat(metrics.fastStats.submitting()).isTrue();
+            assertThat(metrics.fastStats.metrics().isPresent()).isEqualTo(keys[0] && keys[1]);
+            assertThat(metrics.fastStats.errorTrackerService().isPresent()).isEqualTo(keys[0] && keys[2]);
+            assertThat(metrics.sources != null).isEqualTo(keys[0] && keys[2]);
+            fresh.report("storage", new IllegalStateException("storage offline"));
+            sink.requests.clear();
+            metrics.shutdown();
+            assertThat(sink.paths()).containsExactlyElementsOf(!keys[0] ? List.<String>of()
+                : keys[1] ? List.of("/v1/collect") : List.of("/v1/error"));
+        }
     }
 
     @Test
@@ -681,9 +760,11 @@ class MetricsBuilderTest {
             .fastStats(MetricsFixture.FASTSTATS_TOKEN));
 
         assertThat(metrics.fastStats).isNull();
-        assertThat(fixture.log.lines())
-            .containsExactly("WARNING FastStats metrics failed to start: listener refused");
+        assertThat(fixture.log.lines()).containsExactly(
+            "SEVERE Failed to make the FastStats context for Owner ready: listener refused",
+            "WARNING FastStats metrics failed to start: FastStats could not make its context ready");
         assertThat(Thread.getDefaultUncaughtExceptionHandler()).isSameAs(savedHandler);
+        assertThat(sink.requests).isEmpty();
     }
 
     @Test
@@ -703,7 +784,7 @@ class MetricsBuilderTest {
     void startFastStatsWithoutErrorTrackingAttachesNoHandler() throws IOException {
         fixture.writeFastStatsConfig(true, true, true);
 
-        BukkitContext context = MetricsBuilder.startFastStats(fixture.plugin, MetricsFixture.FASTSTATS_TOKEN,
+        FastStatsRun context = MetricsBuilder.startFastStats(fixture.plugin, MetricsFixture.FASTSTATS_TOKEN,
             List.of(MetricChart.number("item_count", () -> 1)), false, fixture.log.logger,
             MetricsBuilder.FASTSTATS_FAILED);
 
@@ -723,7 +804,7 @@ class MetricsBuilderTest {
         for (Thread.UncaughtExceptionHandler before : Arrays.asList(null, installed)) {
             Thread.setDefaultUncaughtExceptionHandler(before);
 
-            BukkitContext context = MetricsBuilder.startFastStats(fixture.plugin, MetricsFixture.FASTSTATS_TOKEN,
+            FastStatsRun context = MetricsBuilder.startFastStats(fixture.plugin, MetricsFixture.FASTSTATS_TOKEN,
                 List.of(), true, fixture.log.logger, MetricsBuilder.FASTSTATS_FAILED);
 
             assertThat(context).isNotNull();

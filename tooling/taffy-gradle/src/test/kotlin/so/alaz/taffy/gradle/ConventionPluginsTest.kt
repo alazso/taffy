@@ -345,7 +345,7 @@ class ConventionPluginsTest {
                 "so/alaz/demo/libs/bstats/MetricsBase.class",
                 "so/alaz/demo/libs/bstats/bukkit/Metrics.class",
                 "so/alaz/demo/libs/faststats/ErrorTracker.class",
-                "so/alaz/demo/libs/faststats/bukkit/BukkitContext.class",
+                "so/alaz/demo/libs/faststats/bukkit/FastStatsBukkit.class",
             )
             assertThat(names).noneMatch {
                 it.startsWith("org/bstats/") || it.startsWith("dev/faststats/") || it.startsWith("so/alaz/taffy/")

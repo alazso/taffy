@@ -22,7 +22,9 @@ import static org.mockito.Mockito.when;
  * A plugin named {@code Owner} whose data folder is {@code <plugins>/Owner}, on a mocked server whose plugins folder
  * is {@code <plugins>}. The constructor writes {@code <plugins>/bStats/config.yml} with a server id and
  * {@code enabled: false}, so a bStats instance started over this fixture schedules no submission.
- * {@code isEnabled()} is never stubbed and reads {@code false}, which bStats checks again before any send.
+ * {@code isEnabled()} reads {@code true} on the thread that built the fixture, which FastStats requires of the
+ * thread that readies a context, and {@code false} on every other thread, so the check bStats makes on its own
+ * thread before any send stops it.
  *
  * <p>The server's async scheduler is a mock that runs nothing and returns {@link #task} for every repeating task,
  * so a FastStats context over this fixture sends only inside its {@code shutdown()}. FastStats reads
@@ -70,6 +72,8 @@ final class MetricsFixture {
         when(meta.getVersion()).thenReturn("1.0.0");
         when(plugin.getPluginMeta()).thenReturn(meta);
         when(plugin.getName()).thenReturn("Owner");
+        Thread builtOn = Thread.currentThread();
+        when(plugin.isEnabled()).thenAnswer(call -> Thread.currentThread() == builtOn);
         when(plugin.getLogger()).thenReturn(log.logger);
         when(plugin.getDataFolder()).thenReturn(plugins.resolve("Owner").toFile());
         when(plugin.getServer()).thenReturn(server);

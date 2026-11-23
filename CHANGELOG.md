@@ -5,6 +5,23 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Changed
+- `taffy-metrics` is built for and tested with FastStats 0.33.0, up from 0.32.2, and a plugin jar must shade
+  FastStats 0.33.0 or newer with this release. FastStats 0.33.0 removed `BukkitContext`, which `taffy-metrics`
+  0.4.9 names, and added `FastStatsBukkit`, which this release names, so FastStats starts neither for 0.4.9
+  beside FastStats 0.33.0 nor for this release beside 0.32.2. A build that applies
+  `so.alaz.taffy.paper-plugin`, or that takes FastStats only as the runtime dependency of `taffy-metrics`,
+  shades 0.33.0 without a change; a build that declares `dev.faststats.metrics:bukkit` itself raises it to
+  0.33.0. `Metrics.fastStatsSdk()` reads `bukkit 0.33.0`. The first run that sends nothing, the keys of
+  `plugins/faststats/config.properties`, the final send at `Metrics.shutdown()` and the `Metrics` readers
+  behave as in 0.4.9.
+- A FastStats context that cannot be made ready, as when `MetricsBuilder.start()` runs before the plugin is
+  enabled, logs two lines on the owner's logger: FastStats' own error
+  `Failed to make the FastStats context for <plugin> ready: <cause>` with its stack trace, then the warning
+  `FastStats metrics failed to start: FastStats could not make its context ready`. With FastStats 0.32.2 it
+  was the one warning `FastStats metrics failed to start: <cause>`. The context is shut down without a send
+  and enable goes on, as before.
+
 ## [0.4.9] - 2026-11-23
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.32.2 and bStats 3.2.1.

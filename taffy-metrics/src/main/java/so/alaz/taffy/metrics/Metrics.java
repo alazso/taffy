@@ -1,7 +1,6 @@
 package so.alaz.taffy.metrics;
 
 import dev.faststats.SdkInfo;
-import dev.faststats.bukkit.BukkitContext;
 import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.ErrorReports;
 
@@ -66,13 +65,13 @@ public final class Metrics {
     static final String FINAL_SEND_THREAD = "taffy-metrics-final-send";
 
     private final org.bstats.bukkit.@Nullable Metrics bStats;
-    final @Nullable BukkitContext fastStats;
+    final @Nullable FastStatsRun fastStats;
     final @Nullable SourceTrackers sources;
     final @Nullable TaffyUsage usage;
     private final ErrorReports errors;
     private final AtomicBoolean shutDown = new AtomicBoolean();
 
-    Metrics(org.bstats.bukkit.@Nullable Metrics bStats, @Nullable BukkitContext fastStats,
+    Metrics(org.bstats.bukkit.@Nullable Metrics bStats, @Nullable FastStatsRun fastStats,
             @Nullable TaffyUsage usage, ErrorReports errors, Logger logger) {
         this.bStats = bStats;
         this.fastStats = fastStats;
@@ -93,7 +92,7 @@ public final class Metrics {
     }
 
     /**
-     * The FastStats SDK name and version, such as {@code bukkit 0.32.2}.
+     * The FastStats SDK name and version, such as {@code bukkit 0.33.0}.
      *
      * @return the name and version, or {@code null} when FastStats did not start or was shut down
      */
@@ -225,7 +224,7 @@ public final class Metrics {
     }
 
     /** Shuts {@code context} down on a daemon thread and waits at most {@link #FINAL_SEND_WAIT} for it. */
-    private static void finalSend(BukkitContext context) {
+    private static void finalSend(FastStatsRun context) {
         Thread sender = new Thread(() -> quietly(context::shutdown), FINAL_SEND_THREAD);
         sender.setDaemon(true);
         sender.start();
@@ -237,7 +236,7 @@ public final class Metrics {
     }
 
     /** Reads one fact from the FastStats context, or {@code false} when it cannot be read. */
-    private boolean reads(Predicate<BukkitContext> fact) {
+    private boolean reads(Predicate<FastStatsRun> fact) {
         if (fastStats == null || shutDown.get()) {
             return false;
         }

@@ -3,7 +3,6 @@ package so.alaz.taffy.metrics;
 import com.destroystokyo.paper.event.server.ServerExceptionEvent;
 import com.destroystokyo.paper.exception.ServerPluginException;
 import dev.faststats.ErrorTracker;
-import dev.faststats.bukkit.BukkitContext;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
 import org.bukkit.event.Listener;
 import org.bukkit.plugin.Plugin;
@@ -154,7 +153,7 @@ class MetricsTest {
     void anEnabledServerReadsEverythingOn() throws IOException {
         Metrics metrics = startFastStats(true, true, true);
 
-        assertThat(metrics.fastStatsSdk()).isEqualTo("bukkit 0.32.2");
+        assertThat(metrics.fastStatsSdk()).isEqualTo("bukkit 0.33.0");
         assertThat(metrics.fastStatsEnabled()).isTrue();
         assertThat(metrics.fastStatsSubmitting()).isTrue();
         assertThat(metrics.fastStatsCharts()).isTrue();
@@ -165,7 +164,7 @@ class MetricsTest {
     void anOptedOutServerReadsEverythingOffButTheSdk() throws IOException {
         Metrics metrics = startFastStats(false, true, true);
 
-        assertThat(metrics.fastStatsSdk()).isEqualTo("bukkit 0.32.2");
+        assertThat(metrics.fastStatsSdk()).isEqualTo("bukkit 0.33.0");
         assertThat(metrics.fastStatsEnabled()).isFalse();
         assertThat(metrics.fastStatsSubmitting()).isFalse();
         assertThat(metrics.fastStatsCharts()).isFalse();
@@ -626,7 +625,7 @@ class MetricsTest {
         fixture.writeFastStatsConfig(true, true, true);
         TaffyUsage usage = TaffyUsage.start(fixture.plugin, MetricsFixture.BSTATS_SERVICE_ID,
             MetricsFixture.FASTSTATS_TOKEN);
-        BukkitContext owner = MetricsBuilder.startFastStats(fixture.plugin, MetricsFixture.FASTSTATS_TOKEN,
+        FastStatsRun owner = MetricsBuilder.startFastStats(fixture.plugin, MetricsFixture.FASTSTATS_TOKEN,
             List.of(MetricChart.number("item_count", () -> 7)), false, fixture.log.logger,
             MetricsBuilder.FASTSTATS_FAILED);
         assertThat(usage.fastStats).isNotNull();
@@ -636,7 +635,7 @@ class MetricsTest {
 
         metrics.shutdown();
 
-        assertThat(usage.fastStats.submissionActive).isFalse();
+        assertThat(usage.fastStats.submitting()).isFalse();
         assertThat(sink.requests).singleElement().satisfies(request -> {
             assertThat(request.path()).isEqualTo("/v1/collect");
             assertThat(request.body()).contains("\"item_count\":7").doesNotContain("taffy_version");

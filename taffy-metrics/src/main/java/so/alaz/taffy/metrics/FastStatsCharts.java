@@ -2,6 +2,7 @@ package so.alaz.taffy.metrics;
 
 import dev.faststats.Metrics;
 import dev.faststats.data.Metric;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -20,15 +21,34 @@ final class FastStatsCharts {
      */
     static Metrics.Factory addTo(Metrics.Factory factory, List<MetricChart> charts) {
         var built = factory;
-        List<CounterMark> counters = new ArrayList<>();
-        for (MetricChart chart : charts) {
-            built = built.addMetric(toMetric(chart, counters));
+        Converted converted = convert(charts);
+        for (Metric<?> metric : converted.metrics) {
+            built = built.addMetric(metric);
         }
-        if (!counters.isEmpty()) {
+        if (converted.flush != null) {
             // Runs only after an accepted submission, on the thread that read the metrics.
-            built = built.onFlush(() -> counters.forEach(CounterMark::commit));
+            built = built.onFlush(converted.flush);
         }
         return built;
+    }
+
+    /** Converts {@code charts} to one metric each, in order, with one callback for all of their counters. */
+    static Converted convert(List<MetricChart> charts) {
+        List<Metric<?>> metrics = new ArrayList<>();
+        List<CounterMark> counters = new ArrayList<>();
+        for (MetricChart chart : charts) {
+            metrics.add(toMetric(chart, counters));
+        }
+        return new Converted(metrics, counters.isEmpty() ? null : () -> counters.forEach(CounterMark::commit));
+    }
+
+    /**
+     * The metrics of a list of charts.
+     *
+     * @param metrics one metric per chart, in order
+     * @param flush commits the mark of every counter among them, or {@code null} when none is a counter
+     */
+    record Converted(List<Metric<?>> metrics, @Nullable Runnable flush) {
     }
 
     /** Converts a chart; a counter's mark is added to {@code counters} so {@code onFlush} can commit it. */

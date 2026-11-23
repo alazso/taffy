@@ -1,7 +1,8 @@
 package so.alaz.taffy.metrics;
 
 import dev.faststats.ErrorTracker;
-import dev.faststats.bukkit.BukkitContext;
+import dev.faststats.FastStatsContext;
+import dev.faststats.bukkit.FastStatsBukkit;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
@@ -11,6 +12,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
@@ -42,6 +44,9 @@ public final class MetricsBuilder {
 
     static final String BSTATS_FAILED = "bStats metrics failed to start";
     static final String FASTSTATS_FAILED = "FastStats metrics failed to start";
+
+    /** The cause a failed start reports when FastStats could not make the context ready and logged why itself. */
+    static final String NOT_READY = "FastStats could not make its context ready";
 
     /** The form FastStats requires of a project token. */
     static final Pattern TOKEN = Pattern.compile("[a-z0-9]{32}");
@@ -151,7 +156,9 @@ public final class MetricsBuilder {
 
     /**
      * Starts every provider whose credential is set, when the owner's switch is on, and returns the handle. Call
-     * it once, at the end of enable.
+     * it once, at the end of enable. FastStats starts only for an owner that is enabled: called earlier, as from the
+     * plugin's constructor or {@code onLoad}, FastStats logs one error on the owner's logger, and the FastStats start
+     * fails with its one warning.
      *
      * <p>When FastStats starts with its error service, the handle is installed into the error sink: the reports
      * the sink still holds are delivered to FastStats error tracking on the calling thread, and every later
@@ -188,7 +195,7 @@ public final class MetricsBuilder {
             quietly(bStats::shutdown);
             bStats = null;
         }
-        BukkitContext fastStats = fastStatsToken != null
+        FastStatsRun fastStats = fastStatsToken != null
             ? startFastStats(owner, fastStatsToken, charts, true, logger, FASTSTATS_FAILED) : null;
         TaffyUsage usage = usageChart ? TaffyUsage.start(owner, bStats != null, fastStats != null) : null;
         Metrics handle = new Metrics(bStats, fastStats, usage, errors, logger);
@@ -252,20 +259,24 @@ public final class MetricsBuilder {
      * {@link Anonymizers} rules. It installs no JVM default uncaught exception handler, so this method leaves that
      * handler as it found it. A start that fails after the context exists shuts the context down, with submission
      * turned off first so that the shutdown sends nothing.
+     *
+     * <p>A {@code ready()} that fails, as it does for an owner that is not enabled, does not throw: FastStats logs
+     * one error line with the cause on the owner's logger. Such a context is a failed start whose warning ends in
+     * {@link #NOT_READY}.
      */
-    static @Nullable BukkitContext startFastStats(Plugin owner, String token, List<MetricChart> charts,
-                                                  boolean errorTracking, Logger logger, String failure) {
+    static @Nullable FastStatsRun startFastStats(Plugin owner, String token, List<MetricChart> charts,
+                                                 boolean errorTracking, Logger logger, String failure) {
         return startFastStats(owner, token, charts, errorTracking, logger, failure,
-            BukkitContext.class.getClassLoader());
+            FastStatsContext.class.getClassLoader());
     }
 
     /**
      * Starts FastStats as {@link #startFastStats(Plugin, String, List, boolean, Logger, String)} does, checking for
      * {@link #SDK_PROPERTIES} through {@code sdkLoader}, the class loader FastStats reads it through.
      */
-    static @Nullable BukkitContext startFastStats(Plugin owner, String token, List<MetricChart> charts,
-                                                  boolean errorTracking, Logger logger, String failure,
-                                                  ClassLoader sdkLoader) {
+    static @Nullable FastStatsRun startFastStats(Plugin owner, String token, List<MetricChart> charts,
+                                                 boolean errorTracking, Logger logger, String failure,
+                                                 ClassLoader sdkLoader) {
         if (!TOKEN.matcher(token).matches()) {
             logger.warning(failure + ": Invalid token '" + token + "', must match '" + TOKEN.pattern() + "'");
             return null;
@@ -274,22 +285,28 @@ public final class MetricsBuilder {
             logger.warning(failure + ": Resource '/" + SDK_PROPERTIES + "' not found");
             return null;
         }
-        BukkitContext context = null;
+        FastStatsContext context = null;
         try {
-            BukkitContext.Factory factory = new BukkitContext.Factory(owner, token)
-                .metrics(metricsFactory -> FastStatsCharts.addTo(metricsFactory, charts).create());
+            AtomicBoolean ready = new AtomicBoolean();
+            // FastStats 0.33.0 runs the ready hooks in the order they were added and stops at the first that
+            // throws, so this one runs only after the hook of FastStatsBukkit.builder has started submission.
+            FastStatsContext.Builder builder = FastStatsBukkit.builder(owner)
+                .token(token)
+                .metrics(metricsFactory -> FastStatsCharts.addTo(metricsFactory, charts).create())
+                .onReady(readied -> ready.set(true));
             if (errorTracking) {
-                factory = factory.errorTrackerService(Anonymizers.apply(ErrorTracker.contextUnaware()));
+                builder = builder.errorTrackerService(Anonymizers.apply(ErrorTracker.contextUnaware()));
             }
-            context = factory.create();
+            context = builder.build();
             context.ready();
-            return context;
+            if (!ready.get()) {
+                throw new IllegalStateException(NOT_READY);
+            }
+            return new FastStatsRun(context, !Boolean.getBoolean(FastStatsRun.FIRST_RUN));
         } catch (RuntimeException | LinkageError ex) {
             if (context != null) {
-                BukkitContext failed = context;
-                // FastStats 0.32.2 skips every send while SimpleContext.submissionActive is false;
-                // shutdown() otherwise makes a final send.
-                quietly(() -> failed.submissionActive = false);
+                FastStatsContext failed = context;
+                quietly(() -> FastStatsRun.stopSubmission(failed));
                 quietly(failed::shutdown);
             }
             logger.warning(failure + ": " + ex.getMessage());

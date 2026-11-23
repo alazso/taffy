@@ -1,6 +1,5 @@
 package so.alaz.taffy.metrics;
 
-import dev.faststats.bukkit.BukkitContext;
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
 
@@ -42,12 +41,12 @@ final class TaffyUsage {
     static final String FASTSTATS_HOLDER = "taffy.usage.faststats";
 
     final org.bstats.bukkit.@Nullable Metrics bStats;
-    final @Nullable BukkitContext fastStats;
+    final @Nullable FastStatsRun fastStats;
     private final String holder;
     private final AtomicBoolean shutDown = new AtomicBoolean();
 
     private TaffyUsage(String holder, org.bstats.bukkit.@Nullable Metrics bStats,
-                       @Nullable BukkitContext fastStats) {
+                       @Nullable FastStatsRun fastStats) {
         this.holder = holder;
         this.bStats = bStats;
         this.fastStats = fastStats;
@@ -79,7 +78,7 @@ final class TaffyUsage {
                 release(BSTATS_HOLDER, holder);
             }
         }
-        BukkitContext fastStats = null;
+        FastStatsRun fastStats = null;
         if (!token.isBlank() && claim(FASTSTATS_HOLDER, holder)) {
             fastStats = MetricsBuilder.startFastStats(owner, token, charts, false, logger,
                 "Taffy usage metrics failed to start on FastStats");
@@ -114,11 +113,9 @@ final class TaffyUsage {
         if (!shutDown.compareAndSet(false, true)) {
             return;
         }
-        BukkitContext context = fastStats;
+        FastStatsRun context = fastStats;
         if (context != null) {
-            // FastStats 0.32.2 skips every send while SimpleContext.submissionActive is false;
-            // shutdown() otherwise makes a final send.
-            quietly(() -> context.submissionActive = false);
+            quietly(context::stopSubmission);
             quietly(context::shutdown);
             quietly(() -> release(FASTSTATS_HOLDER, holder));
         }

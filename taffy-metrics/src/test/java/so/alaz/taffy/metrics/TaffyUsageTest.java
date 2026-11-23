@@ -308,12 +308,12 @@ class TaffyUsageTest {
         fixture.writeFastStatsConfig(true, true, true);
         TaffyUsage usage = startWithTestCredentials();
         assertThat(usage.fastStats).isNotNull();
-        assertThat(usage.fastStats.submissionActive).isTrue();
+        assertThat(usage.fastStats.submitting()).isTrue();
 
         usage.shutdown();
         usage.shutdown();
 
-        assertThat(usage.fastStats.submissionActive).isFalse();
+        assertThat(usage.fastStats.submitting()).isFalse();
         assertThat(sink.requests).isEmpty();
         verify(fixture.task).cancel();
     }
