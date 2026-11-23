@@ -11,6 +11,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -40,7 +41,7 @@ final class MiniExpansionTest {
             "name", viewer -> "<red>" + viewer.getName(),
             "nothing", viewer -> null);
         Map<String, Supplier<@Nullable String>> globals = Map.of("online", () -> "<bold>5");
-        return MiniExpansion.register("shop", "Ana, Bo", "2.1", players, globals);
+        return MiniExpansion.register("shop", "Ana, Bo", "2.1", players, globals, PlaceholderPrefixes.NONE);
     }
 
     private static String plain(Component component) {
@@ -91,6 +92,49 @@ final class MiniExpansionTest {
             MiniPlaceholders.audienceGlobalPlaceholders());
 
         assertThat(plain(rendered)).isEqualTo("<shop_nothing>");
+    }
+
+    private static void registerPrefixes() {
+        Map<String, Function<Player, @Nullable String>> players = Map.of("keys", viewer -> "all keys");
+        Map<String, BiFunction<Player, String, @Nullable String>> playerPrefixes = Map.of(
+            "keys", (viewer, rest) -> viewer.getName() + " keys " + rest,
+            "pity", (viewer, rest) -> "<red>pity " + rest);
+        Map<String, Function<String, @Nullable String>> globalPrefixes = Map.of(
+            "stock", rest -> rest.equals("none") ? null : "stock " + rest);
+        MiniExpansion.register("shop", "Ana", "2.1", players, Map.of(),
+            new PlaceholderPrefixes(playerPrefixes, Map.of(), globalPrefixes));
+    }
+
+    @Test
+    void aPrefixTagPassesItsArgumentToTheHandler() {
+        registerPrefixes();
+
+        Component rendered = MiniMessage.miniMessage().deserialize(
+            "<shop_keys:Vote>|<shop_pity:daily>|<shop_stock:iron>|<shop_stock:'a b':c>", player,
+            MiniPlaceholders.audienceGlobalPlaceholders());
+
+        assertThat(plain(rendered)).isEqualTo("Alex keys Vote|<red>pity daily|stock iron|stock a b:c");
+    }
+
+    @Test
+    void aPrefixTagWithoutAnArgumentGoesToTheExactNameOrGivesNoValue() {
+        registerPrefixes();
+
+        Component rendered = MiniMessage.miniMessage().deserialize(
+            "<shop_keys>|<shop_pity>|<shop_stock>|<shop_stock:none>", player,
+            MiniPlaceholders.audienceGlobalPlaceholders());
+
+        assertThat(plain(rendered)).isEqualTo("all keys|<shop_pity>|<shop_stock>|<shop_stock:none>");
+    }
+
+    @Test
+    void aGlobalPrefixTagRendersWithoutAnAudience() {
+        registerPrefixes();
+
+        Component rendered = MiniMessage.miniMessage().deserialize("<shop_stock:iron>",
+            MiniPlaceholders.globalPlaceholders());
+
+        assertThat(plain(rendered)).isEqualTo("stock iron");
     }
 
     @Test

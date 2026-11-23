@@ -14,6 +14,7 @@ import net.kyori.adventure.text.minimessage.tag.resolver.ArgumentQueue;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.Nullable;
 import org.junit.jupiter.api.Test;
@@ -43,17 +44,17 @@ class TextTest {
 
     private final CapturedLog log = new CapturedLog();
     private final Player viewer = mock(Player.class);
-    private final List<Player> passViewers = new ArrayList<>();
+    private final List<OfflinePlayer> passViewers = new ArrayList<>();
     private final List<String> passInputs = new ArrayList<>();
 
     // Stands in for PlaceholderAPI: records each call and resolves %rank% and %x%.
-    private final BiFunction<Player, String, String> pass = (player, input) -> {
+    private final BiFunction<OfflinePlayer, String, String> pass = (player, input) -> {
         passViewers.add(player);
         passInputs.add(input);
         return input.replace("%rank%", "<green>VIP").replace("%x%", "1");
     };
 
-    private static final BiFunction<Player, String, String> THROWING_PASS = (player, input) -> {
+    private static final BiFunction<OfflinePlayer, String, String> THROWING_PASS = (player, input) -> {
         throw new IllegalStateException("expansion failed");
     };
 
@@ -73,7 +74,7 @@ class TextTest {
         "<click:run_command:'/pay Mallory 100000'><hover:show_text:'Free reward'>Click me";
 
     // Stands in for PlaceholderAPI with one expansion per map key.
-    private static BiFunction<Player, String, String> expansions(Map<String, String> outputs) {
+    private static BiFunction<OfflinePlayer, String, String> expansions(Map<String, String> outputs) {
         return (player, input) -> {
             String result = input;
             for (Map.Entry<String, String> output : outputs.entrySet()) {
@@ -669,11 +670,95 @@ class TextTest {
     }
 
     @Test
+    void anOfflinePlayerIsAskedForItsPlaceholdersAndGetsNoAudienceTag() {
+        OfflinePlayer away = mock(OfflinePlayer.class);
+        Text text = new Text(log.logger, pass, this::expansions);
+
+        assertThat(plain(text.render("<red>%x% <who> <server>", away))).isEqualTo("1 nobody lobby");
+        assertThat(plain(text.render("%x% {name}", away, Placeholder.unparsed("name", "Ann")))).isEqualTo("1 Ann");
+        assertThat(text.resolve("%rank% %x%", away)).isEqualTo("<green>VIP 1");
+        assertThat(text.plain("<red>%rank%", away)).isEqualTo("<green>VIP");
+        assertThat(passViewers).containsOnly(away).hasSize(4);
+    }
+
+    @Test
+    void anOnlinePlayerGivenAsAnOfflinePlayerStillGetsItsAudienceTags() {
+        OfflinePlayer online = viewer;
+        Text text = new Text(log.logger, pass, this::expansions);
+
+        assertThat(plain(text.render("%x% <who>", online))).isEqualTo("1 viewer");
+        assertThat(plain(text.render("%x% <who> {name}", online, Placeholder.unparsed("name", "Ann"))))
+            .isEqualTo("1 viewer Ann");
+        assertThat(passViewers).containsExactly(viewer, viewer);
+    }
+
+    @Test
+    void aNullOfflinePlayerSkipsThePlaceholderApiPass() {
+        OfflinePlayer nobody = null;
+        Text text = new Text(log.logger, pass, null);
+
+        assertThat(plain(text.render("%x%", nobody))).isEqualTo("%x%");
+        assertThat(plain(text.render("%x% <name>", nobody, Placeholder.unparsed("name", "Ann")))).isEqualTo("%x% Ann");
+        assertThat(text.resolve("%x%", nobody)).isEqualTo("%x%");
+        assertThat(text.plain("%x%", nobody)).isEqualTo("%x%");
+        assertThat(passInputs).isEmpty();
+    }
+
+    @Test
+    void theGlobalMethodsAskPlaceholderApiWithNoPlayer() {
+        Text text = new Text(log.logger, pass, this::expansions);
+
+        assertThat(text.renderGlobal("<red>%x% online")).isEqualTo(Component.text("1 online", NamedTextColor.RED));
+        assertThat(plain(text.renderGlobal("%x% <who> <server> {name}", Placeholder.unparsed("name", "Ann"))))
+            .isEqualTo("1 nobody lobby Ann");
+        assertThat(text.resolveGlobal("%rank% %nope%")).isEqualTo("<green>VIP %nope%");
+        assertThat(text.plainGlobal("<red>%rank%")).isEqualTo("<green>VIP");
+        assertThat(passViewers).containsOnlyNulls().hasSize(4);
+        assertThat(passInputs).containsExactly("%x%", "%x%", "%rank% %nope%", "%rank%");
+    }
+
+    @Test
+    void whatAPlaceholderReturnsForNoPlayerIsNeverParsedAsMiniMessage() {
+        Text text = new Text(log.logger, expansions(Map.of("%motd%", INJECTED)), null);
+
+        Component rendered = text.renderGlobal("<gray>%motd%");
+
+        assertThat(plain(rendered)).isEqualTo(INJECTED);
+        assertNoEvents(rendered);
+    }
+
+    @Test
+    void theOfflineAndGlobalMethodsLeaveTheInputAsWrittenWithoutPlaceholderApi() {
+        OfflinePlayer away = mock(OfflinePlayer.class);
+        Text text = new Text(log.logger, null, null);
+
+        assertThat(text.render("<red>%x%", away)).isEqualTo(Component.text("%x%", NamedTextColor.RED));
+        assertThat(text.resolve("%x%", away)).isEqualTo("%x%");
+        assertThat(text.plain("%x%", away)).isEqualTo("%x%");
+        assertThat(text.renderGlobal("<red>%x%")).isEqualTo(Component.text("%x%", NamedTextColor.RED));
+        assertThat(text.resolveGlobal("%x%")).isEqualTo("%x%");
+        assertThat(text.plainGlobal("%x%")).isEqualTo("%x%");
+        assertThat(log.records).isEmpty();
+    }
+
+    @Test
+    void aPlaceholderApiFailureForNoPlayerIsLoggedAndTheTextIsShownWithoutPlaceholders() {
+        Text text = new Text(log.logger, THROWING_PASS, null);
+
+        assertThat(plain(text.renderGlobal("%x% online"))).isEqualTo("%x% online");
+        assertThat(text.resolveGlobal("%x%")).isEqualTo("%x%");
+        assertThat(log.lines()).containsExactly(PLACEHOLDER_API_WARNING);
+    }
+
+    @Test
     void publicConstructorRendersWithNeitherPluginOnTheClasspath() {
         Text text = new Text(log.logger);
 
         assertThat(text.render("<red>%x%", viewer)).isEqualTo(Component.text("%x%", NamedTextColor.RED));
         assertThat(text.resolve("%x%", viewer)).isEqualTo("%x%");
+        assertThat(text.resolve("%x%", mock(OfflinePlayer.class))).isEqualTo("%x%");
+        assertThat(text.renderGlobal("<red>%x%")).isEqualTo(Component.text("%x%", NamedTextColor.RED));
+        assertThat(text.resolveGlobal("%x%")).isEqualTo("%x%");
         assertThat(plain(text.render("{name} <who>", viewer, Placeholder.unparsed("name", "Ann")))).isEqualTo("Ann <who>");
         assertThat(log.records).isEmpty();
     }

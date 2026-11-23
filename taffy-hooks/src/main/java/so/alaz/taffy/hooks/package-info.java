@@ -65,9 +65,10 @@
  *
  * <p>PlaceholderAPI may call a handler from any thread, and each {@link so.alaz.taffy.hooks.EconomyProvider} call
  * runs on the thread {@link so.alaz.taffy.hooks.EconomyProvider#thread} names. So {@code balanceText} below returns
- * a cached balance and asks for a fresh one on that thread through
- * {@link so.alaz.taffy.platform.Scheduler#dispatch}, with at most one refresh per player in flight. The first request
- * for a player returns no value.
+ * the last known balance from a {@link so.alaz.taffy.hooks.PlaceholderCache}, which asks for a fresh one on that
+ * thread through {@link so.alaz.taffy.platform.Scheduler#dispatch} once the value is five seconds old, with at most
+ * one refresh per player in flight. The first request for a player returns no value. The plugin forgets a player
+ * who quits and clears the cache when it disables.
  *
  * <pre>{@code
  * private final ErrorReports errors = new ErrorReports();
@@ -77,11 +78,11 @@
  * private Detected<RegionProvider> regions;
  * private volatile Detected<EconomyProvider> economy;
  * private PlaceholderRegistration placeholders;
- * private final Map<UUID, String> balances = new ConcurrentHashMap<>();
- * private final Set<UUID> refreshing = ConcurrentHashMap.newKeySet();
+ * private PlaceholderCache<UUID> balances;
  *
  * public void onEnable() {
  *     scheduler = new Scheduler(this, errors);
+ *     balances = new PlaceholderCache<>(Duration.ofSeconds(5), 1000, getLogger());
  *     items = CustomItems.detect(this, errors, settings.itemPlugins());
  *     permissions = PermissionProvider.luckPerms(this, errors, settings.hook("luckperms"));
  *     regions = RegionProvider.worldGuard(this, errors, settings.hook("worldguard"));
@@ -110,16 +111,13 @@
  *         return null;
  *     }
  *     UUID id = player.getUniqueId();
- *     if (refreshing.add(id)) {
- *         scheduler.dispatch(money.thread(id), () -> money.balance(id).toPlainString())
- *             .whenComplete((text, failure) -> {
- *                 if (text != null) {
- *                     balances.put(id, text);
- *                 }
- *                 refreshing.remove(id);
- *             });
- *     }
- *     return balances.get(id);
+ *     return balances.get(id,
+ *         () -> scheduler.dispatch(money.thread(id), () -> money.balance(id).toPlainString()));
+ * }
+ *
+ * @EventHandler
+ * public void onQuit(PlayerQuitEvent event) {
+ *     balances.forget(event.getPlayer().getUniqueId());
  * }
  *
  * void showHooks(CommandSender sender) {
@@ -137,6 +135,9 @@
  * public void onDisable() {
  *     if (placeholders != null) {
  *         placeholders.unregister();
+ *     }
+ *     if (balances != null) {
+ *         balances.clear();
  *     }
  *     if (scheduler != null) {
  *         scheduler.close();

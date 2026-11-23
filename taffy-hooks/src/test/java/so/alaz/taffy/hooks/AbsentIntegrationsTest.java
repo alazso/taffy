@@ -210,7 +210,8 @@ final class AbsentIntegrationsTest {
             EconomyProvider.class, VaultOptions.class, VaultOptions.ThreadRule.class,
             VaultOptions.FundsCheck.class, EconomyWatcher.class,
             PermissionProvider.class, RegionProvider.class, BedrockProvider.class,
-            PlaceholderExpansionBuilder.class, PlaceholderRegistration.class, HologramPlugin.class,
+            PlaceholderExpansionBuilder.class, PlaceholderRegistration.class, PlaceholderCache.class,
+            HologramPlugin.class,
             HologramProvider.class);
         assertThat(exported).doesNotContain(EconomyLookup.class, Detection.class);
 

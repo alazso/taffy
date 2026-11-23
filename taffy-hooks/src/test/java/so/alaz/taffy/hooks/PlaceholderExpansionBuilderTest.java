@@ -191,6 +191,90 @@ final class PlaceholderExpansionBuilderTest {
             .hasMessage(nameMessage("BALANCE"));
     }
 
+    @Test
+    void aPrefixHoldsTheSameCharactersAsAName() {
+        PlaceholderExpansionBuilder builder = new PlaceholderExpansionBuilder();
+
+        assertThatThrownBy(() -> builder.playerPrefix("Keys", (player, rest) -> "y"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("invalid placeholder prefix 'Keys': expected one or more of the letters a to z in lower"
+                + " case, the digits, '_' and '-'");
+        assertThatThrownBy(() -> builder.offlinePrefix("", (player, rest) -> "y"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("invalid placeholder prefix '': expected one or more of the letters a to z in lower case,"
+                + " the digits, '_' and '-'");
+        assertThatThrownBy(() -> builder.globalPrefix("stock:low", rest -> "y"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageStartingWith("invalid placeholder prefix 'stock:low'");
+        assertThatThrownBy(() -> builder.globalPrefix(null, rest -> "y"))
+            .isInstanceOf(NullPointerException.class).hasMessage("prefix");
+        assertThatThrownBy(() -> builder.playerPrefix("keys", null))
+            .isInstanceOf(NullPointerException.class).hasMessage("handler");
+        assertThatCode(() -> builder.playerPrefix("keys_virtual-2", (player, rest) -> "y"))
+            .doesNotThrowAnyException();
+    }
+
+    @Test
+    void prefixPlaceholdersReachBothBackendsAndALaterOneOfTheSamePrefixReplacesTheFirst() {
+        enabled(true, true);
+        Player online = mock(Player.class);
+        when(online.getName()).thenReturn("Alex");
+        OfflinePlayer away = mock(OfflinePlayer.class);
+        when(away.getName()).thenReturn("Sam");
+        try (MockedConstruction<PapiExpansion> constructed = mockConstruction(PapiExpansion.class,
+            (mock, context) -> {
+                when(mock.register()).thenReturn(true);
+                PlaceholderPrefixes prefixes = (PlaceholderPrefixes) context.arguments().get(6);
+                assertThat(prefixes.players().keySet()).containsExactly("keys");
+                assertThat(prefixes.players().get("keys").apply(online, "vote")).isEqualTo("Alex has vote");
+                assertThat(prefixes.offline().keySet()).containsExactly("spent");
+                assertThat(prefixes.offline().get("spent").apply(away, "gems")).isEqualTo("Sam spent gems");
+                assertThat(prefixes.globals().keySet()).containsExactly("stock");
+                assertThat(prefixes.globals().get("stock").apply("iron")).isEqualTo("stock of iron");
+                assertThat(prefixes.longestFirst()).containsExactly("spent", "stock", "keys");
+            })) {
+            register(new PlaceholderExpansionBuilder()
+                .playerPrefix("keys", (player, rest) -> "replaced")
+                .playerPrefix("keys", (player, rest) -> player.getName() + " has " + rest)
+                .offlinePrefix("spent", (player, rest) -> player.getName() + " spent " + rest)
+                .globalPrefix("stock", rest -> "stock of " + rest));
+
+            assertThat(constructed.constructed()).hasSize(1);
+        }
+        String rendered = PlainTextComponentSerializer.plainText().serialize(MiniMessage.miniMessage().deserialize(
+            "<shop_keys:vote>|<shop_stock:iron>|<shop_spent:gems>", online,
+            MiniPlaceholders.audienceGlobalPlaceholders()));
+
+        assertThat(rendered).isEqualTo("Alex has vote|stock of iron|<shop_spent:gems>");
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void aThrowingPrefixHandlerGivesNoValueAndIsWarnedOncePerWindowForThePrefix() {
+        enabled(false, true);
+        Player player = mock(Player.class);
+        new PlaceholderExpansionBuilder()
+            .playerPrefix("keys", (viewer, rest) -> {
+                throw new IllegalStateException("closed");
+            })
+            .globalPrefix("stock", rest -> {
+                throw new IllegalArgumentException("bad " + rest);
+            })
+            .register(plugin, errors, true);
+
+        String rendered = PlainTextComponentSerializer.plainText().serialize(MiniMessage.miniMessage().deserialize(
+            "<shop_keys:vote>|<shop_keys:daily>|<shop_stock:iron>", player,
+            MiniPlaceholders.audienceGlobalPlaceholders()));
+
+        assertThat(rendered).isEqualTo("<shop_keys:vote>|<shop_keys:daily>|<shop_stock:iron>");
+        assertThat(log.lines()).containsExactly(
+            "WARNING The placeholder shop_keys failed, so it gives no value"
+                + " (java.lang.IllegalStateException: closed).",
+            "WARNING The placeholder shop_stock failed, so it gives no value"
+                + " (java.lang.IllegalArgumentException: bad iron).");
+        assertThat(reports).isEmpty();
+    }
+
     private static String nameMessage(String name) {
         return "invalid placeholder name '" + name + "': expected one or more of the letters a to z in lower case,"
             + " the digits, '_' and '-'";

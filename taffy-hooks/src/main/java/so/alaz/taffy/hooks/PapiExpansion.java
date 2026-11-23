@@ -7,7 +7,9 @@ import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.List;
 import java.util.Map;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
@@ -24,26 +26,32 @@ final class PapiExpansion extends PlaceholderExpansion {
     private final Map<String, Function<Player, @Nullable String>> players;
     private final Map<String, Function<OfflinePlayer, @Nullable String>> offline;
     private final Map<String, Supplier<@Nullable String>> globals;
+    private final PlaceholderPrefixes prefixes;
+    private final List<String> prefixNames;
 
     PapiExpansion(String identifier, String author, String version,
                   Map<String, Function<Player, @Nullable String>> players,
                   Map<String, Function<OfflinePlayer, @Nullable String>> offline,
-                  Map<String, Supplier<@Nullable String>> globals) {
+                  Map<String, Supplier<@Nullable String>> globals, PlaceholderPrefixes prefixes) {
         this.identifier = identifier;
         this.author = author;
         this.version = version;
         this.players = players;
         this.offline = offline;
         this.globals = globals;
+        this.prefixes = prefixes;
+        this.prefixNames = prefixes.longestFirst();
     }
 
     static @Nullable Runnable register(String identifier, String author, String version,
                                        Map<String, Function<Player, @Nullable String>> players,
                                        Map<String, Function<OfflinePlayer, @Nullable String>> offline,
-                                       Map<String, Supplier<@Nullable String>> globals, Logger logger) {
+                                       Map<String, Supplier<@Nullable String>> globals,
+                                       PlaceholderPrefixes prefixes, Logger logger) {
         ApiLink.instanceMethod(PlaceholderExpansion.class, "getPlaceholderAPI", PlaceholderAPIPlugin.class);
         ApiLink.instanceMethod(LocalExpansionManager.class, "getExpansion", PlaceholderExpansion.class, String.class);
-        PapiExpansion expansion = new PapiExpansion(identifier, author, version, players, offline, globals);
+        PapiExpansion expansion = new PapiExpansion(identifier, author, version, players, offline, globals,
+            prefixes);
         if (!expansion.register()) {
             logger.warning("PlaceholderAPI refused the placeholders under the identifier " + identifier + ".");
             return null;
@@ -92,10 +100,30 @@ final class PapiExpansion extends PlaceholderExpansion {
             return player == null ? null : anyPlayer.apply(player);
         }
         Function<Player, @Nullable String> handler = players.get(params);
-        if (handler == null || player == null) {
-            return null;
+        if (handler != null) {
+            Player online = player == null ? null : player.getPlayer();
+            return online == null ? null : handler.apply(online);
         }
-        Player online = player.getPlayer();
-        return online == null ? null : handler.apply(online);
+        for (String prefix : prefixNames) {
+            int end = prefix.length();
+            if (params.length() > end && params.charAt(end) == '_' && params.startsWith(prefix)) {
+                return prefixed(player, prefix, params.substring(end + 1));
+            }
+        }
+        return null;
+    }
+
+    private @Nullable String prefixed(@Nullable OfflinePlayer player, String prefix, String rest) {
+        Function<String, @Nullable String> global = prefixes.globals().get(prefix);
+        if (global != null) {
+            return global.apply(rest);
+        }
+        BiFunction<OfflinePlayer, String, @Nullable String> anyPlayer = prefixes.offline().get(prefix);
+        if (anyPlayer != null) {
+            return player == null ? null : anyPlayer.apply(player, rest);
+        }
+        BiFunction<Player, String, @Nullable String> handler = prefixes.players().get(prefix);
+        Player online = player == null ? null : player.getPlayer();
+        return handler == null || online == null ? null : handler.apply(online, rest);
     }
 }

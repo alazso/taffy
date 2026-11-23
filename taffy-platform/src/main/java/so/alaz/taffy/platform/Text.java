@@ -17,6 +17,7 @@ import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver;
 import net.kyori.adventure.text.minimessage.tag.standard.StandardTags;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.Nullable;
 
@@ -48,6 +49,13 @@ import java.util.regex.Pattern;
  * {@link #withPlaceholderFormatting()} gives a {@code Text} that also reads formatting tags in what a placeholder
  * returns. Tag names that start with {@code taffy_papi_} are reserved for the render: a supplied value of such a
  * name may be shadowed, and such a tag written in the input may be replaced.
+ *
+ * <p>The methods that take an {@link OfflinePlayer} ask PlaceholderAPI for a player who may be offline, and
+ * {@link #renderGlobal(String)}, {@link #resolveGlobal(String)} and {@link #plainGlobal(String)} ask it for no
+ * player, as a console line or a broadcast template needs. Which placeholders give a value there is up to each
+ * expansion: one that needs an online player returns nothing, and its placeholder then stays as written. Both
+ * render as a render with a viewer does. MiniPlaceholders' audience tags are filled in only for a {@link Player},
+ * so an offline player and no player get its global tags alone.
  *
  * <p>MiniMessage refuses a section sign followed by a legacy code character. Every render therefore converts such
  * a code to its tag, as {@link LegacyText#sectionToMiniMessage} does: in the input and in each value supplied as
@@ -84,7 +92,7 @@ public final class Text {
         .build();
 
     private final MiniMessage mm = MiniMessage.miniMessage();
-    private final @Nullable BiFunction<Player, String, String> placeholderApi;
+    private final @Nullable BiFunction<@Nullable OfflinePlayer, String, String> placeholderApi;
     private final @Nullable Supplier<@Nullable TagResolver> miniPlaceholders;
     private final ThrowLog failures;
     private final boolean placeholderFormatting;
@@ -111,7 +119,7 @@ public final class Text {
     /** Takes each integration's pass directly. {@code null} means the plugin is absent. */
     Text(
         Logger logger,
-        @Nullable BiFunction<Player, String, String> placeholderApi,
+        @Nullable BiFunction<@Nullable OfflinePlayer, String, String> placeholderApi,
         @Nullable Supplier<@Nullable TagResolver> miniPlaceholders
     ) {
         this.failures = new ThrowLog(logger);
@@ -150,7 +158,26 @@ public final class Text {
      * description states.
      */
     public Component render(String input, @Nullable Player viewer) {
-        return renderFilled(input, null, viewer, TagResolver.empty());
+        return renderFilled(input, null, viewer != null, viewer, TagResolver.empty());
+    }
+
+    /**
+     * Renders as {@link #render(String, Player)} does, with the PlaceholderAPI placeholders filled in against a
+     * player who may be offline (when non-null and PlaceholderAPI is present). MiniPlaceholders' audience tags are
+     * filled in only when {@code player} is a {@link Player}. PlaceholderAPI expansions run on the calling thread.
+     */
+    public Component render(String input, @Nullable OfflinePlayer player) {
+        return renderFilled(input, null, player != null, player, TagResolver.empty());
+    }
+
+    /**
+     * Renders as {@link #render(String, Player)} does, with the PlaceholderAPI placeholders filled in against no
+     * player (when PlaceholderAPI is present): each expansion is asked with a {@code null} player, and a
+     * placeholder that needs one stays as written. MiniPlaceholders' global tags are filled in, its audience tags
+     * are not. PlaceholderAPI expansions run on the calling thread.
+     */
+    public Component renderGlobal(String input) {
+        return renderFilled(input, null, true, null, TagResolver.empty());
     }
 
     /**
@@ -179,7 +206,28 @@ public final class Text {
      *     character in the template
      */
     public Component render(String template, @Nullable Player viewer, TagResolver... values) {
-        return renderFilled(template, null, viewer, TagResolver.resolver(values));
+        return renderFilled(template, null, viewer != null, viewer, TagResolver.resolver(values));
+    }
+
+    /**
+     * Renders a template with values as {@link #render(String, Player, TagResolver...)} does, with the
+     * PlaceholderAPI placeholders filled in against a player who may be offline, as
+     * {@link #render(String, OfflinePlayer)} does.
+     *
+     * @throws ParsingException as {@link #render(String, Player, TagResolver...)} throws it
+     */
+    public Component render(String template, @Nullable OfflinePlayer player, TagResolver... values) {
+        return renderFilled(template, null, player != null, player, TagResolver.resolver(values));
+    }
+
+    /**
+     * Renders a template with values as {@link #render(String, Player, TagResolver...)} does, with the
+     * PlaceholderAPI placeholders filled in against no player, as {@link #renderGlobal(String)} does.
+     *
+     * @throws ParsingException as {@link #render(String, Player, TagResolver...)} throws it
+     */
+    public Component renderGlobal(String template, TagResolver... values) {
+        return renderFilled(template, null, true, null, TagResolver.resolver(values));
     }
 
     /**
@@ -189,25 +237,32 @@ public final class Text {
      * {@code values} takes the place of {@code prefix}.
      */
     Component renderWithPrefix(String template, String prefix, @Nullable Player viewer, TagResolver values) {
-        return renderFilled(template, prefix, viewer, values);
+        return renderFilled(template, prefix, viewer != null, viewer, values);
     }
 
+    /**
+     * Renders for {@code target}, which is {@code null} for no player. PlaceholderAPI is asked only when
+     * {@code fill} is set, and MiniPlaceholders' audience tags read {@code target} only when it is a
+     * {@link Player}.
+     */
     private Component renderFilled(
         String template,
         @Nullable String prefix,
-        @Nullable Player viewer,
+        boolean fill,
+        @Nullable OfflinePlayer target,
         TagResolver values
     ) {
+        Player viewer = target instanceof Player online ? online : null;
         List<Component> outputs = new ArrayList<>();
         List<String> tokens = new ArrayList<>();
         TagResolver supplied = values;
         if (prefix != null) {
             String filled = LegacyText.sectionToMiniMessage(
-                insertPlaceholders(aliasBraces(prefix, values), viewer, outputs, tokens));
+                insertPlaceholders(aliasBraces(prefix, values), fill, target, outputs, tokens));
             // The later resolver answers first, so a supplied value named prefix wins.
             supplied = TagResolver.resolver(Placeholder.parsed("prefix", filled), values);
         }
-        String filled = insertPlaceholders(aliasBraces(template, supplied), viewer, outputs, tokens);
+        String filled = insertPlaceholders(aliasBraces(template, supplied), fill, target, outputs, tokens);
         if (outputs.isEmpty()) {
             return deserialize(filled, viewer, supplied);
         }
@@ -298,12 +353,39 @@ public final class Text {
      * placeholder returned.
      */
     public String resolve(String input, @Nullable Player viewer) {
-        return applyPlaceholders(input, viewer);
+        return applyPlaceholders(input, viewer != null, viewer);
+    }
+
+    /**
+     * Resolves as {@link #resolve(String, Player)} does, against a player who may be offline. Returns the input
+     * unchanged when the player is null.
+     */
+    public String resolve(String input, @Nullable OfflinePlayer player) {
+        return applyPlaceholders(input, player != null, player);
+    }
+
+    /**
+     * Resolves as {@link #resolve(String, Player)} does, against no player: each expansion is asked with a
+     * {@code null} player, and a placeholder that needs one stays as written. Returns the input unchanged when
+     * PlaceholderAPI is absent or throws, and logs the failure.
+     */
+    public String resolveGlobal(String input) {
+        return applyPlaceholders(input, true, null);
     }
 
     /** Renders the input as {@link #render(String, Player)} does and flattens it to plain text. */
     public String plain(String input, @Nullable Player viewer) {
         return PlainTextComponentSerializer.plainText().serialize(render(input, viewer));
+    }
+
+    /** Renders the input as {@link #render(String, OfflinePlayer)} does and flattens it to plain text. */
+    public String plain(String input, @Nullable OfflinePlayer player) {
+        return PlainTextComponentSerializer.plainText().serialize(render(input, player));
+    }
+
+    /** Renders the input as {@link #renderGlobal(String)} does and flattens it to plain text. */
+    public String plainGlobal(String input) {
+        return PlainTextComponentSerializer.plainText().serialize(renderGlobal(input));
     }
 
     /**
@@ -382,20 +464,22 @@ public final class Text {
     }
 
     /**
-     * Replaces each run between two {@code %} signs that PlaceholderAPI resolves for {@code viewer} with a
-     * generated tag, and adds what the placeholder returned to {@code outputs}, and the run as written to
-     * {@code tokens}, at the index the tag names. A run PlaceholderAPI returns unchanged stays as written, and its
-     * closing {@code %} may open the next run. When PlaceholderAPI is absent or throws, which is logged, or the
-     * viewer is null, the input is returned unchanged and both lists are left as they were.
+     * Replaces each run between two {@code %} signs that PlaceholderAPI resolves for {@code target}, which is
+     * {@code null} for no player, with a generated tag, and adds what the placeholder returned to {@code outputs},
+     * and the run as written to {@code tokens}, at the index the tag names. A run PlaceholderAPI returns unchanged
+     * stays as written, and its closing {@code %} may open the next run. When PlaceholderAPI is absent or throws,
+     * which is logged, or {@code fill} is not set, the input is returned unchanged and both lists are left as
+     * they were.
      */
     private String insertPlaceholders(
         String input,
-        @Nullable Player viewer,
+        boolean fill,
+        @Nullable OfflinePlayer target,
         List<Component> outputs,
         List<String> tokens
     ) {
         int open = input.indexOf('%');
-        if (viewer == null || placeholderApi == null || open < 0) {
+        if (!fill || placeholderApi == null || open < 0) {
             return input;
         }
         int before = outputs.size();
@@ -404,7 +488,7 @@ public final class Text {
         try {
             for (int close = input.indexOf('%', open + 1); close >= 0; close = input.indexOf('%', open + 1)) {
                 String token = input.substring(open, close + 1);
-                String result = close == open + 1 ? token : placeholderApi.apply(viewer, token);
+                String result = close == open + 1 ? token : placeholderApi.apply(target, token);
                 if (token.equals(result)) {
                     open = close;
                     continue;
@@ -434,12 +518,12 @@ public final class Text {
             : LEGACY.deserialize(result);
     }
 
-    private String applyPlaceholders(String input, @Nullable Player viewer) {
-        if (viewer == null || placeholderApi == null) {
+    private String applyPlaceholders(String input, boolean fill, @Nullable OfflinePlayer target) {
+        if (!fill || placeholderApi == null) {
             return input;
         }
         try {
-            return placeholderApi.apply(viewer, input);
+            return placeholderApi.apply(target, input);
         } catch (LinkageError | RuntimeException ex) {
             failures.warn(PLACEHOLDER_API,
                 "PlaceholderAPI failed while resolving placeholders, so the text is shown without them.", ex);

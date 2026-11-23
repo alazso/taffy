@@ -5,6 +5,7 @@ import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -71,7 +72,7 @@ final class MessagesTest {
     private final List<String> passInputs = new ArrayList<>();
 
     // Stands in for PlaceholderAPI: records each input and resolves %rank% and %tag%.
-    private final BiFunction<Player, String, String> pass = (player, input) -> {
+    private final BiFunction<OfflinePlayer, String, String> pass = (player, input) -> {
         passInputs.add(input);
         return input.replace("%rank%", "VIP").replace("%tag%", "DE");
     };

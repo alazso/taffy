@@ -21,7 +21,8 @@ class PublicApiRulesTest {
                 EconomyLookup.class, EconomyWatcher.class, PermissionProvider.class, LuckPermsPermissions.class,
                 RegionProvider.class, WorldGuardRegions.class, BedrockProvider.class, PluginBedrock.class,
                 FloodgateBedrock.class, GeyserBedrock.class, PlaceholderExpansionBuilder.class,
-                PlaceholderRegistration.class, PapiExpansion.class, MiniExpansion.class)
+                PlaceholderRegistration.class, PapiExpansion.class, MiniExpansion.class, PlaceholderPrefixes.class,
+                PlaceholderCache.class)
             .allSatisfy(type -> assertThat(type.getPackageName()).startsWith(getClass().getPackageName()));
     }
 
