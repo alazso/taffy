@@ -11,7 +11,9 @@
  * the new ones load. {@link so.alaz.taffy.config.RestartKeys} compares a reloaded configuration with the one
  * loaded at startup and names the changed settings that need a restart. {@link so.alaz.taffy.config.YamlFolder}
  * reads a folder in which each {@code .yml} file is one entry, and reports a file that fails without stopping
- * the others.
+ * the others. {@link so.alaz.taffy.config.ConfigProblem} is one warning or error as a record of file, path,
+ * severity, line and fix, which {@link so.alaz.taffy.config.ConfigReader#problems()} and
+ * {@link so.alaz.taffy.config.YamlFolder#loadReport} give beside the lines.
  *
  * <h2>The settings model</h2>
  *

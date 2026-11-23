@@ -11,10 +11,18 @@ import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.Nullable;
+import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.nodes.MappingNode;
+import org.yaml.snakeyaml.nodes.Node;
+import org.yaml.snakeyaml.nodes.NodeTuple;
+import org.yaml.snakeyaml.nodes.ScalarNode;
+import org.yaml.snakeyaml.nodes.Tag;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.StringReader;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.channels.FileChannel;
@@ -209,8 +217,8 @@ public final class Messages {
      * warning names {@code <folder>}.
      *
      * @param folder the name of the folder inside {@code dataFolder}, one path segment such as {@code locales}
-     * @throws IllegalArgumentException when {@code folder} is blank, is {@code .}, or holds {@code /}, {@code \}
-     *     or {@code ..}
+     * @throws IllegalArgumentException when {@code folder} is blank, is {@code .}, or holds {@code /}, {@code \},
+     *     {@code :} or {@code ..}
      * @throws IllegalStateException as {@link #load(Path, Supplier, Logger, String, boolean)} does
      */
     public static Messages load(
@@ -231,8 +239,10 @@ public final class Messages {
      * {@link #load(Path, String, Supplier, Logger, String, boolean)} in these ways:
      *
      * <ul>
-     * <li>The load and each {@link #reload()} write every bundled file whose {@code <folder>/<code>.yml} is absent,
-     *     under the code as {@code bundledLocales} writes it.</li>
+     * <li>The load and each {@link #reload()} write every bundled file whose language has no file in the folder,
+     *     as {@code <folder>/<code>.yml} with the code as {@code bundledLocales} writes it. A file whose name
+     *     reads as the same locale counts as the file of that language, so an owner's {@code pt-BR.yml} or
+     *     {@code PT_br.yml} keeps the bundled {@code pt_BR} from being written beside it.</li>
      * <li>At each step of the lookup, a key the owner's file of that locale lacks is taken from the bundled file of
      *     the same code, before the next step: for {@code pt_br} the order is the owner's {@code pt_br.yml}, the
      *     bundled {@code pt_br}, the owner's {@code pt.yml}, the bundled {@code pt}, the default locale's file,
@@ -249,7 +259,7 @@ public final class Messages {
      * @param bundled        opens the bundled file of a code, a new stream on each call; it is asked for {@code en}
      *                       and for each code of {@code bundledLocales} as written there
      * @throws IllegalArgumentException when {@code folder} or a code is blank, is {@code .}, or holds {@code /},
-     *     {@code \} or {@code ..}, or when two codes read as one locale
+     *     {@code \}, {@code :} or {@code ..}, or when two codes read as one locale
      * @throws IllegalStateException when a bundled file is missing, is not valid UTF-8 or is not valid YAML, or
      *     when {@link Relocation#check()} fails, because the plugin's jar holds Taffy in its original package
      */
@@ -335,7 +345,7 @@ public final class Messages {
     /** {@code value} when it is one path segment that names a file or folder, as a load requires. */
     private static String segment(String value, String what) {
         if (value.isBlank() || value.equals(".") || value.contains("..") || value.indexOf('/') >= 0
-            || value.indexOf('\\') >= 0) {
+            || value.indexOf('\\') >= 0 || value.indexOf(':') >= 0) {
             throw new IllegalArgumentException("the " + what + " '" + value + "' is not one path segment");
         }
         return value;
@@ -398,8 +408,10 @@ public final class Messages {
 
     /**
      * Reads the language folder again, with the same warnings as the load, and writes {@code lang/en.yml} again when
-     * it is absent, as it writes each other bundled file the load named. The bundled text is not read again. Calls
-     * do not overlap, and a render that runs during a call sees either all the old files or all the new ones.
+     * it is absent, as it writes each other bundled file the load named. The one warning that is not repeated is
+     * the one about keys shown in another language, which a load that names its bundled languages logs once. The
+     * bundled text is not read again. Calls do not overlap, and a render that runs during a call sees either all
+     * the old files or all the new ones.
      */
     public void reload() {
         synchronized (source) {
@@ -470,25 +482,41 @@ public final class Messages {
         }
     }
 
-    /** Writes each bundled file that the folder lacks, and stops at the first one that cannot be written. */
+    /**
+     * Writes each bundled file that the folder lacks, and stops at the first one that cannot be written. After a
+     * load that named its bundled languages, a file whose name reads as the locale of a code counts as its file.
+     */
     private void writeAbsent() {
-        for (String code : source.codes) {
-            Path file = source.folder.resolve(code + EXTENSION);
-            try {
-                Files.createDirectories(source.folder);
-                if (Files.notExists(file)) {
-                    try (InputStream in = source.opener.apply(code)) {
-                        if (in != null) {
-                            Files.copy(in, file);
-                        }
+        String writing = FALLBACK;
+        try {
+            Files.createDirectories(source.folder);
+            Set<String> present = new HashSet<>();
+            if (source.perLocale) {
+                try (DirectoryStream<Path> files = Files.newDirectoryStream(source.folder, "*" + EXTENSION)) {
+                    for (Path file : files) {
+                        String name = file.getFileName().toString();
+                        present.add(code(name.substring(0, name.length() - EXTENSION.length())));
                     }
                 }
-            } catch (IOException failure) {
-                source.logger.warning("Could not write " + source.folderName + "/" + code + EXTENSION + ": "
-                    + failure.getMessage() + ". Messages use the bundled "
-                    + (code.equals(FALLBACK) ? "English text." : "text."));
-                return;
             }
+            for (String code : source.codes) {
+                writing = code;
+                Path file = source.folder.resolve(code + EXTENSION);
+                if (present.contains(code(code)) || !Files.notExists(file)) {
+                    continue;
+                }
+                try (InputStream in = source.opener.apply(code)) {
+                    if (in != null) {
+                        Files.copy(in, file);
+                    }
+                }
+            }
+        } catch (IOException | DirectoryIteratorException failure) {
+            // A failure while iterating arrives unchecked, with the I/O error as its cause.
+            Throwable reason = failure instanceof DirectoryIteratorException ? failure.getCause() : failure;
+            source.logger.warning("Could not write " + source.folderName + "/" + writing + EXTENSION + ": "
+                + reason.getMessage() + ". Messages use the bundled "
+                + (writing.equals(FALLBACK) ? "English text." : "text."));
         }
     }
 
@@ -568,15 +596,18 @@ public final class Messages {
      * written to {@code <name>.tmp} beside the file and moved over it in one step. The file is then read again,
      * with no other file read and no load warning repeated.
      *
-     * <p>Nothing is written, and the list is empty, when the file lacks no key, when the file is absent, or when
-     * the plugin bundles no file of that locale, as with every locale but en after a load that names no bundled
-     * languages: a file is never given the text of another language. A file that is not valid YAML or is not
-     * saved as UTF-8 is left as it is and reported with the warning {@code <folder>/<name> is not valid YAML saved
-     * as UTF-8, so no key was added to it.} A key that cannot stand at the end of the file, as when the file
-     * holds text under a key the bundled file uses as a section, leaves the file as it is with the warning
-     * {@code <folder>/<name> was not changed, because <keys> cannot be added at its end.} A file that cannot be
-     * written is reported as {@code Could not add keys to <folder>/<name>: <reason>.} Calls and reloads do not
-     * overlap.
+     * <p>Nothing is written, and the list is empty, when the file lacks no key, when the file is absent or was
+     * removed since it was read, or when the plugin bundles no file of that locale, as with every locale but en
+     * after a load that names no bundled languages: a file is never given the text of another language. A key the
+     * file writes with no value, as {@code key:} or {@code key: ~}, counts as one the file has and is not added. A
+     * file that is not valid YAML or is not saved as UTF-8 is left as it is and reported with the warning
+     * {@code <folder>/<name> is not valid YAML saved as UTF-8, so no key was added to it.} A file whose end does
+     * not take the keys is left as it is with the warning
+     * {@code <folder>/<name> was not changed, because <keys> cannot be added at its end.}, which lists every key
+     * the file lacks. That is a file that holds text under a key the bundled file uses as a section, one that
+     * ends inside a block scalar with no line break after its last line, one that ends with the document end
+     * marker {@code ...}, and one that writes its keys as a flow mapping in braces. A file that cannot be written
+     * is reported as {@code Could not add keys to <folder>/<name>: <reason>.} Calls and reloads do not overlap.
      *
      * @param locale the language of the file, read as {@link #normalizeLocale} describes
      * @return the keys that were added, in the order of the bundled file; unmodifiable
@@ -592,13 +623,19 @@ public final class Messages {
             }
             String shown = source.folderName + "/" + name;
             Path file = source.folder.resolve(name);
+            if (Files.notExists(file)) {
+                return List.of();
+            }
             byte[] content = bytes(() -> open(file));
             Map<String, List<String>> values = content == null || malformedLine(content) > 0 ? null : values(content);
             if (content == null || values == null) {
                 source.logger.warning(shown + " is not valid YAML saved as UTF-8, so no key was added to it.");
                 return List.of();
             }
-            List<String> added = shipped.keySet().stream().filter(key -> !values.containsKey(key)).toList();
+            Set<String> valueless = valueless(content);
+            List<String> added = shipped.keySet().stream()
+                .filter(key -> !values.containsKey(key) && !valueless.contains(key))
+                .toList();
             if (added.isEmpty()) {
                 return added;
             }
@@ -620,6 +657,37 @@ public final class Messages {
             locales.put(code, source.perLocale ? over(shipped, result) : result);
             source.loaded = new Loaded(locales, loaded.files());
             return added;
+        }
+    }
+
+    /** The dotted keys that {@code content} writes with no value, which {@link #values} leaves out. */
+    private static Set<String> valueless(byte[] content) {
+        Set<String> keys = new HashSet<>();
+        try {
+            LoaderOptions options = new LoaderOptions();
+            options.setCodePointLimit(Integer.MAX_VALUE);
+            valueless("", new Yaml(options).compose(new StringReader(new String(content, StandardCharsets.UTF_8))),
+                keys);
+        } catch (RuntimeException unreadable) {
+            keys.clear();
+        }
+        return keys;
+    }
+
+    private static void valueless(String parent, @Nullable Node node, Set<String> keys) {
+        if (!(node instanceof MappingNode mapping)) {
+            return;
+        }
+        for (NodeTuple entry : mapping.getValue()) {
+            if (!(entry.getKeyNode() instanceof ScalarNode name)) {
+                continue;
+            }
+            String key = parent + name.getValue();
+            if (Tag.NULL.equals(entry.getValueNode().getTag())) {
+                keys.add(key);
+            } else {
+                valueless(key + ".", entry.getValueNode(), keys);
+            }
         }
     }
 
@@ -813,9 +881,10 @@ public final class Messages {
      * Renders the message for {@code key} as {@link #render(Text, Player, String, TagResolver...)} does, with
      * {@code sender} as the viewer when it is a player and with no viewer otherwise, and sends it to {@code sender}
      * as one chat message. A message of several lines is sent as one message with its lines joined by a newline.
-     * An empty message, one whose template is an empty text or a list of no lines, is not sent. A key that no
-     * file has sends the missing-key marker. A {@code Messages} from {@link #withChatPrefix} puts its prefix in
-     * front. Belongs on the thread that owns {@code sender} when it is a player.
+     * An empty message, one whose lines joined by a newline are an empty text (an empty text, a list of no lines
+     * or a list of one empty line), is not sent. A key that no file has sends the missing-key marker. A
+     * {@code Messages} from {@link #withChatPrefix} puts its prefix in front. Belongs on the thread that owns
+     * {@code sender} when it is a player.
      */
     public void send(Text text, CommandSender sender, String key, TagResolver... values) {
         Player viewer = sender instanceof Player player ? player : null;
@@ -830,9 +899,9 @@ public final class Messages {
 
     /**
      * Renders the message for {@code key} as {@link #render(Text, Player, String, TagResolver...)} does, with
-     * {@code player} as the viewer, and shows it to that player as an action bar. An empty message, one whose
-     * template is an empty text or a list of no lines, is not shown, so the action bar the player sees stays. The
-     * prefix of {@link #withChatPrefix} is not added. Belongs on the thread that owns the player.
+     * {@code player} as the viewer, and shows it to that player as an action bar. An empty message, as
+     * {@link #send} describes it, is not shown, so the action bar the player sees stays. The prefix of
+     * {@link #withChatPrefix} is not added. Belongs on the thread that owns the player.
      */
     public void sendActionBar(Text text, Player player, String key, TagResolver... values) {
         List<Map<String, List<String>>> chain = resolutionChain(locale(player));
@@ -871,10 +940,10 @@ public final class Messages {
      * Shows the title written as one lang entry: {@code <key>.title} and {@code <key>.subtitle} are the messages,
      * rendered and shown as {@link #showTitle(Text, Player, String, String, Title.Times, TagResolver...)} does, and
      * {@code <key>.fadeIn}, {@code <key>.stay} and {@code <key>.fadeOut} are the times as whole numbers of ticks.
-     * A time that no file has, or that is not a whole number of at least 0, is the one of
-     * {@link Title#DEFAULT_TIMES}. A {@code <key>.subtitle} that no file has gives an empty subtitle, and a
-     * {@code <key>.title} that no file has shows the missing-key marker. Belongs on the thread that owns the
-     * player.
+     * A time that no file has, that is not a whole number of at least 0, or that is too long to count in
+     * milliseconds, is the one of {@link Title#DEFAULT_TIMES}. A {@code <key>.subtitle} that no file has gives an
+     * empty subtitle, and a {@code <key>.title} that no file has shows the missing-key marker. Belongs on the
+     * thread that owns the player.
      */
     public void showTitle(Text text, Player player, String key, TagResolver... values) {
         List<Map<String, List<String>>> chain = resolutionChain(locale(player));
@@ -893,7 +962,7 @@ public final class Messages {
         }
         try {
             long ticks = Long.parseLong(lines.getFirst().strip());
-            return ticks < 0 ? absent : Ticks.duration(ticks);
+            return ticks < 0 ? absent : Duration.ofMillis(Math.multiplyExact(ticks, Ticks.SINGLE_TICK_DURATION_MS));
         } catch (NumberFormatException | ArithmeticException notTicks) {
             return absent;
         }

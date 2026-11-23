@@ -97,6 +97,10 @@ tasks.withType<Test>().configureEach {
         taffyRoot.dir("taffy-config/src/main"),
         taffyRoot.file("taffy-comficonf/build.gradle.kts"),
         taffyRoot.dir("taffy-comficonf/src/main"),
+        taffyRoot.file("taffy-gui/build.gradle.kts"),
+        taffyRoot.dir("taffy-gui/src/main"),
+        taffyRoot.file("taffy-hooks/build.gradle.kts"),
+        taffyRoot.dir("taffy-hooks/src/main"),
     ).withPropertyName("shadedModules").withPathSensitivity(PathSensitivity.RELATIVE)
     // A test applies this script of Taffy's own build to a build in its own directory.
     inputs.file(taffyRoot.file("gradle/skip-published-releases.gradle.kts"))

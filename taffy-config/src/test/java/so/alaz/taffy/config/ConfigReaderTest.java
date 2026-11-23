@@ -22,6 +22,8 @@ import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static so.alaz.taffy.config.ConfigProblem.Severity.ERROR;
+import static so.alaz.taffy.config.ConfigProblem.Severity.WARNING;
 
 final class ConfigReaderTest {
 
@@ -1287,6 +1289,234 @@ final class ConfigReaderTest {
         assertThat(reader.choice("side", Side.RIGHT)).isEqualTo(Side.RIGHT);
         assertThat(warnings).isEmpty();
         assertThat(reader.readPaths()).containsExactly("count", "ratio", "side");
+    }
+
+    @Test
+    void choiceWithHyphensReadsAHyphenAsAnUnderscore() throws Exception {
+        ConfigReader reader = reader("""
+            hyphens: newest-first
+            mixed: " Newest-FIRST "
+            underscores: newest_first
+            wrong: newest-last
+            """);
+
+        assertThat(reader.choiceWithHyphens("hyphens", Order.OLDEST_FIRST)).isEqualTo(Order.NEWEST_FIRST);
+        assertThat(reader.choiceWithHyphens("mixed", Order.OLDEST_FIRST)).isEqualTo(Order.NEWEST_FIRST);
+        assertThat(reader.choiceWithHyphens("underscores", Order.OLDEST_FIRST)).isEqualTo(Order.NEWEST_FIRST);
+        assertThat(reader.choiceWithHyphens("absent", Order.OLDEST_FIRST)).isEqualTo(Order.OLDEST_FIRST);
+        assertThat(warnings).isEmpty();
+
+        assertThat(reader.choiceWithHyphens("wrong", Order.OLDEST_FIRST)).isEqualTo(Order.OLDEST_FIRST);
+        assertThat(reader.choice("hyphens", Order.OLDEST_FIRST)).isEqualTo(Order.OLDEST_FIRST);
+        assertThat(warnings).containsExactly(
+            "wrong is \"newest-last\"; expected oldest_first or newest_first, so oldest_first is used.",
+            "hyphens is \"newest-first\"; expected oldest_first or newest_first, so oldest_first is used.");
+    }
+
+    @Test
+    void sectionsGivesOneReaderForEachGroupOfKeysInTheList() throws Exception {
+        ConfigReader reader = reader("""
+            rewards:
+              - type: money
+                amount: 50
+              - type: item
+                amount: many
+                unused: 1
+            """);
+
+        List<ConfigReader> rewards = reader.sections("rewards");
+
+        assertThat(rewards).hasSize(2);
+        assertThat(rewards.get(0).text("type", "none")).isEqualTo("money");
+        assertThat(rewards.get(0).integer("amount", 1)).isEqualTo(50);
+        assertThat(rewards.get(1).text("type", "none")).isEqualTo("item");
+        assertThat(rewards.get(1).integer("amount", 1)).isEqualTo(1);
+        assertThat(rewards.get(1).requiredText("id", "name an item")).isNull();
+        assertThat(warnings).containsExactly("rewards[1].amount is \"many\"; expected a whole number, so 1 is used.");
+        assertThat(reader.errors()).containsExactly("rewards[1].id is missing; name an item.");
+        assertThat(rewards.get(1).errors()).isEqualTo(reader.errors());
+        assertThat(reader.readPaths()).containsExactly(
+            "rewards", "rewards[0].type", "rewards[0].amount", "rewards[1].type", "rewards[1].amount",
+            "rewards[1].id");
+        assertThat(rewards.get(0).readPaths()).isEqualTo(reader.readPaths());
+        assertThat(rewards.get(0).unreadKeys()).isEmpty();
+        assertThat(rewards.get(1).unreadKeys()).containsExactly("rewards[1].unused");
+        assertThat(reader.unreadKeys()).isEmpty();
+        assertThatThrownBy(() -> rewards.add(reader)).isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void sectionsSkipsAnEntryThatIsNotAGroupOfKeysAndKeepsTheFileIndex() throws Exception {
+        ConfigReader reader = reader("""
+            costs:
+              - money
+              -
+              - [1, 2]
+              - amount: "x"
+              - {}
+            """);
+
+        List<ConfigReader> costs = reader.sections("costs");
+
+        assertThat(costs).hasSize(2);
+        assertThat(costs.get(0).integer("amount", 3)).isEqualTo(3);
+        assertThat(costs.get(1).root().getKeys(true)).isEmpty();
+        assertThat(warnings).containsExactly(
+            "costs[0] is \"money\", which is not a group of keys, so it is skipped.",
+            "costs[1] is an empty entry, which is not a group of keys, so it is skipped.",
+            "costs[2] is [1, 2], which is not a group of keys, so it is skipped.",
+            "costs[3].amount is \"x\"; expected a whole number, so 3 is used.");
+    }
+
+    @Test
+    void sectionsOfAnAbsentKeyABlankTextAndAnEmptyListIsEmpty() throws Exception {
+        ConfigReader reader = reader("""
+            blank: " "
+            empty: []
+            """);
+
+        assertThat(reader.sections("absent")).isEmpty();
+        assertThat(reader.sections("blank")).isEmpty();
+        assertThat(reader.sections("empty")).isEmpty();
+        assertThat(warnings).isEmpty();
+        assertThat(reader.readPaths()).containsExactly("absent", "blank", "empty");
+    }
+
+    @Test
+    void sectionsOfAValueThatIsNotAListWarnsAndIsEmpty() throws Exception {
+        ConfigReader reader = reader("""
+            text: money
+            group:
+              type: money
+            """);
+
+        assertThat(reader.sections("text")).isEmpty();
+        assertThat(reader.sections("group")).isEmpty();
+        assertThat(warnings).containsExactly(
+            "text is \"money\"; expected a list of groups of keys, so it is ignored.",
+            "group is a group of keys; expected a list of groups of keys, so it is ignored.");
+    }
+
+    @Test
+    void aReaderOfAnEntryReadsTheGroupsAndListsInsideIt() throws Exception {
+        ConfigReader reader = reader("""
+            windows:
+              - name: winter
+                span:
+                  from: 3
+                  days: [mon, [x]]
+                costs:
+                  - amount: 1
+                  - amount: none
+                "": dropped
+            """);
+
+        ConfigReader window = reader.sections("windows").getFirst();
+
+        assertThat(window.children("span")).containsExactly("from", "days");
+        assertThat(window.integer("span.from", 0)).isEqualTo(3);
+        assertThat(window.strings("span.days", List.of())).containsExactly("mon");
+        assertThat(window.children("name")).isEmpty();
+        List<ConfigReader> costs = window.sections("costs");
+        assertThat(costs.get(0).integer("amount", 0)).isEqualTo(1);
+        assertThat(costs.get(1).integer("amount", 0)).isZero();
+        assertThat(window.root().getKeys(false)).containsExactly("name", "span", "costs");
+        assertThat(warnings).containsExactly(
+            "windows[0].span.days has [x], which is not a single value, so it is skipped.",
+            "windows[0].name should hold keys beneath it, so its value is ignored.",
+            "windows[0].costs[1].amount is \"none\"; expected a whole number, so 0 is used.");
+        assertThat(window.unreadKeys()).isEmpty();
+    }
+
+    @Test
+    void aFallbackOutsideItsRangeIsNamedWithThePathOfTheEntry() throws Exception {
+        ConfigReader reward = reader("""
+            rewards:
+              - amount: 1
+            """).sections("rewards").getFirst();
+
+        assertThatThrownBy(() -> reward.integer("amount", 5, 1, 2))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the fallback 5 of rewards[0].amount is not within 1 to 2");
+        assertThatThrownBy(
+            () -> reward.duration("wait", Duration.ofSeconds(5), Duration.ofSeconds(1), Duration.ofSeconds(2)))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the fallback 5s of rewards[0].wait is not within 1s to 2s");
+    }
+
+    @Test
+    void sectionsReadsASectionSetIntoAListByCode() {
+        YamlConfiguration yaml = new YamlConfiguration();
+        ConfigurationSection entry = new YamlConfiguration().createSection("entry");
+        entry.set("amount", "x");
+        yaml.set("costs", List.of(entry));
+
+        ConfigReader cost = new ConfigReader(yaml, warnings::add).sections("costs").getFirst();
+
+        assertThat(cost.integer("amount", 2)).isEqualTo(2);
+        assertThat(warnings).containsExactly("costs[0].amount is \"x\"; expected a whole number, so 2 is used.");
+    }
+
+    @Test
+    void problemsHoldsOneRecordForEachWarningAndErrorInOrder() throws Exception {
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.loadFromString("""
+            limit: many
+            rewards:
+              - amount: -1
+            """);
+        ConfigReader reader = new ConfigReader(yaml, "kits/vip.yml", warnings::add);
+
+        reader.integer("limit", 5);
+        reader.requiredText("title", "give the kit a title");
+        reader.warn("The file is older than the plugin.");
+        ConfigReader reward = reader.sections("rewards").getFirst();
+        reward.warn("amount", "must be above 0, so 1 is used", null);
+        reward.error("type", "is missing", "write money or item");
+        reader.error("Two kits share a slot.");
+
+        assertThat(warnings).containsExactly(
+            "limit is \"many\"; expected a whole number, so 5 is used.",
+            "The file is older than the plugin.",
+            "rewards[0].amount must be above 0, so 1 is used.");
+        assertThat(reader.errors()).containsExactly(
+            "title is missing; give the kit a title.",
+            "rewards[0].type is missing; write money or item.",
+            "Two kits share a slot.");
+        assertThat(reader.problems()).containsExactly(
+            new ConfigProblem("kits/vip.yml", "limit", WARNING,
+                "limit is \"many\"; expected a whole number, so 5 is used.", null),
+            new ConfigProblem("kits/vip.yml", "title", ERROR, "title is missing; give the kit a title.",
+                "give the kit a title"),
+            new ConfigProblem("kits/vip.yml", null, WARNING, "The file is older than the plugin.", null),
+            new ConfigProblem("kits/vip.yml", "rewards[0].amount", WARNING,
+                "rewards[0].amount must be above 0, so 1 is used.", null),
+            new ConfigProblem("kits/vip.yml", "rewards[0].type", ERROR,
+                "rewards[0].type is missing; write money or item.", "write money or item"),
+            new ConfigProblem("kits/vip.yml", null, ERROR, "Two kits share a slot.", null));
+        assertThat(reward.problems()).isEqualTo(reader.problems());
+        assertThat(reader.readPaths()).containsExactly("limit", "title", "rewards");
+        assertThatThrownBy(() -> reader.problems().clear()).isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void aReaderBuiltWithoutASourceGivesProblemsWithoutAFile() throws Exception {
+        ConfigReader reader = reader("flag: maybe\n");
+
+        reader.bool("flag", true);
+
+        assertThat(reader.problems()).containsExactly(new ConfigProblem(null, "flag", WARNING,
+            "flag is \"maybe\"; expected true or false, so true is used.", null));
+        assertThatThrownBy(() -> new ConfigReader(reader.root(), null, warnings::add))
+            .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void aProblemNeedsASeverityAndAMessage() {
+        assertThatThrownBy(() -> new ConfigProblem("a.yml", "key", null, "line", null))
+            .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> new ConfigProblem("a.yml", "key", ERROR, null, null))
+            .isInstanceOf(NullPointerException.class);
     }
 
     private enum Visibility { PRIVATE, PUBLIC, HIDDEN }

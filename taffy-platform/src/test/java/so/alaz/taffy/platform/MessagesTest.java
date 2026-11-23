@@ -28,6 +28,7 @@ import java.nio.file.DirectoryIteratorException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -41,6 +42,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Handler;
 import java.util.logging.LogRecord;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -907,7 +909,7 @@ final class MessagesTest {
 
     @Test
     void aFolderThatIsNotOnePathSegmentIsRefused() {
-        for (String name : List.of("", " ", ".", "..", "a/b", "a\\b", "../lang", "a..b")) {
+        for (String name : List.of("", " ", ".", "..", "a/b", "a\\b", "../lang", "a..b", "C:locales")) {
             assertThatThrownBy(() -> Messages.load(folder, name, bundled(), log.logger, "en", true))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("the folder '" + name + "' is not one path segment");
@@ -1044,6 +1046,113 @@ final class MessagesTest {
     }
 
     @Test
+    void addMissingKeysOfAFileRemovedSinceTheLoadWritesNothing() throws IOException {
+        Messages messages = Messages.load(folder, bundled(), log.logger);
+        Files.delete(folder.resolve("lang/en.yml"));
+
+        assertThat(messages.addMissingKeys()).isEmpty();
+        assertThat(folder.resolve("lang")).isEmptyDirectory();
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void addMissingKeysLeavesTheFileAsItIsWhenTheTemporaryFileCannotBeWritten() throws IOException {
+        Path english = Files.createDirectories(folder.resolve("lang")).resolve("en.yml");
+        Files.writeString(english, "parcel.held: \"Mine\"\n");
+        Messages messages = Messages.load(folder, bundled(), log.logger);
+        log.records.clear();
+        Path temporary = Files.createDirectories(english.resolveSibling("en.yml.tmp"));
+        Files.writeString(temporary.resolve("kept"), "in the way");
+
+        assertThat(messages.addMissingKeys()).isEmpty();
+
+        assertThat(english).hasContent("parcel.held: \"Mine\"\n");
+        assertThat(log.lines()).hasSize(1).first().asString()
+            .startsWith("WARNING Could not add keys to lang/en.yml: ").endsWith(".");
+        assertThat(messages.template(null, "parcel.held")).isEqualTo("Mine");
+
+        Files.delete(temporary.resolve("kept"));
+        log.records.clear();
+
+        assertThat(messages.addMissingKeys()).containsExactly("prefix", "parcel.delivered");
+        assertThat(temporary).doesNotExist();
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void addMissingKeysCountsAKeyWrittenWithNoValueAsPresent() throws IOException {
+        Path english = Files.createDirectories(folder.resolve("lang")).resolve("en.yml");
+        String owned = "prefix:\nparcel:\n  held: ~\n";
+        Files.writeString(english, owned);
+        Messages messages = Messages.load(folder, bundled(), log.logger);
+        log.records.clear();
+
+        assertThat(messages.addMissingKeys()).containsExactly("parcel.delivered");
+
+        assertThat(english).hasContent(owned + "parcel.delivered: \"<prefix>Delivered: <count>.\"\n");
+        assertThat(plain(messages, Locale.ENGLISH, "parcel.held")).isEqualTo("Held: 7.");
+        assertThat(messages.addMissingKeys()).isEmpty();
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void addMissingKeysLeavesAFileWhoseLastValueTheNewLinesWouldChange() throws IOException {
+        Path english = Files.createDirectories(folder.resolve("lang")).resolve("en.yml");
+        for (String owned : List.of("parcel.held: |\n  mine\n  two", "parcel.held: x\n...\n", "{parcel.held: x}\n")) {
+            Files.writeString(english, owned);
+            Messages messages = Messages.load(folder, bundled(), log.logger);
+            log.records.clear();
+
+            assertThat(messages.addMissingKeys()).isEmpty();
+
+            assertThat(english).hasContent(owned);
+            assertThat(log.lines()).containsExactly("WARNING lang/en.yml was not changed, because prefix,"
+                + " parcel.delivered cannot be added at its end.");
+        }
+    }
+
+    @Test
+    void anOwnersFileUnderAnotherSpellingOfABundledCodeIsKeptAsTheFileOfThatLanguage() throws IOException {
+        Path locales = Files.createDirectories(folder.resolve("locales"));
+        Files.writeString(locales.resolve("pt-BR.yml"), "parcel.held: \"Meu: <count>.\"\n");
+        Files.writeString(locales.resolve("DE.yml"), "parcel.held: \"Meins: <count>.\"\n");
+        Map<String, String> jar = Map.of("en", BUNDLED, "de", GERMAN, "pt_BR", "parcel.held: \"Retido: <count>.\"\n");
+
+        Messages messages = Messages.load(
+            folder, "locales", List.of("pt_BR", "de"), code -> supplier(jar.get(code)).get(), log.logger, "en", true);
+        messages.reload();
+
+        try (Stream<Path> files = Files.list(locales)) {
+            assertThat(files.map(file -> file.getFileName().toString()))
+                .containsExactlyInAnyOrder("DE.yml", "en.yml", "pt-BR.yml");
+        }
+        assertThat(plain(messages, Locale.of("pt", "BR"), "parcel.held")).isEqualTo("Meu: 7.");
+        assertThat(plain(messages, Locale.GERMANY, "parcel.held")).isEqualTo("Meins: 7.");
+        assertThat(log.lines()).containsExactly(
+            "WARNING locales/pt-BR.yml lacks parcel.delivered, prefix; those messages are shown in another"
+                + " language.");
+    }
+
+    @Test
+    void aTitleTimeTooLongToCountInMillisecondsIsTheDefaultOne() {
+        Messages messages = Messages.load(folder, supplier("""
+            long:
+              title: "Long"
+              fadeIn: 9223372036854775807
+              stay: 184467440737095517
+              fadeOut: 184467440737095516
+            """), log.logger);
+        Player player = viewer(Locale.ENGLISH);
+
+        messages.showTitle(new Text(log.logger, null, null), player, "long");
+
+        ArgumentCaptor<Title> shown = ArgumentCaptor.forClass(Title.class);
+        verify(player).showTitle(shown.capture());
+        assertThat(shown.getValue().times()).isEqualTo(Title.Times.times(Title.DEFAULT_TIMES.fadeIn(),
+            Title.DEFAULT_TIMES.stay(), Duration.ofMillis(184467440737095516L * 50)));
+    }
+
+    @Test
     void bundledLanguagesAreWrittenAndBackTheOwnersFileOfTheSameCode() throws IOException {
         Path locales = Files.createDirectories(folder.resolve("locales"));
         Files.writeString(locales.resolve("de.yml"), "parcel.held: \"Meins: <count>.\"\n");
@@ -1126,6 +1235,9 @@ final class MessagesTest {
         assertThatThrownBy(() -> Messages.load(folder, "lang", List.of("../de"), english, log.logger, "en", true))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("the bundled locale '../de' is not one path segment");
+        assertThatThrownBy(() -> Messages.load(folder, "lang", List.of("C:de"), english, log.logger, "en", true))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("the bundled locale 'C:de' is not one path segment");
         assertThat(folder).isEmptyDirectory();
     }
 
@@ -1160,6 +1272,8 @@ final class MessagesTest {
               - "two {name}"
             quiet: ""
             none: []
+            blank:
+              - ""
             """), log.logger);
         Text text = new Text(log.logger, pass, null);
         Player player = viewer(Locale.ENGLISH);
@@ -1170,6 +1284,7 @@ final class MessagesTest {
         messages.send(text, player, "pages", Placeholder.unparsed("name", "Ann"));
         messages.send(text, player, "quiet");
         messages.send(text, player, "none");
+        messages.send(text, player, "blank");
         messages.send(text, console, "absent");
 
         ArgumentCaptor<Component> toPlayer = ArgumentCaptor.forClass(Component.class);

@@ -13,7 +13,8 @@ class PublicApiRulesTest {
         assertThat(ApiRules.classes(StrictYaml.class))
             .contains(StrictYaml.class, RestartKeys.class, ConfigLoadException.class, ConfigLoader.class,
                 ConfigReader.class, ConfigHolder.class, ConfigHolder.Loader.class, YamlFolder.class,
-                YamlFolder.Parser.class, YamlFolder.Loaded.class)
+                YamlFolder.Parser.class, YamlFolder.Loaded.class, YamlFolder.ReportingParser.class,
+                YamlFolder.Parsed.class, YamlFolder.Report.class, ConfigProblem.class, ConfigProblem.Severity.class)
             .allSatisfy(type -> assertThat(type.getPackageName()).startsWith(getClass().getPackageName()));
     }
 

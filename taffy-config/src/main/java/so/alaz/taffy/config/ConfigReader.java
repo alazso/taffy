@@ -1,6 +1,7 @@
 package so.alaz.taffy.config;
 
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.MemoryConfiguration;
 import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.Durations;
 
@@ -18,6 +19,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -28,7 +30,8 @@ import java.util.function.Function;
  * <p>Problems come in two tiers. A warning is passed to the consumer given to the constructor at once: the
  * value is replaced with the fallback of the call and reading goes on. An error is collected and returned by
  * {@link #errors()}, and the caller decides what a configuration with errors means. No method throws for a
- * value it cannot use.
+ * value it cannot use. {@link #problems()} gives each warning and each error as a {@link ConfigProblem} with its
+ * file, path, severity, line and fix, for code that lists or counts them.
  *
  * <p>A warning about a value has the form {@code <path> is <value>; expected <what>, so <fallback> is used.},
  * with the value written as {@link #describe} writes it. A key that is absent gives the fallback with no
@@ -36,7 +39,8 @@ import java.util.function.Function;
  *
  * <p>A blank text (empty or only whitespace) reads as an absent key in {@link #integer}, {@link #optionalInteger},
  * {@link #whole}, {@link #decimal}, {@link #bool}, {@link #duration}, {@link #durations}, {@link #strings},
- * {@link #parsed} and {@link #choice}: it gives the fallback with no warning. {@link #text}, {@link #quoted} and
+ * {@link #sections}, {@link #parsed}, {@link #choice} and {@link #choiceWithHyphens}: it gives the fallback with
+ * no warning. {@link #text}, {@link #quoted} and
  * {@link #strictText} return a blank text as it is, and {@link #requiredText} reports it as an error.
  *
  * <p>Every reader that gives text reads an unquoted date such as {@code 2026-12-31} as that date written
@@ -48,7 +52,8 @@ import java.util.function.Function;
  * {@code 2027-01-01}, with no warning.
  *
  * <p>Every path a method is called with is recorded and returned by {@link #readPaths()}, whether or not the
- * key exists. Paths are dotted and relative to the section given to the constructor.
+ * key exists. Paths are dotted and relative to the section given to the constructor. A reader that
+ * {@link #sections} gives takes paths relative to its entry and records them in the form {@code rewards[0].type}.
  *
  * <p>The two list readers differ. {@link #durations} treats an empty list as invalid and uses its whole
  * fallback when one entry is not a duration. {@link #strings} accepts an empty list and skips only the entries
@@ -68,17 +73,52 @@ public final class ConfigReader {
     private static final String LONG_RANGE = WHOLE + " from " + Long.MIN_VALUE + " to " + Long.MAX_VALUE;
 
     private final ConfigurationSection root;
+    private final @Nullable String source;
+    private final String prefix;
     private final Consumer<String> warnings;
-    private final Set<String> read = new LinkedHashSet<>();
-    private final List<String> errors = new ArrayList<>();
+    private final Set<String> read;
+    private final List<String> errors;
+    private final List<ConfigProblem> problems;
 
     /**
+     * A reader whose {@link #problems()} name no file.
+     *
      * @param root the section every path is relative to
      * @param warnings receives each warning line as it is found, on the calling thread
      */
     public ConfigReader(ConfigurationSection root, Consumer<String> warnings) {
+        this(root, null, "", warnings, new LinkedHashSet<>(), new ArrayList<>(), new ArrayList<>());
+    }
+
+    /**
+     * A reader whose {@link #problems()} name {@code source} as their file. The lines the consumer and
+     * {@link #errors()} receive are those of {@link #ConfigReader(ConfigurationSection, Consumer)}: {@code source}
+     * is not written into them.
+     *
+     * @param root the section every path is relative to
+     * @param source the name of the file {@code root} was read from, such as {@code config.yml}
+     * @param warnings receives each warning line as it is found, on the calling thread
+     */
+    public ConfigReader(ConfigurationSection root, String source, Consumer<String> warnings) {
+        this(root, Objects.requireNonNull(source, "source"), "", warnings, new LinkedHashSet<>(),
+            new ArrayList<>(), new ArrayList<>());
+    }
+
+    private ConfigReader(
+        ConfigurationSection root,
+        @Nullable String source,
+        String prefix,
+        Consumer<String> warnings,
+        Set<String> read,
+        List<String> errors,
+        List<ConfigProblem> problems) {
         this.root = root;
+        this.source = source;
+        this.prefix = prefix;
         this.warnings = warnings;
+        this.read = read;
+        this.errors = errors;
+        this.problems = problems;
     }
 
     /**
@@ -111,7 +151,7 @@ public final class ConfigReader {
     public int integer(String path, int fallback, int min, int max) {
         if (min > max || fallback < min || fallback > max) {
             throw new IllegalArgumentException(
-                "the fallback " + fallback + " of " + path + " is not within " + min + " to " + max);
+                "the fallback " + fallback + " of " + at(path) + " is not within " + min + " to " + max);
         }
         Object value = present(path);
         if (value == null) {
@@ -162,7 +202,8 @@ public final class ConfigReader {
      * The constant of the enum of {@code fallback} named by the text at {@code path}, or {@code fallback} when
      * the key is absent. The text is matched without its surrounding whitespace and in any letter case, using
      * {@link Locale#ROOT}, so the result does not depend on the default locale. Apart from letter case a name
-     * matches only as the constant is written: a hyphen does not stand for an underscore.
+     * matches only as the constant is written: a hyphen does not stand for an underscore here, and does in
+     * {@link #choiceWithHyphens}.
      *
      * <p>A text that names no constant, a number, {@code true}/{@code false}, a list and a group of keys each
      * give {@code fallback} and the warning {@code <path> is <value>; expected a, b or c, so <fallback> is
@@ -175,6 +216,19 @@ public final class ConfigReader {
      * the value in quotes, for example "<constant>".}
      */
     public <E extends Enum<E>> E choice(String path, E fallback) {
+        return choose(path, fallback, false);
+    }
+
+    /**
+     * Reads as {@link #choice} does, and a hyphen in the text also stands for an underscore, so
+     * {@code complete-on-close} names {@code COMPLETE_ON_CLOSE} as {@code complete_on_close} does. The warning
+     * is the one of {@link #choice}, with the constants written with their underscores.
+     */
+    public <E extends Enum<E>> E choiceWithHyphens(String path, E fallback) {
+        return choose(path, fallback, true);
+    }
+
+    private <E extends Enum<E>> E choose(String path, E fallback, boolean hyphens) {
         Object value = present(path);
         if (value == null) {
             return fallback;
@@ -182,6 +236,9 @@ public final class ConfigReader {
         E[] constants = fallback.getDeclaringClass().getEnumConstants();
         if (value instanceof String text) {
             String wanted = text.trim().toUpperCase(Locale.ROOT);
+            if (hyphens) {
+                wanted = wanted.replace('-', '_');
+            }
             for (E constant : constants) {
                 if (constant.name().toUpperCase(Locale.ROOT).equals(wanted)) {
                     return constant;
@@ -196,8 +253,8 @@ public final class ConfigReader {
         String expected = last == 0
             ? names.getFirst()
             : String.join(", ", names.subList(0, last)) + " or " + names.get(last);
-        String line = path + " is " + describe(value) + "; expected " + expected + ", so " + lowerCase(fallback)
-            + " is used.";
+        String line = at(path) + " is " + describe(value) + "; expected " + expected + ", so "
+            + lowerCase(fallback) + " is used.";
         if (value instanceof Boolean flag) {
             Set<String> words = flag ? YAML_TRUE : YAML_FALSE;
             for (E constant : constants) {
@@ -208,7 +265,7 @@ public final class ConfigReader {
                 }
             }
         }
-        warn(line);
+        warnAt(path, line);
         return fallback;
     }
 
@@ -239,14 +296,14 @@ public final class ConfigReader {
     public @Nullable String requiredText(String path, String fix) {
         Object value = value(path);
         if (isDateTime(value)) {
-            error(path + QUOTE_DATE_TIME + ".");
+            errorAt(path, at(path) + QUOTE_DATE_TIME + ".", null);
             return null;
         }
         String text = singleText(value);
         if (text != null && !text.isBlank()) {
             return text;
         }
-        error(path + (value == null ? " is missing" : " is " + describe(value)) + "; " + fix + ".");
+        errorAt(path, at(path) + (value == null ? " is missing" : " is " + describe(value)) + "; " + fix + ".", fix);
         return null;
     }
 
@@ -263,14 +320,14 @@ public final class ConfigReader {
             return fallback;
         }
         if (isDateTime(value)) {
-            error(path + QUOTE_DATE_TIME + ".");
+            errorAt(path, at(path) + QUOTE_DATE_TIME + ".", null);
             return null;
         }
         String text = singleText(value);
         if (text != null) {
             return text;
         }
-        error(path + " is " + describe(value) + "; expected " + expected + ".");
+        errorAt(path, at(path) + " is " + describe(value) + "; expected " + expected + ".", null);
         return null;
     }
 
@@ -287,7 +344,7 @@ public final class ConfigReader {
             return fallback;
         }
         if (isDateTime(value)) {
-            warn(path + QUOTE_DATE_TIME + ", so " + fallback + " is used.");
+            warnAt(path, at(path) + QUOTE_DATE_TIME + ", so " + fallback + " is used.");
             return fallback;
         }
         String text = singleText(value);
@@ -304,8 +361,8 @@ public final class ConfigReader {
     public String quoted(String path, String fallback) {
         Object value = value(path);
         if (value instanceof Number || value instanceof Boolean || value instanceof Date) {
-            error(path + " must be in quotes, because YAML changes an unquoted value it reads as a number, a date"
-                + " or true/false.");
+            errorAt(path, at(path) + " must be in quotes, because YAML changes an unquoted value it reads as a"
+                + " number, a date or true/false.", null);
             return fallback;
         }
         return text(path, fallback);
@@ -357,13 +414,13 @@ public final class ConfigReader {
      */
     public Duration duration(String path, Duration fallback, Duration min, Duration max) {
         if (min.compareTo(max) > 0 || fallback.compareTo(min) < 0 || fallback.compareTo(max) > 0) {
-            throw new IllegalArgumentException("the fallback " + Durations.format(fallback) + " of " + path
+            throw new IllegalArgumentException("the fallback " + Durations.format(fallback) + " of " + at(path)
                 + " is not within " + Durations.format(min) + " to " + Durations.format(max));
         }
         Duration value = duration(path, fallback);
         if (value.compareTo(min) < 0 || value.compareTo(max) > 0) {
-            warn(path + " is " + Durations.format(value) + "; expected " + Durations.format(min) + " to "
-                + Durations.format(max) + ", so " + Durations.format(fallback) + " is used.");
+            warnAt(path, at(path) + " is " + Durations.format(value) + "; expected " + Durations.format(min)
+                + " to " + Durations.format(max) + ", so " + Durations.format(fallback) + " is used.");
             return fallback;
         }
         return value;
@@ -424,10 +481,11 @@ public final class ConfigReader {
             if (text != null) {
                 strings.add(text);
             } else if (isDateTime(entry)) {
-                warn(path + " has " + describe(entry) + ", which" + QUOTE_DATE_TIME + ", so it is skipped.");
+                warnAt(path, at(path) + " has " + describe(entry) + ", which" + QUOTE_DATE_TIME
+                    + ", so it is skipped.");
             } else {
-                warn(path + " has " + (entry == null ? "an empty entry" : describe(entry)) + ", which is not a"
-                    + " single value, so it is skipped.");
+                warnAt(path, at(path) + " has " + (entry == null ? "an empty entry" : describe(entry))
+                    + ", which is not a single value, so it is skipped.");
             }
         }
         return List.copyOf(strings);
@@ -479,7 +537,7 @@ public final class ConfigReader {
         }
         String shown = fallbackText == null ? String.valueOf(fallback) : fallbackText;
         if (isDateTime(value)) {
-            warn(path + QUOTE_DATE_TIME + ", so " + shown + " is used.");
+            warnAt(path, at(path) + QUOTE_DATE_TIME + ", so " + shown + " is used.");
             return fallback;
         }
         String text = singleText(value);
@@ -501,42 +559,162 @@ public final class ConfigReader {
      * {@code <path> should hold keys beneath it, so its value is ignored.}
      */
     public Set<String> children(String path) {
-        read.add(path);
+        read.add(at(path));
         ConfigurationSection section = root.getConfigurationSection(path);
         if (section != null) {
             return section.getKeys(false);
         }
         if (root.contains(path)) {
-            warn(path + " should hold keys beneath it, so its value is ignored.");
+            warnAt(path, at(path) + " should hold keys beneath it, so its value is ignored.");
         }
         return Set.of();
     }
 
+    /**
+     * One reader for each group of keys in the list at {@code path}, in file order, such as the two entries of
+     * <pre>{@code
+     * rewards:
+     *   - type: money
+     *     amount: 50
+     *   - type: item
+     * }</pre>
+     * Each reader takes its paths relative to its entry and shares this reader's warning consumer,
+     * {@link #errors()}, {@link #problems()} and {@link #readPaths()}. It writes a key as
+     * {@code <path>[<index>].<key>} in every warning, error, problem and read path, with the index of the entry
+     * in the file counted from 0, as in {@code rewards[1].type}. The reader of an entry gives the readers of a
+     * list inside that entry the same way, as in {@code rewards[1].costs[0].amount}. Its {@link #root()} holds
+     * the keys of the entry, and its {@link #unreadKeys()} lists the unread keys of the entry in that form. A
+     * key written {@code ""} inside an entry cannot be read: it is left out of the entry without a warning and is
+     * not among its unread keys.
+     *
+     * <p>An absent key and an empty list give an empty list. An entry that is not a group of keys is skipped
+     * with the warning {@code <path>[<index>] is <entry>, which is not a group of keys, so it is skipped.},
+     * with an entry left empty written as {@code an empty entry}, and the other entries keep their index. A
+     * value that is not a list gives an empty list and the warning
+     * {@code <path> is <value>; expected a list of groups of keys, so it is ignored.}
+     *
+     * @return an unmodifiable list
+     */
+    public List<ConfigReader> sections(String path) {
+        Object value = present(path);
+        if (value == null) {
+            return List.of();
+        }
+        if (!(value instanceof List<?> list)) {
+            warnAt(path, at(path) + " is " + describe(value) + "; expected a list of groups of keys, so it is"
+                + " ignored.");
+            return List.of();
+        }
+        List<ConfigReader> readers = new ArrayList<>();
+        int index = 0;
+        for (Object entry : list) {
+            String entryPath = path + "[" + index++ + "]";
+            ConfigurationSection section = entry instanceof Map<?, ?> map ? section(map)
+                : entry instanceof ConfigurationSection given ? given : null;
+            if (section == null) {
+                warnAt(entryPath, at(entryPath) + " is " + (entry == null ? "an empty entry" : describe(entry))
+                    + ", which is not a group of keys, so it is skipped.");
+                continue;
+            }
+            readers.add(new ConfigReader(section, source, at(entryPath) + ".", warnings, read, errors, problems));
+        }
+        return List.copyOf(readers);
+    }
+
+    private static ConfigurationSection section(Map<?, ?> map) {
+        MemoryConfiguration section = new MemoryConfiguration();
+        fill(section, map);
+        return section;
+    }
+
+    private static void fill(ConfigurationSection section, Map<?, ?> map) {
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            String key = String.valueOf(entry.getKey());
+            // Bukkit refuses an empty path, so a key written "" can be neither stored nor read.
+            if (key.isEmpty()) {
+                continue;
+            }
+            if (entry.getValue() instanceof Map<?, ?> nested) {
+                fill(section.createSection(key), nested);
+            } else {
+                section.set(key, entry.getValue());
+            }
+        }
+    }
+
     /** Whether {@code path} is absent or holds a group of keys. */
     public boolean absentOrSection(String path) {
-        read.add(path);
+        read.add(at(path));
         return !root.contains(path) || root.isConfigurationSection(path);
     }
 
     /** Whether {@code path} holds a group of keys. */
     public boolean isSection(String path) {
-        read.add(path);
+        read.add(at(path));
         return root.isConfigurationSection(path);
     }
 
-    /** Passes {@code message} to the warning consumer. */
+    /**
+     * Passes {@code message} to the warning consumer and adds a {@link ConfigProblem.Severity#WARNING} record
+     * with that message, no path and no fix to {@link #problems()}.
+     */
     public void warn(String message) {
-        warnings.accept(message);
+        report(ConfigProblem.Severity.WARNING, null, message, null);
     }
 
-    /** Adds {@code message} to {@link #errors()}. */
+    /**
+     * A warning of the plugin's own check on the key at {@code path}. The line is {@code <path> <message>.}, or
+     * {@code <path> <message>; <fix>.} with a fix, where the path is written as this reader writes it in its
+     * own warnings. The line goes to the warning consumer, and a {@link ConfigProblem.Severity#WARNING} record
+     * with the line, that path and {@code fix} is added to {@link #problems()}. Nothing is recorded as read.
+     *
+     * @param path the key, relative to this reader as in every other call
+     * @param message what is wrong, as it reads after the path, without a full stop at the end, such as
+     *     {@code must be above 0}
+     * @param fix what the owner has to do, without a full stop at the end, or {@code null}
+     */
+    public void warn(String path, String message, @Nullable String fix) {
+        report(ConfigProblem.Severity.WARNING, at(path), line(path, message, fix), fix);
+    }
+
+    /**
+     * Adds {@code message} to {@link #errors()} and a {@link ConfigProblem.Severity#ERROR} record with that
+     * message, no path and no fix to {@link #problems()}.
+     */
     public void error(String message) {
-        errors.add(message);
+        report(ConfigProblem.Severity.ERROR, null, message, null);
+    }
+
+    /**
+     * An error of the plugin's own check on the key at {@code path}. The line is built as
+     * {@link #warn(String, String, String)} builds it and added to {@link #errors()}, and a
+     * {@link ConfigProblem.Severity#ERROR} record with the line, that path and {@code fix} is added to
+     * {@link #problems()}. Nothing is recorded as read.
+     *
+     * @param path the key, relative to this reader as in every other call
+     * @param message what is wrong, as it reads after the path, without a full stop at the end
+     * @param fix what the owner has to do, without a full stop at the end, or {@code null}
+     */
+    public void error(String path, String message, @Nullable String fix) {
+        report(ConfigProblem.Severity.ERROR, at(path), line(path, message, fix), fix);
     }
 
     /** An unmodifiable copy of the errors collected so far, in the order they were added. */
     public List<String> errors() {
         return List.copyOf(errors);
+    }
+
+    /**
+     * An unmodifiable copy of one record for each warning and each error so far, in the order they were found.
+     * The message of a record is the line the warning consumer or {@link #errors()} received. Its file is the
+     * source given to {@link #ConfigReader(ConfigurationSection, String, Consumer)}, or {@code null} for a
+     * reader built without one. Its path is the key the line names, written as the line writes it, or
+     * {@code null} for {@link #warn(String)} and {@link #error(String)}. Its fix is the one given to
+     * {@link #requiredText}, {@link #warn(String, String, String)} or {@link #error(String, String, String)},
+     * and {@code null} for every other line.
+     */
+    public List<ConfigProblem> problems() {
+        return List.copyOf(problems);
     }
 
     /**
@@ -559,6 +737,7 @@ public final class ConfigReader {
     public List<String> unreadKeys() {
         return root.getKeys(true).stream()
             .filter(path -> !root.isConfigurationSection(path))
+            .map(this::at)
             .filter(path -> !read.contains(path))
             .toList();
     }
@@ -573,7 +752,7 @@ public final class ConfigReader {
      * {@link List} for a list, the value itself for a single value, or {@code null} when the key is absent.
      */
     public @Nullable Object value(String path) {
-        read.add(path);
+        read.add(at(path));
         return root.isConfigurationSection(path) ? root.getConfigurationSection(path) : root.get(path);
     }
 
@@ -664,6 +843,33 @@ public final class ConfigReader {
     }
 
     private void warnInvalid(String path, Object value, String expected, String fallback) {
-        warn(path + " is " + describe(value) + "; expected " + expected + ", so " + fallback + " is used.");
+        warnAt(path, at(path) + " is " + describe(value) + "; expected " + expected + ", so " + fallback
+            + " is used.");
+    }
+
+    /** {@code path} as the lines, the problems and the read paths write it. */
+    private String at(String path) {
+        return prefix + path;
+    }
+
+    private String line(String path, String message, @Nullable String fix) {
+        return at(path) + " " + message + (fix == null ? "" : "; " + fix) + ".";
+    }
+
+    private void warnAt(String path, String line) {
+        report(ConfigProblem.Severity.WARNING, at(path), line, null);
+    }
+
+    private void errorAt(String path, String line, @Nullable String fix) {
+        report(ConfigProblem.Severity.ERROR, at(path), line, fix);
+    }
+
+    private void report(ConfigProblem.Severity severity, @Nullable String path, String line, @Nullable String fix) {
+        problems.add(new ConfigProblem(source, path, severity, line, fix));
+        if (severity == ConfigProblem.Severity.ERROR) {
+            errors.add(line);
+        } else {
+            warnings.accept(line);
+        }
     }
 }

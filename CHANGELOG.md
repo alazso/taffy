@@ -9,14 +9,16 @@ All notable changes to Taffy are documented here. This project follows
 - `Messages.load(Path dataFolder, String folder, Supplier<InputStream> bundled, Logger, String defaultLocale,
   boolean perPlayer)` reads the language files from `dataFolder/<folder>` in place of `dataFolder/lang`: the
   bundled English file is written to `<folder>/en.yml`, and every warning names `<folder>`. The folder is one
-  path segment, and a blank one, `.`, or one that holds `/`, `\` or `..` throws `IllegalArgumentException`. The
-  other loads keep `lang`, and `Messages.FOLDER` is still `lang`.
+  path segment, and a blank one, `.`, or one that holds `/`, `\`, `:` or `..` throws `IllegalArgumentException`.
+  The other loads keep `lang`, and `Messages.FOLDER` is still `lang`.
 - `Messages.load(Path dataFolder, String folder, Collection<String> bundledLocales,
   Function<String, InputStream> bundled, Logger, String defaultLocale, boolean perPlayer)` loads the messages of
   a plugin that bundles more languages than English. `bundled` is asked for `en` and for each code as
-  `bundledLocales` writes it. The load and each `reload()` write every bundled file whose `<folder>/<code>.yml`
-  is absent. At each step of the lookup, a key the owner's file lacks is taken from the bundled file of the same
-  code before the next step, so a `de.yml` kept from an older release serves a new key in German. A bundled
+  `bundledLocales` writes it. The load and each `reload()` write every bundled file whose language has no file
+  in the folder, as `<folder>/<code>.yml`; a file whose name reads as the same locale, such as an owner's
+  `pt-BR.yml` for the code `pt_BR`, counts as that file, so no second file is written beside it. At each step
+  of the lookup, a key the owner's file lacks is taken from the bundled file of the same code before the next
+  step, so a `de.yml` kept from an older release serves a new key in German. A bundled
   language is served when its file is gone as well, and `loadedLanguages()` lists it. The warning about the keys
   a file lacks lists only the keys shown in another language, as `<folder>/<name> lacks <keys>; those messages
   are shown in another language.`, and is logged once for each file and list of keys while the server runs. A
@@ -30,16 +32,21 @@ All notable changes to Taffy are documented here. This project follows
   A key is added in its dotted form, such as `shop.sold: "..."`. The new content is written to `<name>.tmp`
   beside the file and moved over it in one step, and the file is then read again. A file that is not valid YAML
   or is not saved as UTF-8 is left as it is, with the warning `<folder>/<name> is not valid YAML saved as UTF-8,
-  so no key was added to it.` Nothing calls it for the plugin: a plugin calls it at enable, behind its own
-  setting.
+  so no key was added to it.` A key the file writes with no value, as `key:` or `key: ~`, counts as one it has
+  and is not added. A file whose end does not take the keys (it ends inside a block scalar with no final line
+  break, ends with the document end marker `...`, writes its keys as a flow mapping, or holds text under a key
+  the bundled file uses as a section) is left as it is, with the warning `<folder>/<name> was not changed,
+  because <keys> cannot be added at its end.` Nothing calls it for the plugin: a plugin calls it at enable,
+  behind its own setting.
 - `Messages` sends by lang key: `send(Text, CommandSender, String key, TagResolver...)` as one chat message,
   `sendActionBar(Text, Player, String key, TagResolver...)` and
   `showTitle(Text, Player, String titleKey, String subtitleKey, Title.Times, TagResolver...)`. Each renders as
   `render(Text, Player, String, TagResolver...)` does and belongs on the thread that owns the player. An empty
-  message, one whose template is an empty text or a list of no lines, is not sent, and a title is not shown when
+  message, one whose lines joined by a newline are an empty text, is not sent, and a title is not shown when
   its title and subtitle are both empty. `showTitle(Text, Player, String key, TagResolver...)` shows a title
   written as one lang entry: `<key>.title`, `<key>.subtitle`, and `<key>.fadeIn`, `<key>.stay` and
-  `<key>.fadeOut` as whole numbers of ticks, each `Title.DEFAULT_TIMES` when it is absent or not a whole number.
+  `<key>.fadeOut` as whole numbers of ticks, each `Title.DEFAULT_TIMES` when it is absent, not a whole number of
+  at least 0, or too long to count in milliseconds.
 - `Messages.withChatPrefix(Supplier<String> prefix)` returns a `Messages` over the same files that puts a prefix
   from the plugin, such as a `config.yml` setting, in front of each message `send` sends. The prefix is a
   MiniMessage template read on each send and rendered with the message, so a tag it leaves open applies to the
@@ -51,6 +58,52 @@ All notable changes to Taffy are documented here. This project follows
   case, so `{crateName}` is filled by a value named `cratename`. Without it, only names of lower-case letters,
   digits, `_` and `-` are rewritten, as before. A supplied value is inserted as it is either way: a `{name}` or
   a tag inside `Placeholder.unparsed` text is not read again.
+- `ConfigReader.sections(String path)` returns one `ConfigReader` for each group of keys in the list at `path`,
+  in file order, so the entries of a list of rewards, costs or conditions are read with the typed readers. Each
+  reader takes paths relative to its entry and shares the warning consumer, `errors()`, `problems()` and
+  `readPaths()` of the reader it came from. It writes a key as `<path>[<index>].<key>` in every line and read
+  path, with the index of the entry in the file counted from 0, such as `rewards[1].amount`, and gives the
+  readers of a list inside its entry the same way. An entry that is not a group of keys is skipped with the
+  warning `<path>[<index>] is <entry>, which is not a group of keys, so it is skipped.`, where
+  `ConfigurationSection.getMapList` drops it without a word. An absent key, a blank text and an empty list give
+  an empty list, and a value that is not a list gives an empty list and the warning
+  `<path> is <value>; expected a list of groups of keys, so it is ignored.`
+- `ConfigReader.choiceWithHyphens(String path, E fallback)` reads as `choice` does and also reads a hyphen as an
+  underscore, so `complete-on-close` names `COMPLETE_ON_CLOSE`. `choice` still matches a name only as the
+  constant is written.
+- `ConfigProblem` in taffy-config is a record of one warning or error: `file`, `path`, `severity` (`WARNING` or
+  `ERROR`), `message` and `fix`, where `file`, `path` and `fix` can be `null`. `ConfigReader.problems()` returns
+  one record for each warning and each error in the order they were found. The message is the line the warning
+  consumer or `errors()` received, and no line changes. `new ConfigReader(ConfigurationSection root, String
+  source, Consumer<String> warnings)` builds a reader whose records name `source` as their file. The fix is the
+  one given to `requiredText`, and `null` for the other lines of the reader.
+- `ConfigReader.warn(String path, String message, @Nullable String fix)` and
+  `error(String path, String message, @Nullable String fix)` report a check of the plugin's own on one key. The
+  line is `<path> <message>.`, or `<path> <message>; <fix>.` with a fix, with the path written as the reader
+  writes it, and the record carries that path and fix. `warn(String)` and `error(String)` add a record with no
+  path and no fix.
+- `YamlFolder.loadReport(ReportingParser<T> parser)` reads the folder as `load` does and returns a
+  `YamlFolder.Report<T>` of `entries`, `errors` and `problems`. A `ReportingParser` returns a
+  `YamlFolder.Parsed<T>` of the entry and the problems of its file, so a file that loads with warnings keeps its
+  entry and its warnings are listed beside it. A file that fails gives one `ERROR` record with the file name and
+  its line of `errors`, followed by the records of the `ConfigLoadException` its parser threw. The record of a
+  `.yaml` file has the fix `rename it to <name>.yml`. `YamlFolder.Loaded`, `load` and `loadOne` are unchanged.
+- `ConfigLoadException.withProblems(String message, List<ConfigProblem> problems)` builds a failure that carries
+  the problems found before it, and `problems()` returns them. It is empty for a failure built with a
+  constructor, and both constructors are as on `0.4.7`.
+- A Kotlin plugin is a supported build of `so.alaz.taffy.paper-plugin`: applied beside `org.jetbrains.kotlin.jvm`,
+  it compiles the Kotlin sources as Java 25 class files, runs the Kotlin tests under the test defaults and the
+  coverage gate, and shades and relocates Taffy in the Kotlin classes. No convention changes and a Java build is
+  built as on `0.4.7`: Taffy's tests now build such a plugin with the Kotlin Gradle plugin `2.4.21`, with `kotlin`
+  and `kotlinx` relocated by the plugin's own build. A `when` over `Answer`, `Icon` and `EconomyResult.Status`
+  needs no `else` branch. Three limits hold in such a build. Shadow prints a warning for each
+  `META-INF/*.kotlin_module` file on every `shadowJar` run, because the convention sets
+  `DuplicatesStrategy.EXCLUDE`; no module file is dropped. The `org.jetbrains.annotations` and
+  `org.intellij.lang.annotations` classes that `kotlin-stdlib` brings, and the `_COROUTINE` classes and
+  `DebugProbesKt.bin` of `kotlinx-coroutines-core`, stay at the root of the jar. `compileAgainstPaperFloor`
+  compiles the Java sources without the Kotlin output, so it fails with `cannot find symbol` in a plugin whose
+  Java sources name a Kotlin class of the same project. Taffy ships no Kotlin and no coroutine type: a
+  `CoroutineDispatcher` over `Scheduler` is a few lines in the plugin.
 
 ## [0.4.7] - 2026-11-22
 

@@ -54,6 +54,11 @@ class ConventionPluginsTest {
         }
     """
 
+    /** The Kotlin Gradle plugin a Kotlin plugin build applies. It builds on the Gradle of this build's wrapper. */
+    private val kotlin = "2.4.21"
+
+    private val coroutines = "1.11.0"
+
     private val uncovered = """
         package so.alaz.demo;
 
@@ -486,6 +491,258 @@ class ConventionPluginsTest {
                 .contains("com.comficonf.api.ComfiConfApi")
                 .doesNotContain("com/comficonf/api")
             assertThat(bytesOf("so/alaz/demo/Settings.class")).contains("com/comficonf/api/ConfigProvider")
+        }
+    }
+
+    @Test
+    fun aKotlinPluginCompilesShadesRelocatesAndTestsBesideTheKotlinJvmPlugin() {
+        val sourceRoot = File(System.getProperty("taffy.sourceRoot"))
+        val library = projectDirectory.resolve("taffy")
+        val modules = projectDirectory.resolve("modules")
+        val modulesUri = modules.toURI().toString()
+        File(URI(testRepository)).copyRecursively(modules)
+        for (module in listOf("taffy-platform", "taffy-gui", "taffy-hooks")) {
+            sourceRoot.resolve("$module/build.gradle.kts").copyTo(library.resolve("$module/build.gradle.kts"))
+            sourceRoot.resolve("$module/src/main").copyRecursively(library.resolve("$module/src/main"))
+        }
+        sourceRoot.resolve("gradle/libs.versions.toml").copyTo(library.resolve("gradle/libs.versions.toml"))
+        write("taffy/LICENSE", "MIT License\n")
+        write("taffy/gradle.properties", "group=so.alaz.taffy\nversion=${TaffyBuild.VERSION}\n")
+        write(
+            "taffy/settings.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.repositories")
+            }
+            rootProject.name = "taffy"
+            include(":taffy-platform", ":taffy-test", ":taffy-gui", ":taffy-hooks")
+            """,
+        )
+        write("taffy/taffy-test/build.gradle.kts", "plugins {\n    id(\"java-library\")\n}")
+        write(
+            "taffy/build.gradle.kts",
+            """
+            subprojects {
+                plugins.withId("maven-publish") {
+                    configure<PublishingExtension> {
+                        repositories {
+                            maven("$modulesUri") { name = "modules" }
+                        }
+                    }
+                }
+            }
+            """,
+        )
+        runner(
+            library,
+            ":taffy-platform:publishLibraryPublicationToModulesRepository",
+            ":taffy-gui:publishLibraryPublicationToModulesRepository",
+            ":taffy-hooks:publishLibraryPublicationToModulesRepository",
+        ).build()
+
+        project()
+        write(
+            "settings.gradle.kts",
+            """
+            pluginManagement {
+                repositories {
+                    gradlePluginPortal()
+                }
+            }
+            plugins {
+                id("so.alaz.taffy.settings")
+            }
+            rootProject.name = "demo"
+            dependencyResolutionManagement {
+                repositories.withType<MavenArtifactRepository>().matching { it.name.startsWith("alazso") }
+                    .configureEach { url = uri("$modulesUri") }
+            }
+            """,
+        )
+        write(
+            "build.gradle.kts",
+            """
+            plugins {
+                id("so.alaz.taffy.paper-plugin")
+                id("org.jetbrains.kotlin.jvm") version "$kotlin"
+            }
+            dependencies {
+                compileOnly(alaz.paper.api)
+                implementation(alaz.taffy.gui)
+                implementation(alaz.taffy.hooks)
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutines")
+                testImplementation(alaz.junit.jupiter)
+                testRuntimeOnly(alaz.junit.platform.launcher)
+            }
+            coverage {
+                exclusions.addAll("so/alaz/demo/OutcomesKt.class", "so/alaz/demo/GlobalDispatcher.class")
+            }
+            paperPlugin {
+                runtimeLibrary(alaz.hikari)
+            }
+            tasks.shadowJar {
+                relocate("kotlin", "so.alaz.demo.libs.kotlin") {
+                    include("kotlin.**")
+                }
+                relocate("kotlinx", "so.alaz.demo.libs.kotlinx") {
+                    include("kotlinx.**")
+                }
+            }
+            """,
+        )
+        write(
+            "src/main/resources/paper-plugin.yml",
+            "name: Demo\nversion: \"\${version}\"\nloader: so.alaz.demo.DemoLoader\n",
+        )
+        write(
+            "src/main/kotlin/so/alaz/demo/Outcomes.kt",
+            """
+            package so.alaz.demo
+
+            import so.alaz.taffy.gui.Answer
+            import so.alaz.taffy.gui.Icon
+
+            fun label(answer: Answer): String = when (answer) {
+                is Answer.Accept -> "accept"
+                is Answer.Retry -> "retry"
+                is Answer.Later -> "later"
+            }
+
+            fun label(icon: Icon): String = when (icon) {
+                is Icon.Button -> "button"
+                is Icon.Filler -> "filler"
+                is Icon.Real -> "real"
+                is Icon.Saved -> "saved"
+            }
+            """,
+        )
+        write(
+            "src/main/kotlin/so/alaz/demo/Statuses.kt",
+            """
+            package so.alaz.demo
+
+            import so.alaz.taffy.hooks.EconomyResult
+
+            fun label(status: EconomyResult.Status): String = when (status) {
+                EconomyResult.Status.OK -> "ok"
+                EconomyResult.Status.INSUFFICIENT -> "insufficient"
+                EconomyResult.Status.UNSUPPORTED -> "unsupported"
+                EconomyResult.Status.OVERDRAWN -> "overdrawn"
+                EconomyResult.Status.FAILED -> "failed"
+                EconomyResult.Status.NOT_STARTED -> "not started"
+            }
+
+            fun firstLibrary(): String = RuntimeLibraries.COORDINATES[0]
+            """,
+        )
+        write(
+            "src/main/kotlin/so/alaz/demo/GlobalDispatcher.kt",
+            """
+            package so.alaz.demo
+
+            import kotlin.coroutines.CoroutineContext
+            import kotlinx.coroutines.CoroutineDispatcher
+            import kotlinx.coroutines.Dispatchers
+            import kotlinx.coroutines.cancel
+            import so.alaz.taffy.platform.Scheduler
+
+            class GlobalDispatcher(private val scheduler: Scheduler) : CoroutineDispatcher() {
+                override fun dispatch(context: CoroutineContext, block: Runnable) {
+                    if (!scheduler.global(block)) {
+                        context.cancel()
+                        Dispatchers.IO.dispatch(context, block)
+                    }
+                }
+            }
+            """,
+        )
+        write(
+            "src/test/kotlin/so/alaz/demo/StatusesTest.kt",
+            """
+            package so.alaz.demo
+
+            import java.util.Locale
+            import org.junit.jupiter.api.Assertions.assertEquals
+            import org.junit.jupiter.api.Test
+            import so.alaz.taffy.hooks.EconomyResult
+
+            class StatusesTest {
+                @Test
+                fun labelsEveryStatus() {
+                    assertEquals(
+                        listOf("ok", "insufficient", "unsupported", "overdrawn", "failed", "not started"),
+                        EconomyResult.Status.entries.map(::label),
+                    )
+                    assertEquals("com.zaxxer:HikariCP:7.1.0", firstLibrary())
+                    assertEquals("tr", Locale.getDefault().language)
+                }
+            }
+            """,
+        )
+
+        val result = run("build")
+
+        assertThat(result.task(":compileKotlin")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":compileTestKotlin")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.task(":test")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.output).containsPattern("StatusesTest > labelsEveryStatus\\(\\) PASSED")
+        assertThat(result.task(":jacocoTestCoverageVerification")?.outcome).isEqualTo(TaskOutcome.SUCCESS)
+        assertThat(result.output)
+            .`as`("Shadow warns about each module file, since the convention sets DuplicatesStrategy.EXCLUDE")
+            .containsPattern("META-INF/kotlin-stdlib\\.kotlin_module' is matched by .* DuplicatesStrategy is EXCLUDE")
+        assertThat(projectDirectory.resolve("build/reports/jacoco/test/jacocoTestReport.xml").readText())
+            .contains("<class name=\"so/alaz/demo/StatusesKt\"")
+        assertThat(projectDirectory.resolve("build/libs").listFiles()!!.map { it.name })
+            .containsExactly("demo-1.2.3.jar")
+        val shaded = projectDirectory.resolve("build/libs/demo-1.2.3.jar")
+        ZipFile(shaded).use { jar ->
+            val names = jar.entries().asSequence().map { it.name }.toList()
+            assertThat(names).contains(
+                "so/alaz/demo/OutcomesKt.class",
+                "so/alaz/demo/StatusesKt.class",
+                "so/alaz/demo/GlobalDispatcher.class",
+                "so/alaz/demo/RuntimeLibraries.class",
+                "so/alaz/demo/libs/taffy/gui/Answer.class",
+                "so/alaz/demo/libs/taffy/hooks/EconomyResult\$Status.class",
+                "so/alaz/demo/libs/taffy/platform/Scheduler.class",
+                "so/alaz/demo/libs/kotlin/Unit.class",
+                "so/alaz/demo/libs/kotlinx/coroutines/CoroutineDispatcher.class",
+            )
+            assertThat(names).noneMatch {
+                it.startsWith("so/alaz/taffy/") || it.startsWith("kotlin/") || it.startsWith("kotlinx/")
+            }
+            assertThat(names)
+                .`as`("the annotations kotlin-stdlib brings and the debugger files of coroutines keep their names")
+                .contains(
+                    "org/jetbrains/annotations/NotNull.class",
+                    "org/intellij/lang/annotations/Language.class",
+                    "_COROUTINE/ArtificialStackFrames.class",
+                    "DebugProbesKt.bin",
+                )
+            assertThat(names.filter { it.endsWith(".kotlin_module") })
+                .`as`("Shadow writes the module file of each relocated Kotlin module under a name of its own")
+                .containsExactlyInAnyOrder(
+                    "META-INF/so.alaz.demo_demo.shadow.kotlin_module",
+                    "META-INF/kotlin-stdlib.shadow.kotlin_module",
+                    "META-INF/kotlin-stdlib-jdk7.shadow.kotlin_module",
+                    "META-INF/kotlin-stdlib-jdk8.shadow.kotlin_module",
+                    "META-INF/kotlinx-coroutines-core.shadow.kotlin_module",
+                )
+            for (name in listOf("OutcomesKt", "StatusesKt", "GlobalDispatcher")) {
+                val bytes = jar.getInputStream(jar.getEntry("so/alaz/demo/$name.class")).readBytes()
+                assertThat(bytes[7].toInt()).`as`("$name is a Java 25 class file").isEqualTo(69)
+                assertThat(String(bytes, Charsets.ISO_8859_1)).`as`(name)
+                    .contains("so/alaz/demo/libs/taffy/", "so/alaz/demo/libs/kotlin/")
+                    .doesNotContain("so/alaz/taffy/", "Lkotlin/", "Lkotlinx/")
+            }
+        }
+        URLClassLoader(arrayOf(shaded.toURI().toURL()), ClassLoader.getPlatformClassLoader()).use { loader ->
+            val status = loader.loadClass("so.alaz.demo.libs.taffy.hooks.EconomyResult\$Status")
+            val label = loader.loadClass("so.alaz.demo.StatusesKt").getMethod("label", status)
+
+            assertThat(status.enumConstants.map { label.invoke(null, it) }).containsExactly(
+                "ok", "insufficient", "unsupported", "overdrawn", "failed", "not started",
+            )
         }
     }
 

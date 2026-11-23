@@ -448,6 +448,103 @@ final class YamlFolderTest {
             .containsExactly("b.yml is not valid YAML: an anchor is used inside the value it names");
     }
 
+    /** The title of the file read through a reader, with the reader's problems on both ways out. */
+    private static final YamlFolder.ReportingParser<String> REPORTED_TITLE = (id, file, yaml) -> {
+        ConfigReader reader = new ConfigReader(yaml, file, warning -> { });
+        int rows = reader.integer("rows", 3);
+        String title = reader.requiredText("title", "add a title");
+        if (!reader.errors().isEmpty()) {
+            throw ConfigLoadException.withProblems(String.join(" ", reader.errors()), reader.problems());
+        }
+        return new YamlFolder.Parsed<>(title + " " + rows, reader.problems());
+    };
+
+    @Test
+    void loadReportGivesTheWarningsOfLoadedFilesAndARecordForEachFailedFile() throws Exception {
+        write("a.yml", "title: A\nrows: 6\n");
+        write("b.yml", "title: B\nrows: six\n");
+        write("c.yml", "rows: none\n");
+        write("d.yml", "title: [\n");
+        write("e.yaml", "title: E\n");
+        write("f.yml", "title: boom\n");
+        YamlFolder.ReportingParser<String> parser = (id, file, yaml) -> {
+            if ("boom".equals(yaml.getString("title"))) {
+                throw new IllegalStateException("no slot");
+            }
+            return REPORTED_TITLE.parse(id, file, yaml);
+        };
+
+        YamlFolder.Report<String> report = new YamlFolder(folder()).loadReport(parser);
+
+        assertThat(report.entries()).containsExactly(Map.entry("a", "A 6"), Map.entry("b", "B 3"));
+        String unreadable = report.errors().get(1);
+        assertThat(unreadable).startsWith("d.yml is not valid YAML: ");
+        assertThat(report.errors()).containsExactly(
+            "c.yml: title is missing; add a title.",
+            unreadable,
+            "e.yaml: rename it to e.yml to have it read",
+            "f.yml: IllegalStateException no slot");
+        assertThat(report.problems()).containsExactly(
+            new ConfigProblem("b.yml", "rows", ConfigProblem.Severity.WARNING,
+                "rows is \"six\"; expected a whole number, so 3 is used.", null),
+            new ConfigProblem("c.yml", null, ConfigProblem.Severity.ERROR, "c.yml: title is missing; add a title.",
+                null),
+            new ConfigProblem("c.yml", "rows", ConfigProblem.Severity.WARNING,
+                "rows is \"none\"; expected a whole number, so 3 is used.", null),
+            new ConfigProblem("c.yml", "title", ConfigProblem.Severity.ERROR, "title is missing; add a title.",
+                "add a title"),
+            new ConfigProblem("d.yml", null, ConfigProblem.Severity.ERROR, unreadable, null),
+            new ConfigProblem("e.yaml", null, ConfigProblem.Severity.ERROR,
+                "e.yaml: rename it to e.yml to have it read", "rename it to e.yml"),
+            new ConfigProblem("f.yml", null, ConfigProblem.Severity.ERROR, "f.yml: IllegalStateException no slot",
+                null));
+    }
+
+    @Test
+    void loadReportGivesTheEntriesAndErrorLinesOfLoad() throws Exception {
+        write("a.yml", "title: A\n");
+        write("b.yml", "rows: 6\n");
+        write("c.yaml", "title: C\n");
+        YamlFolder folder = new YamlFolder(folder());
+
+        YamlFolder.Loaded<String> loaded = folder.load(TITLE);
+        YamlFolder.Report<String> report =
+            folder.loadReport((id, file, yaml) -> new YamlFolder.Parsed<>(TITLE.parse(id, file, yaml), List.of()));
+
+        assertThat(report.entries()).containsExactlyEntriesOf(loaded.entries());
+        assertThat(report.errors()).isEqualTo(loaded.errors());
+        assertThat(report.problems()).extracting(ConfigProblem::message).isEqualTo(loaded.errors());
+    }
+
+    @Test
+    void loadReportOfAnAbsentFolderIsEmptyAndItsResultIsAnUnmodifiableCopy() throws Exception {
+        YamlFolder.Report<String> report = new YamlFolder(root.resolve("menus")).loadReport(REPORTED_TITLE);
+
+        assertThat(report.entries()).isEmpty();
+        assertThat(report.errors()).isEmpty();
+        assertThat(report.problems()).isEmpty();
+        assertThatThrownBy(() -> report.problems().add(null)).isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> report.entries().put("a", "A")).isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void aReportingParserThatReturnsNoEntryIsReportedAndTheOtherFilesLoad() throws Exception {
+        write("a.yml", "title: A\n");
+        write("b.yml", "title: B\n");
+        write("c.yml", "title: C\n");
+
+        YamlFolder.Report<String> report = new YamlFolder(folder()).loadReport((id, file, yaml) -> switch (id) {
+            case "a" -> null;
+            case "b" -> new YamlFolder.Parsed<>(null, List.of());
+            default -> new YamlFolder.Parsed<>(id, List.of());
+        });
+
+        assertThat(report.entries()).containsExactly(Map.entry("c", "c"));
+        assertThat(report.errors()).containsExactly(
+            "a.yml: NullPointerException the parser returned null",
+            "b.yml: NullPointerException the parser returned null");
+    }
+
     /** A directory stream that gives {@code files}, then fails with {@code failure} when it is not {@code null}. */
     private static DirectoryStream<Path> stream(List<Path> files, @Nullable IOException failure) {
         return new DirectoryStream<>() {
