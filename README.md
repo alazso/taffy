@@ -31,7 +31,7 @@ pluginManagement {
 }
 
 plugins {
-    id("so.alaz.taffy.settings") version "0.4.12"
+    id("so.alaz.taffy.settings") version "0.4.13"
 }
 
 rootProject.name = "myplugin"
@@ -84,7 +84,7 @@ Gradle itself must run on Java 25, because the plugins are Java 25 class files l
 
 The plugins need Gradle 9.2.0 or newer: Gradle 9.1.0 is the first release that runs on Java 25, and the Shadow
 plugin that `so.alaz.taffy.paper-plugin` applies needs 9.2.0. `so.alaz.taffy.settings` fails on an older Gradle
-with a message that names the minimum. Taffy itself builds with the Gradle wrapper at 9.9.1.
+with a message that names the minimum. Taffy itself builds with the Gradle wrapper at 9.9.2.
 
 To try an unpublished build, run `./gradlew publishToMavenLocal` here. In the plugin's `settings.gradle.kts`, add
 `mavenLocal()` to `pluginManagement.repositories` and set the URL of the `alazsoSnapshots` repository to the local
