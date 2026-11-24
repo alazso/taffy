@@ -14,5 +14,6 @@ dependencies {
     testImplementation(libs.jetbrains.annotations)
     testImplementation(libs.junit.jupiter)
     testImplementation(libs.assertj.core)
+    testImplementation(libs.mockito.core)
     testRuntimeOnly(libs.junit.platform.launcher)
 }

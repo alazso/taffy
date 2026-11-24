@@ -39,8 +39,8 @@ import java.util.function.Function;
  *
  * <p>A blank text (empty or only whitespace) reads as an absent key in {@link #integer}, {@link #optionalInteger},
  * {@link #whole}, {@link #decimal}, {@link #bool}, {@link #duration}, {@link #durations}, {@link #strings},
- * {@link #sections}, {@link #parsed}, {@link #choice} and {@link #choiceWithHyphens}: it gives the fallback with
- * no warning. {@link #text}, {@link #quoted} and
+ * {@link #sections}, {@link #parsed}, {@link #choice}, {@link #choiceWithHyphens} and {@link #item(String)}: it
+ * gives the fallback with no warning. {@link #text}, {@link #quoted} and
  * {@link #strictText} return a blank text as it is, and {@link #requiredText} reports it as an error.
  *
  * <p>Every reader that gives text reads an unquoted date such as {@code 2026-12-31} as that date written
@@ -642,6 +642,87 @@ public final class ConfigReader {
         }
     }
 
+    /**
+     * Reads as {@link #item(String, ItemKeys)} does, with the key names of {@link ItemKeys#defaults()}.
+     *
+     * @since 0.4.14
+     */
+    public @Nullable ItemSpec item(String path) {
+        return ItemSpecReader.read(this, path, ItemKeys.defaults());
+    }
+
+    /**
+     * The item the group of keys at {@code path} defines, read from the keys {@code keys} names, such as
+     * <pre>{@code
+     * item:
+     *   material: minecraft:diamond_sword
+     *   name: "<aqua>Frostbite"
+     *   lore: ["<gray>Cold to the touch."]
+     *   glow: true
+     *   item-model: "myserver:frostbite"
+     *   custom-model-data: [1, 2.5]
+     *   enchantments:
+     *     sharpness: 5
+     *   trim:
+     *     material: quartz
+     *     pattern: sentry
+     * }</pre>
+     * An absent key and a blank text at {@code path} give {@code null} and nothing is reported, also when
+     * {@link ItemKeys#textBesideSection} is set and a name or a lore is there. A value at {@code path} that is
+     * not a group of keys adds the error {@code <path> is <value>; expected a group of keys.} and gives
+     * {@code null}.
+     *
+     * <p>The call needs no running server: only the material is resolved, through
+     * {@link org.bukkit.Material#getMaterial(String)}, and the keys of the enchantments and of the trim are kept
+     * as text for {@link ItemSpec#overMaterial} and {@link ItemSpec#overStack} to look up. Inside the group, a
+     * key that is absent or holds a blank text leaves its part of the {@link ItemSpec} empty with nothing
+     * reported, and the other values read as follows.
+     *
+     * <ul>
+     *   <li>The material is a name in any letter case, with or without {@code minecraft:} before it. A name
+     *       that is no material, a legacy name and a value that is not a text each add the error
+     *       {@code <path> is <value>; expected the name of an item such as paper or minecraft:paper.}</li>
+     *   <li>The reference is a single value, kept without surrounding whitespace and not checked further.
+     *       With {@link ItemKeys#referenceParts}, a provider and an id are joined as {@code <provider>:<id>}
+     *       with the provider in lower case, an id that already starts with the provider is kept as it is,
+     *       an id without a provider is the reference, and a provider without an id gives no reference. A
+     *       reference written as one text wins over the two parts. A list and a group of keys add the error of
+     *       {@link #strictText}.</li>
+     *   <li>The name is a single value. A list and a group of keys give no name and the warning
+     *       {@code <path> is <value>; expected a single text, so no name is set.}</li>
+     *   <li>The lore reads as {@link #strings} does with an empty fallback.</li>
+     *   <li>The glow reads as {@link #bool} does with {@code false} as the fallback.</li>
+     *   <li>The item model is a text {@link org.bukkit.NamespacedKey#fromString(String)} accepts. Anything
+     *       else gives no item model and the warning {@code <path> is <value>; expected a key such as
+     *       minecraft:diamond_sword, so no item model is set.}</li>
+     *   <li>The custom model data is one number or a list of numbers, each kept as a {@code float}. A list
+     *       entry that is not a finite number is skipped with the warning {@code <path> has <entry>, which is
+     *       not a number, so it is skipped.}, and any other value gives none and the warning
+     *       {@code <path> is <value>; expected a number or a list of numbers such as [1, 2.5], so no custom
+     *       model data is set.}</li>
+     *   <li>Each key beneath the enchantments names an enchantment, kept in lower case, and holds its level.
+     *       A level that is not a whole number of 1 or more, such as {@code 0}, {@code -2}, {@code 2.5} or
+     *       {@code high}, skips that enchantment with the warning {@code <path> is <value>; expected a whole
+     *       number of 1 or more, so the enchantment is skipped.} A value that is not a group of keys gives
+     *       the warning of {@link #children}.</li>
+     *   <li>The trim holds {@code material} and {@code pattern}, each a text kept in lower case. When one is
+     *       missing or not a text there is no trim and the warning {@code <path> needs a material and a
+     *       pattern, such as quartz and sentry, so no trim is set.} A value that is not a group of keys gives
+     *       the warning of {@link #children}.</li>
+     * </ul>
+     *
+     * <p>When the call added an error, it gives {@code null}, after reading every key, so one load reports
+     * every problem of the item. A warning leaves out only its own part. Every key the call looks at is
+     * recorded as read, and a key of the group that {@code keys} does not name is not: it stays among
+     * {@link #unreadKeys()} for the plugin to read or to report.
+     *
+     * @param keys the key names, relative to the group of keys at {@code path}
+     * @since 0.4.14
+     */
+    public @Nullable ItemSpec item(String path, ItemKeys keys) {
+        return ItemSpecReader.read(this, path, Objects.requireNonNull(keys, "keys"));
+    }
+
     /** Whether {@code path} is absent or holds a group of keys. */
     public boolean absentOrSection(String path) {
         read.add(at(path));
@@ -799,7 +880,7 @@ public final class ConfigReader {
      * The text form of a single value: a text as it is, a number and {@code true}/{@code false} as their
      * {@code toString}, and a date at midnight UTC as {@code 2026-12-31}. Anything else gives {@code null}.
      */
-    private static @Nullable String singleText(@Nullable Object value) {
+    static @Nullable String singleText(@Nullable Object value) {
         if (value instanceof String || value instanceof Number || value instanceof Boolean) {
             return value.toString();
         }
@@ -848,8 +929,13 @@ public final class ConfigReader {
     }
 
     /** {@code path} as the lines, the problems and the read paths write it. */
-    private String at(String path) {
+    String at(String path) {
         return prefix + path;
+    }
+
+    /** The name of the file given to the constructor, or {@code null}. */
+    @Nullable String source() {
+        return source;
     }
 
     private String line(String path, String message, @Nullable String fix) {

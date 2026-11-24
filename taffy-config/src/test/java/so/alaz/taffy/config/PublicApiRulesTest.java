@@ -16,7 +16,8 @@ class PublicApiRulesTest {
                 YamlFolder.Parser.class, YamlFolder.Loaded.class, YamlFolder.ReportingParser.class,
                 YamlFolder.Parsed.class, YamlFolder.Report.class, ConfigProblem.class, ConfigProblem.Severity.class,
                 ConfigUpgrade.class, ConfigUpgrade.Keys.class, AtomicWriter.class, AtomicWriter.Result.class,
-                AtomicWriter.Written.class, AtomicWriter.Conflict.class)
+                AtomicWriter.Written.class, AtomicWriter.Conflict.class, ItemKeys.class, ItemSpec.class,
+                ItemSpec.Trim.class)
             .allSatisfy(type -> assertThat(type.getPackageName()).startsWith(getClass().getPackageName()));
     }
 

@@ -5,6 +5,31 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `taffy-config`: `ConfigReader.item(String path)` and `item(String path, ItemKeys keys)` read an item definition
+  out of a group of keys into the new record `ItemSpec`: the material, an item reference kept as text
+  (`serialized:<base64>` or `<plugin>:<id>`), the name and the lore as MiniMessage text, the glow, the item model,
+  the custom model data as floats, the enchantment levels and the armour trim. The call needs no running server:
+  the material is resolved through `Material.getMaterial`, in any letter case and with or without `minecraft:`,
+  and the enchantment and trim keys stay text. No value throws. An absent group gives `null` with nothing
+  reported, a value that is not a group of keys and a material that does not exist are errors and give `null`,
+  and every other bad value (a level that is not a whole number of 1 or more, an item model that is not a key, a
+  custom model data entry that is not a number, a trim without both keys) is a warning that leaves out only that
+  part. A key of the group the reader was not told to read stays in `unreadKeys()`.
+- `ItemKeys` names the keys `item` reads, so a plugin keeps the keys its files already have and no owner file
+  changes. `ItemKeys.defaults()` reads `material`, `reference`, `name`, `lore`, `glow`, `item-model`,
+  `custom-model-data`, `enchantments` and `trim`; each method returns a copy with one key renamed, and `null`
+  turns a key off. `referenceParts(providerKey, idKey)` reads a reference written as two keys and joins them as
+  `<provider>:<id>`, and `textBesideSection(true)` reads the name and the lore beside the group instead of
+  inside it.
+- `ItemSpec.overMaterial(Material fallback, Function<String, Component> renderer, Logger, Consumer<ConfigProblem>)`
+  and `overStack(ItemStack base, ...)` give an `ItemBuilder` with the spec applied, over the material of the file
+  or over a stack the plugin built, such as the item a reference stands for. The plugin's `renderer` turns the
+  name and the lore into components. Enchantment and trim keys are looked up in the registries of the server
+  here: one the server does not have, and a material that is not an item, each reach the consumer as a
+  `ConfigProblem` warning with the file and the path of the item, and the item is built without it. Both need a
+  running server and may be called on any thread, on Folia too.
+
 ## [0.4.13] - 2026-11-24
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.33.0 and bStats 3.2.1.

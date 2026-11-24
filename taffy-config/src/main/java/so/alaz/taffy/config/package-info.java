@@ -14,6 +14,9 @@
  * the others. {@link so.alaz.taffy.config.ConfigProblem} is one warning or error as a record of file, path,
  * severity, line and fix, which {@link so.alaz.taffy.config.ConfigReader#problems()} and
  * {@link so.alaz.taffy.config.YamlFolder#loadReport} give beside the lines.
+ * {@link so.alaz.taffy.config.ItemSpec} is an item read from a group of keys by
+ * {@link so.alaz.taffy.config.ConfigReader#item(String)} under the key names a plugin passes as
+ * {@link so.alaz.taffy.config.ItemKeys}, and applied to an {@code ItemBuilder} on a running server.
  * {@link so.alaz.taffy.config.ConfigUpgrade} holds the steps that rename, move and remove keys when a file is
  * brought to a newer layout version, for {@link so.alaz.taffy.config.ConfigLoader#upgrades} and for a
  * {@link so.alaz.taffy.config.YamlFolder} of files that carry a version. {@link so.alaz.taffy.config.AtomicWriter}
