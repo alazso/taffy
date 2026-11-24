@@ -16,6 +16,22 @@ All notable changes to Taffy are documented here. This project follows
   of rows than 1 (an `INSERT IGNORE` or `ON CONFLICT DO NOTHING` that wrote no row, an insert of several rows),
   when the database returns no key, and when the key is not a whole number that fits a `long`. It runs on the
   database thread of its transaction like `update`, on Folia too.
+- `taffy-platform`: the interface `Importer` is the shape of an import from another plugin, implemented once for
+  each source: `id()` (1 to 64 ASCII letters, digits, dots, underscores and hyphens, matched without regard to
+  case), `displayName()`, `present()` (cheap, callable from any thread, never cached) and
+  `CompletableFuture<ImportReport> run(boolean dryRun)`, which never throws, writes nothing in a dry run and
+  completes on a thread the importer chooses. Taffy reads no other plugin's data and takes no backup: the reading,
+  the writing and a backup before a real run, such as `Storage.backup`, stay in the plugin.
+- `ImportReport` holds what a run did: `read()`, `importedCount()`, `skippedCount()`, and the lines `imported()`,
+  `skipped()` and `warnings()` as plain text for the plugin to show. It is an immutable final class built with
+  `ImportReport.builder()`, whose `read(int)`, `imported(String)`, `imported(int)`, `skipped(String)`,
+  `skipped(int)` and `warning(String)` each add to it, so an importer names every entry or counts entries without
+  a line.
+- `Importers.create(Logger, ErrorReports)` is the registry of a plugin's importers: `register(Importer)` refuses
+  an id that is already registered, in any letter case, with `IllegalArgumentException`; `byId(String)` finds an
+  importer without regard to case; `presentIds()` and `allIds()` give the ids a command suggests, in registration
+  order. `presentIds()` calls `present()` of every importer each time, and one that throws counts as absent, is
+  logged at most once a minute and is reported under `importer.<id>`. The registry is thread-safe.
 
 ## [0.4.14] - 2026-11-24
 
