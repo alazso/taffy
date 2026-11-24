@@ -1,8 +1,8 @@
 /**
  * Integrations with other Paper plugins: custom item plugins, a Vault economy, PlayerPoints points, LuckPerms
  * permissions, WorldGuard regions, Bedrock players through Floodgate and Geyser, placeholder expansions for
- * PlaceholderAPI and MiniPlaceholders, and text holograms through DecentHolograms, FancyHolograms, Holograms and
- * HologramLib, or as display entities with no hologram plugin.
+ * PlaceholderAPI and MiniPlaceholders, text holograms through DecentHolograms, FancyHolograms, Holograms and
+ * HologramLib, or as display entities with no hologram plugin, and NPCs through Citizens, FancyNpcs and ZNPCsPlus.
  *
  * <p>The module compiles against each integration's API but ships none of them, and its published metadata names
  * none of them. Floodgate and Geyser are the exception: they are read through method handles, so the module compiles
@@ -32,7 +32,8 @@
  * <p>The names are {@code ItemsAdder}, {@code Nexo}, {@code Oraxen}, {@code HeadDatabase}, {@code CraftEngine},
  * {@code MMOItems}, {@code Vault}, {@code PlayerPoints}, {@code LuckPerms}, {@code WorldGuard}, {@code floodgate},
  * {@code Geyser-Spigot}, {@code PlaceholderAPI}, {@code MiniPlaceholders}, {@code DecentHolograms},
- * {@code FancyHolograms}, {@code Holograms} and {@code HologramLib}. A plugin that uses WorldGuard also lists
+ * {@code FancyHolograms}, {@code Holograms}, {@code HologramLib}, {@code Citizens}, {@code FancyNpcs} and
+ * {@code ZNPCsPlus}. A plugin that uses WorldGuard also lists
  * {@code WorldEdit}, which WorldGuard's regions are read through. An integration that is
  * installed but not listed is {@link so.alaz.taffy.hooks.HookState#NOT_VISIBLE}, and its warning names the missing
  * entry.
@@ -52,8 +53,9 @@
  *     naming the state of each;</li>
  *   <li>detects LuckPerms with {@link so.alaz.taffy.hooks.PermissionProvider#luckPerms}, WorldGuard with
  *     {@link so.alaz.taffy.hooks.RegionProvider#worldGuard}, Floodgate or Geyser with
- *     {@link so.alaz.taffy.hooks.BedrockProvider#detect} and a hologram plugin with
- *     {@link so.alaz.taffy.hooks.HologramProvider#detect}, and keeps each {@link so.alaz.taffy.hooks.Detected};</li>
+ *     {@link so.alaz.taffy.hooks.BedrockProvider#detect}, a hologram plugin with
+ *     {@link so.alaz.taffy.hooks.HologramProvider#detect} and an NPC plugin with
+ *     {@link so.alaz.taffy.hooks.NpcProvider#detect}, and keeps each {@link so.alaz.taffy.hooks.Detected};</li>
  *   <li>looks up the economy with {@link so.alaz.taffy.hooks.EconomyProvider#vault}, keeps the result in a
  *     {@code volatile} field, and, while the economy is switched on, registers an
  *     {@link so.alaz.taffy.hooks.EconomyWatcher} that looks it up again and looks it up once more on the first tick.
@@ -185,8 +187,10 @@
  * java.util.Set, java.util.function.Consumer)} throws, such as {@code hook.nexo}; {@code hook.luckperms} and
  * {@code hook.worldguard} for every failed call; {@code hook.floodgate} or {@code hook.geyser-spigot} for every
  * failed check of a Bedrock player; and {@code hook.decentholograms}, {@code hook.fancyholograms},
- * {@code hook.holograms} or {@code hook.hologramlib} for every failed hologram call, and {@code hook.displays}
- * for a failed spawn, text change or removal of a display hologram and a line MiniMessage refuses. Reading an
+ * {@code hook.holograms} or {@code hook.hologramlib} for every failed hologram call, {@code hook.displays}
+ * for a failed spawn, text change or removal of a display hologram and a line MiniMessage refuses, and
+ * {@code hook.citizens}, {@code hook.fancynpcs} or {@code hook.znpcsplus} for a failed lookup of an NPC's location,
+ * a click that could not be read or handed to the player's thread, and a click listener that throws. Reading an
  * item's id and resolving a placeholder log a failure and do not report it.
  *
  * <p>A {@code null} argument throws {@link java.lang.NullPointerException}, except where a parameter is marked
@@ -204,5 +208,8 @@
  * {@code Scheduler.close}, the plugin calls {@link so.alaz.taffy.hooks.HologramProvider#close()} on each provider it
  * holds, which removes any hologram placed since and stops the provider. Both run on the thread that disables the
  * owner, which on Folia is the global region thread only when the owner disables itself from there.
+ *
+ * <p>An {@link so.alaz.taffy.hooks.NpcProvider} needs no call at disable: the server unregisters its listener with
+ * the owner's other listeners.
  */
 package so.alaz.taffy.hooks;

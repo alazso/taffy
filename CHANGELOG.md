@@ -54,6 +54,36 @@ All notable changes to Taffy are documented here. This project follows
   `com.sk89q.worldguard:worldguard-bukkit` (`alaz.worldguard.bukkit`, already in the catalog), which holds
   `WorldGuardPlugin.wrapPlayer`. Detection does not look for the methods of the build check, so `worldGuard` gives
   the same status as in 0.4.11.
+- `taffy-hooks`: `NpcProvider` and `NpcPlugin`, which read the NPCs of Citizens, FancyNpcs or ZNPCsPlus with no type
+  of the NPC plugin in a signature. `NpcProvider.detect(Plugin owner, ErrorReports errors, boolean switchedOn,
+  NpcPlugin plugin)` returns a `Detected<NpcProvider>` with the states of every other integration, and reports a
+  failure under `hook.citizens`, `hook.fancynpcs` or `hook.znpcsplus`. `NpcPlugin` has the constants `CITIZENS`,
+  `FANCYNPCS` and `ZNPCSPLUS` with `plugin()`, `key()` and `byKey(String)`, and its Javadoc states that constants
+  may be added, so a `switch` over it needs a `default` branch. A plugin lists `Citizens`, `FancyNpcs` or
+  `ZNPCsPlus` in its `paper-plugin.yml` under `dependencies.server` with `load: BEFORE` and `required: false`.
+- `NpcProvider.location(String id)` gives a copy of where an NPC stands, or `null` when the provider is not
+  available, the id names no NPC, the NPC is not spawned (a despawned Citizens NPC, a FancyNpcs NPC whose
+  `spawnEntity` setting is off, a ZNPCsPlus NPC that is not enabled), its world is not loaded or the lookup fails.
+  An NPC id is text in one form for each plugin: for Citizens the number of the NPC in Citizens' default registry
+  in decimal, as in `12`; for FancyNpcs the name of the NPC, found in any case; for ZNPCsPlus the id of the NPC,
+  which ZNPCsPlus keeps in lower case. FancyNpcs loads its NPCs five seconds after it is enabled, so they are not
+  found from `onEnable`.
+- `NpcProvider.onClick(BiConsumer<Player, String> listener)` sets the one listener that receives the player and the
+  NPC id of every left and right click on an NPC of the NPC plugin, not told apart. Detection registers one Bukkit
+  listener for the owner, which `NpcProvider.close()` unregisters and the server unregisters when the owner
+  disables. One right click is passed once: Citizens and FancyNpcs fire for the main hand only, and ZNPCsPlus lets
+  one interaction through for a player in 100 milliseconds. Citizens fires a left click only for a hit that did no
+  damage, as on a protected NPC, and a click on a Citizens NPC outside the default registry is not passed. A click
+  cancelled in the NPC plugin's event is not passed. The listener runs on the thread that owns the player: inside
+  the event for Citizens and FancyNpcs, which fire on that thread, and on the player's next tick for ZNPCsPlus,
+  which fires on a network thread and whose click is handed to the player's scheduler for the owner. A listener
+  that throws is logged at most once a minute, reported, and goes on receiving clicks.
+- Catalog entries `alaz.citizens.api` (`net.citizensnpcs:citizensapi` 2.0.44-SNAPSHOT, which Citizens publishes as
+  snapshots only), `alaz.fancynpcs` (`de.oliver:FancyNpcs` 2.12.1) and `alaz.znpcsplus.api`
+  (`com.github.Pyrbu:ZNPCsPlus` 2.0.0, the JitPack build of ZNPCsPlus' tag `2.0.0`, which holds the classes of
+  `lol.pyr:znpcsplus-api`). `so.alaz.taffy.repositories` declares one more repository before `jitpack`, `citizens`
+  (`https://maven.citizensnpcs.co/repo`) for the group `net.citizensnpcs`, and `jitpack` also serves the group
+  `com.github.Pyrbu`.
 
 ## [0.4.11] - 2026-11-23
 

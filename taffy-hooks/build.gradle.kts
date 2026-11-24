@@ -2,7 +2,7 @@ plugins {
     id("so.alaz.taffy.library")
 }
 
-description = "Taffy hooks: custom items, economy, permissions, regions, placeholders and holograms behind Taffy interfaces"
+description = "Taffy hooks: custom items, economy, permissions, regions, placeholders, holograms and NPCs behind Taffy interfaces"
 
 dependencies {
     api(project(":taffy-platform"))
@@ -29,6 +29,9 @@ dependencies {
     compileOnly(libs.fancyholograms) { isTransitive = false }
     compileOnly(libs.holograms) { isTransitive = false }
     compileOnly(libs.hologramlib) { isTransitive = false }
+    compileOnly(libs.citizens.api) { isTransitive = false }
+    compileOnly(libs.fancynpcs) { isTransitive = false }
+    compileOnly(libs.znpcsplus.api) { isTransitive = false }
 
     testImplementation(project(":taffy-test"))
     testImplementation(libs.paper.api)
@@ -56,6 +59,9 @@ dependencies {
     testImplementation(libs.fancyholograms) { isTransitive = false }
     testImplementation(libs.holograms) { isTransitive = false }
     testImplementation(libs.hologramlib) { isTransitive = false }
+    testImplementation(libs.citizens.api) { isTransitive = false }
+    testImplementation(libs.fancynpcs) { isTransitive = false }
+    testImplementation(libs.znpcsplus.api) { isTransitive = false }
     testImplementation(libs.packetevents.api) { isTransitive = false }
     testRuntimeOnly(libs.junit.platform.launcher)
 }

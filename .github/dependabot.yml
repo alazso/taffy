@@ -13,6 +13,9 @@ registries:
   jitpack:
     type: maven-repository
     url: https://jitpack.io
+  citizens:
+    type: maven-repository
+    url: https://maven.citizensnpcs.co/repo
   vaultunlocked:
     type: maven-repository
     url: https://repo.codemc.io/repository/creatorfromhell
@@ -81,6 +84,8 @@ updates:
           - "net.thenextlvl:*"
           - "com.github.HologramLib:*"
           - "com.github.retrooper:*"
+          - "net.citizensnpcs:*"
+          - "com.github.Pyrbu:*"
       jdbc:
         patterns:
           - "com.zaxxer:*"

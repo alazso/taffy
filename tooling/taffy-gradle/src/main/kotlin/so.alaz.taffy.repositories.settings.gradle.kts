@@ -89,6 +89,10 @@ dependencyResolutionManagement {
                 includeModule("io.lumine", "MythicLib-dist")
             }
         }
+        maven("https://maven.citizensnpcs.co/repo") {
+            name = "citizens"
+            content { includeGroup("net.citizensnpcs") }
+        }
         maven("https://jitpack.io") {
             name = "jitpack"
             content {
@@ -97,6 +101,7 @@ dependencyResolutionManagement {
                 includeGroup("com.github.decentsoftware-eu")
                 includeGroup("com.github.HologramLib")
                 includeGroup("com.github.maximjsx.EntityLib")
+                includeGroup("com.github.Pyrbu")
             }
         }
     }

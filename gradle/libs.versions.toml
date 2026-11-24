@@ -29,6 +29,9 @@ decentholograms  = "2.10.2"
 fancyholograms   = "2.12.0"
 holograms        = "1.5.4"
 hologramlib      = "1.8.5"
+citizens         = "2.0.44-SNAPSHOT"  # citizensapi is published as snapshots only
+fancynpcs        = "2.12.1"
+znpcsplus        = "2.0.0"  # the JitPack build of the tag 2.0.0, which holds the classes of lol.pyr:znpcsplus-api
 packetevents     = "2.14.0"  # HologramLib's classes link only with PacketEvents present; tests only
 comficonf        = "0.1.0"
 junit            = "6.1.3"
@@ -68,6 +71,9 @@ decentholograms           = { module = "com.github.decentsoftware-eu:decentholog
 fancyholograms            = { module = "de.oliver:FancyHolograms",                         version.ref = "fancyholograms" }
 holograms                 = { module = "net.thenextlvl:holograms",                         version.ref = "holograms" }
 hologramlib               = { module = "com.github.HologramLib:HologramLib",               version.ref = "hologramlib" }
+citizens-api              = { module = "net.citizensnpcs:citizensapi",                     version.ref = "citizens" }
+fancynpcs                 = { module = "de.oliver:FancyNpcs",                              version.ref = "fancynpcs" }
+znpcsplus-api             = { module = "com.github.Pyrbu:ZNPCsPlus",                       version.ref = "znpcsplus" }
 packetevents-api          = { module = "com.github.retrooper:packetevents-api",            version.ref = "packetevents" }
 comficonf-api             = { module = "com.comficonf:comficonf-api",                      version.ref = "comficonf" }
 junit-jupiter             = { module = "org.junit.jupiter:junit-jupiter",                  version.ref = "junit" }

@@ -24,7 +24,8 @@ class PublicApiRulesTest {
                 RegionProvider.class, WorldGuardRegions.class, BedrockProvider.class, PluginBedrock.class,
                 FloodgateBedrock.class, GeyserBedrock.class, PlaceholderExpansionBuilder.class,
                 PlaceholderRegistration.class, PapiExpansion.class, MiniExpansion.class, PlaceholderPrefixes.class,
-                PlaceholderCache.class)
+                PlaceholderCache.class, NpcPlugin.class, NpcProvider.class, PluginNpcs.class, NpcBackend.class,
+                NpcClicks.class, CitizensNpcBackend.class, FancyNpcsBackend.class, ZnpcsPlusBackend.class)
             .allSatisfy(type -> assertThat(type.getPackageName()).startsWith(getClass().getPackageName()));
     }
 

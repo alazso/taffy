@@ -61,7 +61,7 @@ final class AbsentIntegrationsTest {
         "net.luckperms.api.", "com.sk89q.", "me.clip.placeholderapi.", "io.github.miniplaceholders.",
         "eu.decentsoftware.holograms.", "de.oliver.fancyholograms.", "net.thenextlvl.hologram.",
         "com.maximde.hologramlib.", "org.geysermc.", "org.black_ixx.", "net.momirealms.", "net.Indyuce.",
-        "io.lumine."};
+        "io.lumine.", "net.citizensnpcs.", "de.oliver.fancynpcs.", "lol.pyr.znpcsplus."};
 
     private static final String VAULT_ECONOMY = "net.milkbowl.vault.economy.Economy";
 
@@ -111,7 +111,11 @@ final class AbsentIntegrationsTest {
         "net.luckperms.api.LuckPermsProvider", "net.luckperms.api.model.user.User", "net.luckperms.api.node.NodeType",
         WORLDGUARD_API[0], WORLDGUARD_API[1], WORLDGUARD_API[2], WORLDGUARD_API[3], WORLDGUARD_API[4],
         WORLDGUARD_API[5], BEDROCK_API[0], BEDROCK_API[1], BEDROCK_API[2], PLACEHOLDER_API[0], PLACEHOLDER_API[1],
-        PLACEHOLDER_API[2], PLACEHOLDER_API[3], PLACEHOLDER_API[4], PLACEHOLDER_API[5]};
+        PLACEHOLDER_API[2], PLACEHOLDER_API[3], PLACEHOLDER_API[4], PLACEHOLDER_API[5],
+        "net.citizensnpcs.api.CitizensAPI", "net.citizensnpcs.api.event.NPCRightClickEvent",
+        "net.citizensnpcs.api.event.NPCLeftClickEvent", "de.oliver.fancynpcs.api.FancyNpcsPlugin",
+        "de.oliver.fancynpcs.api.events.NpcInteractEvent", "lol.pyr.znpcsplus.api.NpcApiProvider",
+        "lol.pyr.znpcsplus.api.event.NpcInteractEvent"};
 
     private static ClassLoader hidden() {
         return SimulatedClasspath.hiding(OWN, HIDDEN);
@@ -173,6 +177,9 @@ final class AbsentIntegrationsTest {
         for (HologramPlugin plugin : HologramPlugin.values()) {
             probes.add(plugin.probe());
         }
+        for (NpcPlugin plugin : NpcPlugin.values()) {
+            probes.add(plugin.probe());
+        }
         ClassLoader loader = hidden();
 
         assertThat(Class.forName(ApiLink.class.getName(), false, loader).getClassLoader()).isSameAs(loader);
@@ -190,7 +197,8 @@ final class AbsentIntegrationsTest {
 
         assertThat(ON_TEST_CLASSPATH).contains(CustomItemPlugin.ITEMSADDER.probe(), CustomItemPlugin.NEXO.probe(),
             CustomItemPlugin.ORAXEN.probe(), CustomItemPlugin.HEADDATABASE.probe(),
-            CustomItemPlugin.CRAFTENGINE.probe(), CustomItemPlugin.MMOITEMS.probe());
+            CustomItemPlugin.CRAFTENGINE.probe(), CustomItemPlugin.MMOITEMS.probe(), NpcPlugin.CITIZENS.probe(),
+            NpcPlugin.FANCYNPCS.probe(), NpcPlugin.ZNPCSPLUS.probe());
         for (String api : ON_TEST_CLASSPATH) {
             assertThatCode(() -> Class.forName(api, false, withApis()))
                 .as(api)
@@ -225,7 +233,9 @@ final class AbsentIntegrationsTest {
             PlaceholderExpansionBuilder.class, PlaceholderRegistration.class, PlaceholderCache.class,
             HologramPlugin.class,
             HologramProvider.class,
-            DisplayHolograms.class);
+            DisplayHolograms.class,
+            NpcPlugin.class,
+            NpcProvider.class);
         assertThat(exported).doesNotContain(EconomyLookup.class, Detection.class, PlayerPointsEconomy.class);
 
         for (Class<?> type : exported) {
@@ -1004,6 +1014,54 @@ final class AbsentIntegrationsTest {
     }
 
     @Test
+    void npcDetectionOnTheHiddenCopyFindsEveryNpcPluginWithoutItsApiOrOutOfSight() throws Throwable {
+        ClassLoader loader = hidden();
+        List<String> names = new ArrayList<>();
+        for (NpcPlugin plugin : NpcPlugin.values()) {
+            names.add(plugin.plugin());
+        }
+        CapturedLog log = new CapturedLog();
+        List<String> reported = new ArrayList<>();
+        ErrorReports errors = new ErrorReports();
+        errors.install((source, error) -> reported.add(source));
+        Class<?> npcPlugin = Class.forName(NpcPlugin.class.getName(), true, loader);
+        Class<?> detectedType = Class.forName(Detected.class.getName(), true, loader);
+        Class<?> statusType = Class.forName(HookStatus.class.getName(), true, loader);
+        MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+        MethodHandle detect = lookup.findStatic(Class.forName(NpcProvider.class.getName(), true, loader),
+            "detect", MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class, npcPlugin));
+        MethodHandle status = lookup.findVirtual(detectedType, "status", MethodType.methodType(statusType));
+        MethodHandle provider = lookup.findVirtual(detectedType, "provider", MethodType.methodType(Object.class));
+        PluginManager lacking = installed(pluginOn(loader, "2.0"), names.toArray(String[]::new));
+        PluginManager unlisted = installed(pluginOn(withApis(), "2.0"), names.toArray(String[]::new));
+
+        List<String> states = new ArrayList<>();
+        for (PluginManager plugins : List.of(lacking, unlisted)) {
+            for (Object plugin : npcPlugin.getEnumConstants()) {
+                Object detected = detect.invoke(owner(plugins, log), errors, true, plugin);
+                states.add(stateOf(loader, status.invoke(detected)));
+                assertThat(provider.invoke(detected)).isNull();
+            }
+            verify(plugins, never()).registerEvents(any(Listener.class), any(Plugin.class));
+        }
+
+        assertThat(states).containsExactly(HookState.API_MISSING.name(), HookState.API_MISSING.name(),
+            HookState.API_MISSING.name(), HookState.NOT_VISIBLE.name(), HookState.NOT_VISIBLE.name(),
+            HookState.NOT_VISIBLE.name());
+        assertThat(log.lines()).containsExactly(
+            "WARNING Citizens 2.0 lacks the API that is read, so it stays off.",
+            "WARNING FancyNpcs 2.0 lacks the API that is read, so it stays off.",
+            "WARNING ZNPCsPlus 2.0 lacks the API that is read, so it stays off.",
+            "WARNING Citizens 2.0 is not visible to this plugin, so it stays off: this plugin's paper-plugin.yml"
+                + " does not list Citizens under dependencies.server.",
+            "WARNING FancyNpcs 2.0 is not visible to this plugin, so it stays off: this plugin's paper-plugin.yml"
+                + " does not list FancyNpcs under dependencies.server.",
+            "WARNING ZNPCsPlus 2.0 is not visible to this plugin, so it stays off: this plugin's paper-plugin.yml"
+                + " does not list ZNPCsPlus under dependencies.server.");
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
     void everyEntryPointOnTheHiddenCopySwitchedOffLooksAtNothing() throws Throwable {
         ClassLoader loader = hidden();
         PluginManager plugins = mock(PluginManager.class);
@@ -1029,6 +1087,10 @@ final class AbsentIntegrationsTest {
             "detect", MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class,
                 hologramPlugin));
 
+        Class<?> npcPlugin = Class.forName(NpcPlugin.class.getName(), true, loader);
+        MethodHandle npcs = lookup.findStatic(Class.forName(NpcProvider.class.getName(), true, loader),
+            "detect", MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class, npcPlugin));
+
         List<String> states = new ArrayList<>();
         states.add(stateOf(loader, status.invoke(luckPerms.invoke(owner, errors, false))));
         states.add(stateOf(loader, status.invoke(worldGuard.invoke(owner, errors, false))));
@@ -1041,8 +1103,11 @@ final class AbsentIntegrationsTest {
         for (Object plugin : hologramPlugin.getEnumConstants()) {
             states.add(stateOf(loader, status.invoke(holograms.invoke(owner, errors, false, plugin))));
         }
+        for (Object plugin : npcPlugin.getEnumConstants()) {
+            states.add(stateOf(loader, status.invoke(npcs.invoke(owner, errors, false, plugin))));
+        }
 
-        assertThat(states).hasSize(16).containsOnly(HookState.SWITCHED_OFF.name());
+        assertThat(states).hasSize(19).containsOnly(HookState.SWITCHED_OFF.name());
         verifyNoInteractions(plugins);
         assertThat(log.lines()).containsExactly("INFO Custom item plugins: ItemsAdder switched off; Nexo switched off;"
             + " Oraxen switched off; HeadDatabase switched off; CraftEngine switched off; MMOItems switched off.");
