@@ -3,7 +3,9 @@
 All notable changes to Taffy are documented here. This project follows
 [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [0.4.14] - 2026-11-24
+
+Built against paper-api 26.3.build.256-stable and tested with FastStats 0.33.0 and bStats 3.2.1.
 
 ### Added
 - `taffy-config`: `ConfigReader.item(String path)` and `item(String path, ItemKeys keys)` read an item definition
