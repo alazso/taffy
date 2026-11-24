@@ -1007,6 +1007,144 @@ abstract class StorageContract {
             "expected at most one row, found 2: SELECT id FROM " + probe());
     }
 
+    @Test
+    void anInsertReturnsTheGeneratedKeyOfTheRowItWrote() {
+        String table = keyed();
+        String sql = "INSERT INTO " + table + " (label) VALUES (?)";
+
+        List<Long> keys = storage().async(tx -> List.of(tx.insert(sql, "id", params -> params.text("first")),
+            tx.insert(sql, "id", params -> params.text("second")))).join();
+
+        assertThat(keys.get(1)).isGreaterThan(keys.get(0));
+        assertThat(labelOf(table, keys.get(0))).isEqualTo("first");
+        assertThat(labelOf(table, keys.get(1))).isEqualTo("second");
+        assertThat(keyedLabels(table)).containsExactly("first", "second");
+    }
+
+    @Test
+    void anInsertThatWritesNoRowFailsThoughTheConnectionInsertedARowBefore() {
+        String table = keyed();
+        String sql = "INSERT INTO " + table + " (label) VALUES ('taken')";
+        String ignoring = switch (dialect()) {
+            case SQLITE -> "INSERT OR IGNORE INTO " + table + " (label) VALUES ('taken')";
+            case MYSQL, MARIADB -> "INSERT IGNORE INTO " + table + " (label) VALUES ('taken')";
+            case POSTGRES -> sql + " ON CONFLICT DO NOTHING";
+        };
+
+        assertThatThrownBy(() -> storage().async(tx -> {
+            tx.insert(sql, "id", Tx.Binder.NONE);
+            return tx.insert(ignoring, "id", Tx.Binder.NONE);
+        }).join()).cause().isInstanceOf(SQLException.class).hasMessage(
+            "the statement counted 0 rows, and insert returns the key of exactly one inserted row: " + ignoring);
+
+        assertThat(keyedLabels(table)).isEmpty();
+    }
+
+    @Test
+    void anInsertOfSeveralRowsFailsAndItsTransactionKeepsNoRow() {
+        String table = keyed();
+        String sql = "INSERT INTO " + table + " (label) VALUES (?), (?)";
+
+        assertThatThrownBy(() -> storage().async(tx -> tx.insert(sql, "id",
+            params -> params.text("first").text("second"))).join())
+            .cause().isInstanceOf(SQLException.class).hasMessage(
+                "the statement counted 2 rows, and insert returns the key of exactly one inserted row: " + sql);
+
+        assertThat(keyedLabels(table)).isEmpty();
+    }
+
+    @Test
+    void anInsertRefusesAStatementThatIsNotAnInsertBeforeItRuns() {
+        String table = keyed();
+        storage().async(tx -> tx.insert("INSERT INTO " + table + " (label) VALUES ('kept')", "id", Tx.Binder.NONE))
+            .join();
+        String update = "UPDATE " + table + " SET label = 'changed'";
+        String delete = "DELETE FROM " + table;
+
+        List<String> refused = storage().async(tx -> {
+            List<String> messages = new ArrayList<>();
+            for (String sql : List.of(update, delete)) {
+                try {
+                    tx.insert(sql, "id", Tx.Binder.NONE);
+                } catch (SQLException failure) {
+                    messages.add(failure.getMessage());
+                }
+            }
+            return messages;
+        }).join();
+
+        assertThat(refused).containsExactly("insert runs a statement that begins with INSERT: " + update,
+            "insert runs a statement that begins with INSERT: " + delete);
+        assertThat(keyedLabels(table)).containsExactly("kept");
+    }
+
+    @Test
+    void anInsertIntoATableWithoutAGeneratedColumnHasNoKeyExceptTheRowidOfSqlite() {
+        String sql = "INSERT INTO " + probe() + " (id, state) VALUES (?, 'A')";
+        CompletableFuture<Long> key = storage().async(tx -> tx.insert(sql, "state",
+            params -> params.uuid(UUID.randomUUID())));
+
+        switch (dialect()) {
+            case SQLITE -> assertThat(key.join()).isEqualTo(1L);
+            case MYSQL, MARIADB -> assertThatThrownBy(key::join).cause().isInstanceOf(SQLException.class)
+                .hasMessage("the statement generated no key: " + sql);
+            case POSTGRES -> assertThatThrownBy(key::join).cause().isInstanceOf(SQLException.class)
+                .hasMessage("the generated key is a java.lang.String that is not a whole number that fits a long: "
+                    + sql);
+        }
+        assertThat(count()).isEqualTo(dialect() == Dialect.SQLITE ? 1 : 0);
+    }
+
+    @Test
+    void theKeyOfARolledBackInsertBelongsToNoRowAndOnlySqliteGivesItAgain() {
+        String table = keyed();
+        String sql = "INSERT INTO " + table + " (label) VALUES (?)";
+        AtomicReference<Long> lost = new AtomicReference<>();
+
+        assertThatThrownBy(() -> storage().async(tx -> {
+            lost.set(tx.insert(sql, "id", params -> params.text("lost")));
+            throw new IllegalStateException("rolled back");
+        }).join()).hasCauseInstanceOf(IllegalStateException.class);
+        long kept = storage().async(tx -> tx.insert(sql, "id", params -> params.text("kept"))).join();
+
+        assertThat(keyedLabels(table)).containsExactly("kept");
+        assertThat(labelOf(table, kept)).isEqualTo("kept");
+        if (dialect() == Dialect.SQLITE) {
+            assertThat(kept).isEqualTo(lost.get());
+        } else {
+            assertThat(kept).isGreaterThan(lost.get());
+        }
+    }
+
+    /**
+     * Creates the table {@code keyed} anew, whose generated key {@code id} is its second column, and returns its
+     * name.
+     */
+    String keyed() {
+        String table = storage().table("keyed");
+        String key = switch (dialect()) {
+            case SQLITE -> "INTEGER PRIMARY KEY AUTOINCREMENT";
+            case MYSQL, MARIADB -> "BIGINT AUTO_INCREMENT PRIMARY KEY";
+            case POSTGRES -> "BIGSERIAL PRIMARY KEY";
+        };
+        storage().async(tx -> {
+            tx.execute("DROP TABLE IF EXISTS " + table);
+            tx.execute("CREATE TABLE " + table + " (label VARCHAR(16) NOT NULL UNIQUE, id " + key + ")");
+            return null;
+        }).join();
+        return table;
+    }
+
+    String labelOf(String table, long id) {
+        return storage().read(tx -> tx.queryOne("SELECT label FROM " + table + " WHERE id = ?",
+            params -> params.integer(id), row -> row.text("label")).orElseThrow()).join();
+    }
+
+    List<String> keyedLabels(String table) {
+        return storage().read(tx -> tx.query("SELECT label FROM " + table + " ORDER BY id", Tx.Binder.NONE,
+            row -> row.text("label"))).join();
+    }
+
     void insert(UUID id, String state, BigDecimal amount, Instant at, String doc, byte[] data) {
         String sql = "INSERT INTO " + probe() + " (" + String.join(", ", COLUMNS) + ") VALUES (?, ?, ?, ?, ?, ?)";
         storage().async(tx -> tx.update(sql,

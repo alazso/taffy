@@ -618,6 +618,67 @@ final class PostgresStorageTest extends StorageContract {
             server.password());
     }
 
+    @Test
+    void anInsertNamesTheKeyColumnInTheLetterCaseTheCatalogHolds() {
+        String table = keyed();
+        String quoted = storage().table("quoted_keyed");
+        String sql = "INSERT INTO " + table + " (label) VALUES (?)";
+        String intoQuoted = "INSERT INTO " + quoted + " (label) VALUES (?)";
+        storage().async(tx -> {
+            tx.execute("DROP TABLE IF EXISTS " + quoted);
+            tx.execute("CREATE TABLE " + quoted + " (label VARCHAR(16), \"Id\" BIGSERIAL PRIMARY KEY)");
+            return null;
+        }).join();
+
+        long key = storage().async(tx -> tx.insert(intoQuoted, "Id", params -> params.text("quoted"))).join();
+
+        assertThat(storage().read(tx -> tx.queryOne("SELECT label FROM " + quoted + " WHERE \"Id\" = ?",
+            params -> params.integer(key), row -> row.text("label"))).join()).contains("quoted");
+        assertThatThrownBy(() -> storage().async(tx -> tx.insert(intoQuoted, "id", params -> params.text("lower")))
+            .join()).cause().isInstanceOf(SQLException.class).hasMessageContaining("column \"id\" does not exist");
+        assertThatThrownBy(() -> storage().async(tx -> tx.insert(sql, "ID", params -> params.text("upper")))
+            .join()).cause().isInstanceOf(SQLException.class).hasMessageContaining("column \"ID\" does not exist");
+        assertThat(keyedLabels(table)).isEmpty();
+    }
+
+    @Test
+    void anInsertRefusesAKeyColumnThatHoldsNoWholeNumberThatFitsALong() {
+        String table = storage().table("odd_keyed");
+        String sql = "INSERT INTO " + table + " (label) VALUES ('odd')";
+        storage().async(tx -> {
+            tx.execute("DROP TABLE IF EXISTS " + table);
+            tx.execute("CREATE TABLE " + table + " (label VARCHAR(16), id UUID NOT NULL DEFAULT gen_random_uuid(),"
+                + " big NUMERIC(30) NOT NULL DEFAULT 123456789012345678901234567890,"
+                + " fits NUMERIC(30) NOT NULL DEFAULT 42, absent BIGINT)");
+            return null;
+        }).join();
+
+        assertThat(storage().async(tx -> tx.insert(sql, "fits", Tx.Binder.NONE)).join()).isEqualTo(42L);
+        assertThatThrownBy(() -> storage().async(tx -> tx.insert(sql, "id", Tx.Binder.NONE)).join())
+            .cause().isInstanceOf(SQLException.class).hasMessage(
+                "the generated key is a java.util.UUID that is not a whole number that fits a long: " + sql);
+        assertThatThrownBy(() -> storage().async(tx -> tx.insert(sql, "big", Tx.Binder.NONE)).join())
+            .cause().isInstanceOf(SQLException.class).hasMessage(
+                "the generated key is a java.math.BigDecimal that is not a whole number that fits a long: " + sql);
+        assertThatThrownBy(() -> storage().async(tx -> tx.insert(sql, "absent", Tx.Binder.NONE)).join())
+            .cause().isInstanceOf(SQLException.class).hasMessage("the statement generated no key: " + sql);
+        assertThat(storage().read(tx -> tx.query("SELECT fits FROM " + table, Tx.Binder.NONE,
+            row -> row.integer("fits"))).join()).containsExactly(42L);
+    }
+
+    @Test
+    void anInsertOnConflictDoUpdateThatFindsTheRowReturnsTheKeyOfThatRow() {
+        String table = keyed();
+        String upsert = "INSERT INTO " + table + " (label) VALUES ('taken') ON CONFLICT (label) DO UPDATE SET"
+            + " label = 'taken'";
+
+        long inserted = storage().async(tx -> tx.insert(upsert, "id", Tx.Binder.NONE)).join();
+        long updated = storage().async(tx -> tx.insert(upsert, "id", Tx.Binder.NONE)).join();
+
+        assertThat(updated).isEqualTo(inserted);
+        assertThat(keyedLabels(table)).containsExactly("taken");
+    }
+
     private static boolean advisory(Connection connection, String function, long key) throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("SELECT " + function + "(?)")) {
             statement.setLong(1, key);

@@ -522,6 +522,54 @@ abstract class CheckpointedStorageContract extends StorageContract {
         }
     }
 
+    @Test
+    void anInsertIgnoresTheNameOfTheKeyColumnAndReturnsTheAutoIncrementValue() {
+        String table = keyed();
+
+        long key = storage().async(tx -> tx.insert("INSERT INTO " + table + " (label) VALUES ('named')", "label",
+            Tx.Binder.NONE)).join();
+
+        assertThat(labelOf(table, key)).isEqualTo("named");
+    }
+
+    @Test
+    void anInsertOnDuplicateKeyUpdateThatFindsTheRowIsRefusedByItsCount() {
+        String table = keyed();
+        String upsert = "INSERT INTO " + table + " (label) VALUES ('taken') ON DUPLICATE KEY UPDATE label = ?";
+
+        long key = storage().async(tx -> tx.insert(upsert, "id", params -> params.text("unused"))).join();
+
+        assertThat(labelOf(table, key)).isEqualTo("taken");
+        assertThatThrownBy(() -> storage().async(tx -> tx.insert(upsert, "id", params -> params.text("taken")))
+            .join()).cause().isInstanceOf(SQLException.class).hasMessage(
+                "the statement counted 0 rows, and insert returns the key of exactly one inserted row: " + upsert);
+        assertThatThrownBy(() -> storage().async(tx -> tx.insert(upsert, "id", params -> params.text("changed")))
+            .join()).cause().isInstanceOf(SQLException.class).hasMessage(
+                "the statement counted 2 rows, and insert returns the key of exactly one inserted row: " + upsert);
+        assertThat(keyedLabels(table)).containsExactly("taken");
+    }
+
+    @Test
+    void anUnsignedKeyAboveTheLargestLongThrowsOnMySqlAndComesBackNegativeOnMariaDb() {
+        String table = storage().table("unsigned_keyed");
+        String sql = "INSERT INTO " + table + " (label, id) VALUES ('edge', 18446744073709551000)";
+        storage().async(tx -> {
+            tx.execute("DROP TABLE IF EXISTS " + table);
+            tx.execute("CREATE TABLE " + table + " (label VARCHAR(16), id BIGINT UNSIGNED AUTO_INCREMENT"
+                + " PRIMARY KEY)");
+            return null;
+        }).join();
+
+        CompletableFuture<Long> key = storage().async(tx -> tx.insert(sql, "id", Tx.Binder.NONE));
+
+        if (dialect() == Dialect.MYSQL) {
+            assertThatThrownBy(key::join).cause().isInstanceOf(SQLException.class).hasMessage(
+                "the generated key is a java.math.BigInteger that is not a whole number that fits a long: " + sql);
+        } else {
+            assertThat(key.join()).isNegative();
+        }
+    }
+
     /** Starts storage with no migrations, recording them in {@code <prefix>schema_version}. */
     private Storage start(StorageSettings settings) {
         return TestPlugins.start(TestPlugins.plugin(name(), Path.of("unused"), Logger.getAnonymousLogger()),

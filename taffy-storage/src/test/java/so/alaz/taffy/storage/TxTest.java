@@ -6,6 +6,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -207,6 +209,91 @@ final class TxTest {
         tx.close();
         assertThatThrownBy(() -> tx.batch("DELETE FROM p_probe", List.of()))
             .isInstanceOf(IllegalStateException.class).hasMessage("this transaction has ended");
+    }
+
+    @Test
+    void anInsertReturnsTheRowidOfItsRowWhateverColumnIsNamed() throws SQLException {
+        tx.execute("CREATE TABLE p_entry (label TEXT UNIQUE, id INTEGER PRIMARY KEY AUTOINCREMENT)");
+        String sql = "  insert into p_entry (label) VALUES (?)";
+
+        long first = tx.insert(sql, "id", params -> params.text("A"));
+        long second = tx.insert(sql, "missing", params -> params.text("B"));
+        long withoutKeyColumn = tx.insert("INSERT INTO p_probe (id, state) VALUES (?, 'A')", "id",
+            params -> params.uuid(UUID.randomUUID()));
+
+        assertThat(List.of(first, second, withoutKeyColumn)).containsExactly(1L, 2L, 1L);
+        assertThat(tx.query("SELECT label FROM p_entry WHERE id = ?", params -> params.integer(second),
+            row -> row.text("label"))).containsExactly("B");
+    }
+
+    @Test
+    void anInsertRefusesAStatementThatCountsAnotherNumberOfRowsThanOne() throws SQLException {
+        tx.execute("CREATE TABLE p_entry (label TEXT UNIQUE, id INTEGER PRIMARY KEY AUTOINCREMENT)");
+        tx.insert("INSERT INTO p_entry (label) VALUES ('A')", "id", Tx.Binder.NONE);
+        String ignored = "INSERT OR IGNORE INTO p_entry (label) VALUES ('A')";
+        String several = "INSERT INTO p_entry (label) VALUES ('B'), ('C')";
+
+        assertThatThrownBy(() -> tx.insert(ignored, "id", Tx.Binder.NONE)).isInstanceOf(SQLException.class)
+            .hasMessage("the statement counted 0 rows, and insert returns the key of exactly one inserted row: "
+                + ignored);
+        assertThatThrownBy(() -> tx.insert(several, "id", Tx.Binder.NONE)).isInstanceOf(SQLException.class)
+            .hasMessage("the statement counted 2 rows, and insert returns the key of exactly one inserted row: "
+                + several);
+    }
+
+    @Test
+    void anInsertRefusesAnotherStatementANullOrBlankKeyColumnAndAnEndedTransaction() throws SQLException {
+        String insert = "INSERT INTO p_probe (id, state) VALUES (?, 'A')";
+        Tx.Binder binder = params -> params.uuid(UUID.randomUUID());
+        String update = "UPDATE p_probe SET state = 'B'";
+
+        assertThatThrownBy(() -> tx.insert(update, "id", Tx.Binder.NONE)).isInstanceOf(SQLException.class)
+            .hasMessage("insert runs a statement that begins with INSERT: " + update);
+        assertThatThrownBy(() -> tx.insert(insert, null, binder))
+            .isInstanceOf(NullPointerException.class).hasMessage("keyColumn");
+        assertThatThrownBy(() -> tx.insert(insert, " ", binder)).isInstanceOf(IllegalArgumentException.class)
+            .hasMessage("keyColumn is blank; name the column of the generated key");
+        assertThat(tx.query("SELECT state FROM p_probe", Tx.Binder.NONE, row -> row.text("state"))).isEmpty();
+        tx.close();
+        assertThatThrownBy(() -> tx.insert(insert, "id", binder))
+            .isInstanceOf(IllegalStateException.class).hasMessage("this transaction has ended");
+    }
+
+    @Test
+    void sqliteAnswersTheRowidOfAnEarlierInsertForAnUpsertThatUpdatedAndForATableWithoutRowid()
+        throws SQLException {
+        tx.execute("CREATE TABLE p_entry (label TEXT UNIQUE, id INTEGER PRIMARY KEY AUTOINCREMENT)");
+        tx.execute("CREATE TABLE p_bare (name TEXT PRIMARY KEY) WITHOUT ROWID");
+        String upsert = "INSERT INTO p_entry (label) VALUES ('A') ON CONFLICT (label) DO UPDATE SET label = 'A'";
+        long first = tx.insert(upsert, "id", Tx.Binder.NONE);
+        long other = tx.insert("INSERT INTO p_entry (label) VALUES ('B')", "id", Tx.Binder.NONE);
+
+        long updated = tx.insert(upsert, "id", Tx.Binder.NONE);
+        long bare = tx.insert("INSERT INTO p_bare (name) VALUES ('A')", "name", Tx.Binder.NONE);
+
+        assertThat(List.of(first, other, updated, bare)).containsExactly(1L, 2L, 2L, 2L);
+    }
+
+    @Test
+    void aGeneratedKeyIsAWholeNumberThatFitsALong() throws SQLException {
+        assertThat(Tx.key(7, "SQL")).isEqualTo(7L);
+        assertThat(Tx.key(Long.MIN_VALUE, "SQL")).isEqualTo(Long.MIN_VALUE);
+        assertThat(Tx.key(BigInteger.valueOf(Long.MAX_VALUE), "SQL")).isEqualTo(Long.MAX_VALUE);
+        assertThat(Tx.key(new BigDecimal("12.00"), "SQL")).isEqualTo(12L);
+
+        assertThatThrownBy(() -> Tx.key(null, "SQL")).isInstanceOf(SQLException.class)
+            .hasMessage("the statement generated no key: SQL");
+        assertThatThrownBy(() -> Tx.key(BigInteger.valueOf(Long.MAX_VALUE).add(BigInteger.ONE), "SQL"))
+            .isInstanceOf(SQLException.class).hasCauseInstanceOf(ArithmeticException.class)
+            .hasMessage("the generated key is a java.math.BigInteger that is not a whole number that fits a long:"
+                + " SQL");
+        assertThatThrownBy(() -> Tx.key(new BigDecimal("1.5"), "SQL")).isInstanceOf(SQLException.class)
+            .hasMessage("the generated key is a java.math.BigDecimal that is not a whole number that fits a long:"
+                + " SQL");
+        assertThatThrownBy(() -> Tx.key(Double.NaN, "SQL")).isInstanceOf(SQLException.class)
+            .hasCauseInstanceOf(NumberFormatException.class);
+        assertThatThrownBy(() -> Tx.key("7", "SQL")).isInstanceOf(SQLException.class)
+            .hasMessage("the generated key is a java.lang.String that is not a whole number that fits a long: SQL");
     }
 
     @Test

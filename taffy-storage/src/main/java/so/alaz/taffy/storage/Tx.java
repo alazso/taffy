@@ -1,5 +1,8 @@
 package so.alaz.taffy.storage;
 
+import org.jetbrains.annotations.Nullable;
+
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -118,6 +121,99 @@ public final class Tx {
             binder.bind(new Params(statement, dialect));
             return statement.executeUpdate();
         }
+    }
+
+    /**
+     * Runs an {@code INSERT} of one row and returns the key the database generated for that row, such as the value
+     * of an {@code AUTO_INCREMENT}, {@code BIGSERIAL} or {@code INTEGER PRIMARY KEY} column.
+     *
+     * <p>The statement is prepared with {@code keyColumn} named as the column of the generated key:
+     * <ul>
+     *   <li>PostgreSQL returns the value of that column, wherever the table declares it. It matches the name
+     *       exactly as its catalog holds it: in lower case for a column created without quotes, and in the letter
+     *       case of the quoted name, written here without the quotes, for a column created with them. A name the
+     *       table does not have fails the statement.</li>
+     *   <li>MySQL and MariaDB ignore the name and return the value of the {@code AUTO_INCREMENT} column of the
+     *       table.</li>
+     *   <li>SQLite ignores the name and returns the rowid of the row. That is the value of an
+     *       {@code INTEGER PRIMARY KEY} column, and a table without such a column has a rowid too.</li>
+     * </ul>
+     *
+     * <p>The method throws {@link SQLException}, with the statement at the end of the message, when:
+     * <ul>
+     *   <li>the statement does not begin with {@code INSERT}. Nothing is sent to the database then.</li>
+     *   <li>the statement counts another number of rows than 1: an insert that wrote no row, such as
+     *       {@code INSERT IGNORE} or {@code ON CONFLICT DO NOTHING} over an existing row, an insert of several
+     *       rows, and on MySQL and MariaDB an {@code ON DUPLICATE KEY UPDATE} that found the row, which counts 2
+     *       or 0.</li>
+     *   <li>the database returns no key: on MySQL and MariaDB a table without an {@code AUTO_INCREMENT} column,
+     *       on PostgreSQL a key column that holds {@code NULL}.</li>
+     *   <li>the key is not a whole number that fits a {@code long}, such as a text or {@code UUID} column named on
+     *       PostgreSQL.</li>
+     * </ul>
+     * In the last three cases the statement has run and what it wrote is in the open transaction, so the work lets
+     * the exception through and the transaction rolls back.
+     *
+     * <p>Three results are not detected. On SQLite an insert into a {@code WITHOUT ROWID} table, and an
+     * {@code ON CONFLICT DO UPDATE} that updated the existing row, return the rowid of an earlier insert of the
+     * connection. On PostgreSQL an {@code ON CONFLICT DO UPDATE} that updated the existing row returns the key of
+     * that row. On MariaDB a key of a {@code BIGINT UNSIGNED} column above {@link Long#MAX_VALUE} comes back
+     * negative, where MySQL throws. Work that upserts reads the key with a query.
+     *
+     * <p>The row and its key belong to the transaction: when it rolls back, no row has the key. MySQL, MariaDB
+     * and PostgreSQL do not give that key to a later insert; SQLite gives it again.
+     *
+     * <p>As every statement of a transaction, the insert runs on the database thread that runs the work, on Folia
+     * too, and never on a server thread.
+     *
+     * @param sql the {@code INSERT} statement of one row, with a {@code ?} for each value
+     * @param keyColumn the name of the column that holds the generated key
+     * @param binder binds the values
+     * @return the generated key of the inserted row
+     * @throws SQLException if the statement fails, or in the cases listed above
+     * @throws NullPointerException if {@code keyColumn} is {@code null}
+     * @throws IllegalArgumentException if {@code keyColumn} is blank
+     * @throws IllegalStateException if called from another thread or after the work has returned
+     * @since 0.4.15
+     */
+    public long insert(String sql, String keyColumn, Binder binder) throws SQLException {
+        check();
+        if (Objects.requireNonNull(keyColumn, "keyColumn").isBlank()) {
+            throw new IllegalArgumentException("keyColumn is blank; name the column of the generated key");
+        }
+        if (!sql.stripLeading().regionMatches(true, 0, "INSERT", 0, 6)) {
+            throw new SQLException("insert runs a statement that begins with INSERT: " + sql);
+        }
+        try (PreparedStatement statement = connection.prepareStatement(sql, new String[] {keyColumn})) {
+            binder.bind(new Params(statement, dialect));
+            int rows = statement.executeUpdate();
+            if (rows != 1) {
+                throw new SQLException("the statement counted " + rows
+                    + " rows, and insert returns the key of exactly one inserted row: " + sql);
+            }
+            try (ResultSet keys = statement.getGeneratedKeys()) {
+                return key(keys.next() ? keys.getObject(1) : null, sql);
+            }
+        }
+    }
+
+    static long key(@Nullable Object key, String sql) throws SQLException {
+        if (key == null) {
+            throw new SQLException("the statement generated no key: " + sql);
+        }
+        if (key instanceof Number number) {
+            try {
+                return new BigDecimal(number.toString()).longValueExact();
+            } catch (ArithmeticException | NumberFormatException unfit) {
+                throw new SQLException(unfit(key, sql), unfit);
+            }
+        }
+        throw new SQLException(unfit(key, sql));
+    }
+
+    private static String unfit(Object key, String sql) {
+        return "the generated key is a " + key.getClass().getName()
+            + " that is not a whole number that fits a long: " + sql;
     }
 
     /**

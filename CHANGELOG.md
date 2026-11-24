@@ -5,6 +5,18 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `taffy-storage`: `long Tx.insert(String sql, String keyColumn, Tx.Binder binder)` runs an `INSERT` of one row and
+  returns the key the database generated for it, such as the value of an `AUTO_INCREMENT`, `BIGSERIAL` or
+  `INTEGER PRIMARY KEY` column. The statement is prepared with `keyColumn` named, so PostgreSQL returns that
+  column wherever the table declares it; the name is matched there as the catalog holds it (lower case for a
+  column created without quotes). MySQL and MariaDB ignore the name and return the `AUTO_INCREMENT` value, and
+  SQLite ignores it and returns the rowid of the row. The call throws `SQLException` with the statement in its
+  message when the statement does not begin with `INSERT` (nothing is sent then), when it counts another number
+  of rows than 1 (an `INSERT IGNORE` or `ON CONFLICT DO NOTHING` that wrote no row, an insert of several rows),
+  when the database returns no key, and when the key is not a whole number that fits a `long`. It runs on the
+  database thread of its transaction like `update`, on Folia too.
+
 ## [0.4.14] - 2026-11-24
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.33.0 and bStats 3.2.1.
