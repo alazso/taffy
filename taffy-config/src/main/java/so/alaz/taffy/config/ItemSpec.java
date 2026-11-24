@@ -28,7 +28,7 @@ import java.util.logging.Logger;
  * An item as a configuration file defines it, read by {@link ConfigReader#item(String, ItemKeys)} without a
  * running server and turned into an {@link ItemBuilder} by {@link #overMaterial} or {@link #overStack} on one.
  *
- * <p>The record holds what the file says and resolves nothing against the server: the name and the lore are the
+ * <p>An instance holds what the file says and resolves nothing against the server: the name and the lore are the
  * MiniMessage texts as written, and the keys of the enchantments and of the trim are texts. The two build
  * methods render the texts with the function the plugin passes and look the keys up in the registries of the
  * server. A key the server does not have is passed to the problem consumer and skipped. Neither method throws
@@ -39,37 +39,25 @@ import java.util.logging.Logger;
  * {@code <plugin>:<id>} reference with {@code CustomItems} of {@code taffy-hooks}, and passes that stack to
  * {@link #overStack}.
  *
- * <p>The record is immutable. Reading one needs no server, so it may happen on any thread.
+ * <p>An instance is immutable and comes only from the reader, so a later release can add a part without changing
+ * a signature. Two instances are equal when every part is. Reading one needs no server, so it may happen on any
+ * thread.
  *
- * @param file the name of the file the item was read from, or {@code null} when the reader was built without
- *     one. It becomes the file of every {@link ConfigProblem} the build methods report.
- * @param path the path of the group of keys the item was read from, as the reader writes it in its lines, such
- *     as {@code item} or {@code rewards[1].item}
- * @param material the material, or {@code null} when the file names none
- * @param reference the item reference, such as {@code serialized:<base64>} or {@code nexo:ruby_sword}, without
- *     surrounding whitespace, or {@code null} when the file names none
- * @param name the name as MiniMessage text, or {@code null} when the file names none
- * @param lore the lore lines as MiniMessage text, in file order
- * @param glow whether the item glints
- * @param itemModel the item model, or {@code null} when the file names none
- * @param customModelData the floats of the custom model data, in file order
- * @param enchantments the level of each enchantment by its key as written in lower case, such as
- *     {@code sharpness} or {@code minecraft:sharpness}, in file order. Every level is 1 or more.
- * @param trim the armour trim, or {@code null} when the file names none
  * @since 0.4.14
  */
-public record ItemSpec(
-    @Nullable String file,
-    String path,
-    @Nullable Material material,
-    @Nullable String reference,
-    @Nullable String name,
-    List<String> lore,
-    boolean glow,
-    @Nullable NamespacedKey itemModel,
-    List<Float> customModelData,
-    Map<String, Integer> enchantments,
-    @Nullable Trim trim) {
+public final class ItemSpec {
+
+    private final @Nullable String file;
+    private final String path;
+    private final @Nullable Material material;
+    private final @Nullable String reference;
+    private final @Nullable String name;
+    private final List<String> lore;
+    private final boolean glow;
+    private final @Nullable NamespacedKey itemModel;
+    private final List<Float> customModelData;
+    private final Map<String, Integer> enchantments;
+    private final @Nullable Trim trim;
 
     /**
      * The keys of an armour trim, each as written in lower case, such as {@code quartz} and {@code sentry}.
@@ -90,26 +78,169 @@ public record ItemSpec(
         }
     }
 
-    /**
-     * Copies {@code lore}, {@code customModelData} and {@code enchantments}, which keeps its order.
-     *
-     * @throws NullPointerException when {@code path}, {@code lore}, {@code customModelData} or
-     *     {@code enchantments} is {@code null} or holds a {@code null}
-     * @since 0.4.14
-     */
-    public ItemSpec {
-        Objects.requireNonNull(path, "path");
-        lore = List.copyOf(lore);
-        customModelData = List.copyOf(customModelData);
+    ItemSpec(
+        @Nullable String file,
+        String path,
+        @Nullable Material material,
+        @Nullable String reference,
+        @Nullable String name,
+        List<String> lore,
+        boolean glow,
+        @Nullable NamespacedKey itemModel,
+        List<Float> customModelData,
+        Map<String, Integer> enchantments,
+        @Nullable Trim trim) {
+        this.file = file;
+        this.path = Objects.requireNonNull(path, "path");
+        this.material = material;
+        this.reference = reference;
+        this.name = name;
+        this.lore = List.copyOf(lore);
+        this.glow = glow;
+        this.itemModel = itemModel;
+        this.customModelData = List.copyOf(customModelData);
         Map<String, Integer> levels = new LinkedHashMap<>();
         enchantments.forEach((key, level) ->
             levels.put(Objects.requireNonNull(key, "enchantment"), Objects.requireNonNull(level, "level")));
-        enchantments = Collections.unmodifiableMap(levels);
+        this.enchantments = Collections.unmodifiableMap(levels);
+        this.trim = trim;
+    }
+
+    /**
+     * The name of the file the item was read from, or {@code null} when the reader was built without one. It is
+     * the file of every {@link ConfigProblem} the build methods report.
+     *
+     * @since 0.4.14
+     */
+    public @Nullable String file() {
+        return file;
+    }
+
+    /**
+     * The path of the group of keys the item was read from, as the reader writes it in its lines, such as
+     * {@code item} or {@code rewards[1].item}.
+     *
+     * @since 0.4.14
+     */
+    public String path() {
+        return path;
+    }
+
+    /**
+     * The material, or {@code null} when the file names none.
+     *
+     * @since 0.4.14
+     */
+    public @Nullable Material material() {
+        return material;
+    }
+
+    /**
+     * The item reference, such as {@code serialized:<base64>} or {@code nexo:ruby_sword}, without surrounding
+     * whitespace, or {@code null} when the file names none.
+     *
+     * @since 0.4.14
+     */
+    public @Nullable String reference() {
+        return reference;
+    }
+
+    /**
+     * The name as MiniMessage text, or {@code null} when the file names none.
+     *
+     * @since 0.4.14
+     */
+    public @Nullable String name() {
+        return name;
+    }
+
+    /**
+     * The lore lines as MiniMessage text, in file order, as an unmodifiable list.
+     *
+     * @since 0.4.14
+     */
+    public List<String> lore() {
+        return lore;
+    }
+
+    /**
+     * Whether the item glints.
+     *
+     * @since 0.4.14
+     */
+    public boolean glow() {
+        return glow;
+    }
+
+    /**
+     * The item model, or {@code null} when the file names none.
+     *
+     * @since 0.4.14
+     */
+    public @Nullable NamespacedKey itemModel() {
+        return itemModel;
+    }
+
+    /**
+     * The floats of the custom model data, in file order, as an unmodifiable list.
+     *
+     * @since 0.4.14
+     */
+    public List<Float> customModelData() {
+        return customModelData;
+    }
+
+    /**
+     * The level of each enchantment by its key as written in lower case, such as {@code sharpness} or
+     * {@code minecraft:sharpness}, in file order, as an unmodifiable map. Every level is 1 or more.
+     *
+     * @since 0.4.14
+     */
+    public Map<String, Integer> enchantments() {
+        return enchantments;
+    }
+
+    /**
+     * The armour trim, or {@code null} when the file names none.
+     *
+     * @since 0.4.14
+     */
+    public @Nullable Trim trim() {
+        return trim;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        return other instanceof ItemSpec spec
+            && glow == spec.glow
+            && Objects.equals(file, spec.file)
+            && path.equals(spec.path)
+            && material == spec.material
+            && Objects.equals(reference, spec.reference)
+            && Objects.equals(name, spec.name)
+            && lore.equals(spec.lore)
+            && Objects.equals(itemModel, spec.itemModel)
+            && customModelData.equals(spec.customModelData)
+            && enchantments.equals(spec.enchantments)
+            && Objects.equals(trim, spec.trim);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(
+            file, path, material, reference, name, lore, glow, itemModel, customModelData, enchantments, trim);
+    }
+
+    @Override
+    public String toString() {
+        return "ItemSpec[file=" + file + ", path=" + path + ", material=" + material + ", reference=" + reference
+            + ", name=" + name + ", lore=" + lore + ", glow=" + glow + ", itemModel=" + itemModel
+            + ", customModelData=" + customModelData + ", enchantments=" + enchantments + ", trim=" + trim + "]";
     }
 
     /**
      * A builder that starts from a new stack of {@link #material()}, or of {@code fallback} when the file names
-     * no material, with every part of this record applied to it.
+     * no material, with every part of this item applied to it.
      *
      * <p>The name and each lore line go through {@code renderer} once per call and are set with
      * {@link ItemBuilder#name} and {@link ItemBuilder#lore}, which take the default italic styling off. Taffy
@@ -159,7 +290,7 @@ public record ItemSpec(
     }
 
     /**
-     * A builder that starts from {@code base}, with every part of this record applied to it as
+     * A builder that starts from {@code base}, with every part of this item applied to it as
      * {@link #overMaterial} applies it. {@link #material()} is not used, and the stack keeps each property the
      * file does not name, as {@link ItemBuilder#ItemBuilder(ItemStack)} states.
      *

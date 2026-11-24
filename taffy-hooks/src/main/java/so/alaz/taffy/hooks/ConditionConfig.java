@@ -3,7 +3,10 @@ package so.alaz.taffy.hooks;
 import org.bukkit.configuration.ConfigurationSection;
 import org.jetbrains.annotations.Nullable;
 
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -16,6 +19,8 @@ import java.util.Objects;
  * @since 0.4.14
  */
 public final class ConditionConfig {
+
+    private static final long DAY_MILLIS = 86_400_000L;
 
     private final String type;
     private final String path;
@@ -70,8 +75,10 @@ public final class ConditionConfig {
 
     /**
      * The text of a key that may be left out. A number and a boolean are given as {@link String#valueOf(Object)}
-     * writes them. A list or a group of keys is the error {@code is a list; expected a single value} or
-     * {@code is a group of keys; expected a single value}.
+     * writes them, so {@code yes} without quotes is {@code true} and {@code 010} is {@code 8}, and a date
+     * without quotes and without a time ({@code 2026-12-31}) is given as it is written. A date with a time and
+     * without quotes, a list or a group of keys is an error, such as {@code is a list; expected a single value}
+     * or {@code is a group of keys; expected a single value}.
      *
      * @param key the key inside the entry
      * @return the text, or {@code null} when the key is absent or holds an error
@@ -83,11 +90,11 @@ public final class ConditionConfig {
         if (value == null) {
             return null;
         }
-        if (!scalar(value)) {
+        String text = scalarText(value);
+        if (text == null) {
             error(key, "is " + ConditionRegistry.describe(value) + "; expected a single value", null);
-            return null;
         }
-        return String.valueOf(value);
+        return text;
     }
 
     /**
@@ -136,11 +143,12 @@ public final class ConditionConfig {
         int index = 0;
         for (Object entry : list) {
             String at = key + "[" + index++ + "]";
-            if (entry == null || !scalar(entry)) {
+            String text = entry == null ? null : scalarText(entry);
+            if (text == null) {
                 error(at, "is " + ConditionRegistry.describe(entry) + "; expected a single value", null);
                 bad = true;
             } else {
-                texts.add(String.valueOf(entry));
+                texts.add(text);
             }
         }
         return bad ? List.of() : List.copyOf(texts);
@@ -148,7 +156,7 @@ public final class ConditionConfig {
 
     /**
      * Passes one error of the entry to the {@link ConditionProblems} given to {@link ConditionRegistry#build}, at
-     * the path {@code <entry>.<key>}. An entry with an error is left out of the built list.
+     * the path {@code <entry>.<key>}. An entry with an error denies every player in the built condition.
      *
      * @param key the key inside the entry that is wrong
      * @param message what is wrong, as it reads after the path, without a full stop at the end
@@ -184,7 +192,17 @@ public final class ConditionConfig {
         problems.error(path, message, null);
     }
 
-    static boolean scalar(Object value) {
-        return value instanceof String || value instanceof Number || value instanceof Boolean;
+    /**
+     * The text of a single value, or {@code null} for a list, a group of keys and a date with a time. The parser
+     * gives a date written without quotes and without a time as a {@link Date} at midnight UTC.
+     */
+    static @Nullable String scalarText(Object value) {
+        if (value instanceof String || value instanceof Number || value instanceof Boolean) {
+            return String.valueOf(value);
+        }
+        if (value instanceof Date date && date.getTime() % DAY_MILLIS == 0) {
+            return LocalDate.ofInstant(date.toInstant(), ZoneOffset.UTC).toString();
+        }
+        return null;
     }
 }

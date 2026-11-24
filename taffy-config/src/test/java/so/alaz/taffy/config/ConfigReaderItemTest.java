@@ -271,10 +271,13 @@ final class ConfigReaderItemTest {
             number:
               name: 7
               item-model: 7
+            colon:
+              item-model: ":"
             """);
 
         ItemSpec spec = reader.item("item");
         ItemSpec number = reader.item("number");
+        assertThat(reader.item("colon").itemModel()).isNull();
 
         assertThat(spec.name()).isNull();
         assertThat(spec.lore()).isEmpty();
@@ -286,7 +289,9 @@ final class ConfigReaderItemTest {
             "item.lore is \"one line\"; expected a list such as [A, B], so [] is used.",
             "item.item-model is \"Not A Key\"; expected a key such as minecraft:diamond_sword, so no item model"
                 + " is set.",
-            "number.item-model is 7; expected a key such as minecraft:diamond_sword, so no item model is set.");
+            "number.item-model is 7; expected a key such as minecraft:diamond_sword, so no item model is set.",
+            "colon.item-model is \":\"; expected a key such as minecraft:diamond_sword, so no item model is"
+                + " set.");
         assertThat(reader.errors()).isEmpty();
     }
 

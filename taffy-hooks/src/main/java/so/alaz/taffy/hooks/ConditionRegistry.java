@@ -12,6 +12,7 @@ import so.alaz.taffy.platform.ThrowLog;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -48,8 +49,11 @@ import java.util.logging.Logger;
  *     written exactly as the world is named. Its default denial is {@value #WORLD_KEY}.</li>
  *   <li>{@value #PLACEHOLDER}, with the keys {@code placeholder}, {@code operator} and {@code value}: fills in the
  *     PlaceholderAPI placeholders of {@code placeholder} for the player, as {@link Text#resolve(String, Player)}
- *     does, and compares the result with {@code value}, which is used as written. Its default denial is
- *     {@value #NOT_MET_KEY}. The operator is read without regard to case and is {@code equals} when left out:
+ *     does, and compares the result with {@code value}. The value is the text of what the file's parser
+ *     read, so a value YAML reads as a boolean or a number is compared as Java writes it ({@code yes} as
+ *     {@code true}, {@code 010} as {@code 8}, {@code 1_000} as {@code 1000}) unless the owner puts it in quotes.
+ *     Its default denial is {@value #NOT_MET_KEY}. The operator is read without regard to case and is
+ *     {@code equals} when left out:
  *     {@code equals}, {@code ==} and {@code =} pass when the two texts are equal without regard to case;
  *     {@code !=}, {@code ne} and {@code not} when they are not; {@code contains} when the result holds the value,
  *     without regard to case; and {@code >} or {@code gt}, {@code >=} or {@code gte}, {@code <} or {@code lt}, and
@@ -150,6 +154,7 @@ public final class ConditionRegistry {
     private static final String TYPE = "type";
     private static final String DENY = "deny";
     private static final String SOURCE = "condition.";
+    private static final String UNBUILT = "unbuilt";
     private static final int DESCRIBE_LIMIT = 100;
 
     /** Renders the reason of a denial for the player who was denied. */
@@ -261,9 +266,11 @@ public final class ConditionRegistry {
      * empty.
      *
      * <p>Nothing in the list is thrown: each mistake is passed to {@code problems} as an error with its path, and
-     * the entry it is in is left out of the returned condition. A plugin therefore refuses the file when
-     * {@code problems} received an error, since a condition the owner wrote would otherwise not be checked. The
-     * errors are: a value that is not a list; an entry that is not a group of keys; a {@code type} that is missing
+     * the entry it is in denies every player in the returned condition, at its place in the file order. Its reason
+     * is the entry's {@code deny} text when the entry has a usable one, and the message {@value #NOT_MET_KEY}
+     * otherwise. A value that is not a list gives a condition that denies every player with that message. A plugin
+     * that refuses the file when {@code problems} received an error never tests such a condition. The errors
+     * are: a value that is not a list; an entry that is not a group of keys; a {@code type} that is missing
      * or not registered, with the registered names as the fix; a {@code deny} that is a list or a group of keys; a
      * key of the type that is missing or unusable; and a type that throws or builds nothing, which is also logged
      * as a warning and reported to the {@link ErrorReports} under {@code condition.<type>}.
@@ -279,7 +286,7 @@ public final class ConditionRegistry {
      *     {@link ConfigurationSection}s, or {@code null} for an absent key
      * @param path the path of the list in the file, which every error starts with
      * @param problems receives each error
-     * @return the condition for the entries that were built, tested on the thread the class description names
+     * @return the condition for the entries of the list, tested on the thread the class description names
      * @throws NullPointerException if {@code path} or {@code problems} is {@code null}
      * @since 0.4.14
      */
@@ -291,44 +298,43 @@ public final class ConditionRegistry {
         }
         if (!(value instanceof List<?> list)) {
             problems.error(path, "is " + describe(value) + "; expected a list of conditions", null);
-            return tested(List.of());
+            return tested(List.of(denying(UNBUILT, path, null)));
         }
         List<Entry> entries = new ArrayList<>(list.size());
         int index = 0;
         for (Object raw : list) {
-            Entry entry = entry(raw, path + "[" + index++ + "]", problems);
-            if (entry != null) {
-                entries.add(entry);
-            }
+            entries.add(entry(raw, path + "[" + index++ + "]", problems));
         }
         return tested(List.copyOf(entries));
     }
 
-    private @Nullable Entry entry(@Nullable Object raw, String path, ConditionProblems problems) {
+    /** The entry at {@code path}, or one that denies every player when the entry holds an error. */
+    private Entry entry(@Nullable Object raw, String path, ConditionProblems problems) {
         Map<String, Object> values = values(raw);
         if (values == null) {
             problems.error(path, "is " + describe(raw) + ", which is not a group of keys", null);
-            return null;
-        }
-        Object named = values.get(TYPE);
-        String known = "one of " + String.join(", ", types());
-        if (named == null) {
-            problems.error(path + "." + TYPE, "is missing", "name " + known);
-            return null;
-        }
-        String name = ConditionConfig.scalar(named) ? String.valueOf(named).toLowerCase(Locale.ROOT) : null;
-        ConditionType type = name == null ? null : types.get(name);
-        if (name == null || type == null) {
-            problems.error(path + "." + TYPE, "is " + describe(named) + ", which is not a registered condition type",
-                "use " + known);
-            return null;
+            return denying(UNBUILT, path, null);
         }
         Object denial = values.get(DENY);
-        boolean denyUsable = denial == null || ConditionConfig.scalar(denial);
+        String deny = denial == null ? null : ConditionConfig.scalarText(denial);
+        boolean denyUsable = denial == null || deny != null;
+        Object named = values.get(TYPE);
+        String known = "one of " + String.join(", ", types());
+        String name = named == null ? null : ConditionConfig.scalarText(named);
+        ConditionType type = name == null ? null : types.get(name.toLowerCase(Locale.ROOT));
+        if (named == null) {
+            problems.error(path + "." + TYPE, "is missing", "name " + known);
+        } else if (type == null) {
+            problems.error(path + "." + TYPE, "is " + describe(named) + ", which is not a registered condition type",
+                "use " + known);
+        }
         if (!denyUsable) {
             problems.error(path + "." + DENY, "is " + describe(denial) + "; expected a text", null);
         }
-        String deny = denial != null && denyUsable ? String.valueOf(denial) : null;
+        if (name == null || type == null) {
+            return denying(UNBUILT, path, deny);
+        }
+        name = name.toLowerCase(Locale.ROOT);
         ConditionConfig config = new ConditionConfig(name, path, values, deny, problems, denials);
         Condition condition = null;
         try {
@@ -341,9 +347,14 @@ public final class ConditionRegistry {
             config.entryError("could not be built, since the condition type " + name + " failed (" + ex + ")");
         }
         if (condition == null || config.errors() > 0 || !denyUsable) {
-            return null;
+            return denying(name, path, deny);
         }
         return new Entry(name, path, condition, config.denial(NOT_MET_KEY));
+    }
+
+    private Entry denying(String type, String path, @Nullable String deny) {
+        ConditionDenial denial = new ConditionDenial(deny, NOT_MET_KEY, denials);
+        return new Entry(type, path, denial::result, denial);
     }
 
     private Condition tested(List<Entry> entries) {
@@ -411,6 +422,10 @@ public final class ConditionRegistry {
         }
         if (value instanceof Map<?, ?> || value instanceof ConfigurationSection) {
             return "a group of keys";
+        }
+        if (value instanceof Date date) {
+            String day = ConditionConfig.scalarText(date);
+            return "the date " + (day == null ? date.toInstant().toString() : day);
         }
         String written = String.valueOf(value);
         String shown = written.length() > DESCRIBE_LIMIT ? written.substring(0, DESCRIBE_LIMIT) + "..." : written;

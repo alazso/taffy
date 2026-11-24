@@ -316,7 +316,7 @@ final class ConditionRegistryTest {
     }
 
     @Test
-    void anUnknownTypeIsAnErrorWithItsPathAndIsLeftOut() {
+    void anUnknownTypeIsAnErrorWithItsPathAndItsEntryDeniesAtItsPlace() {
         Condition condition = build("""
             conditions:
               - type: permission
@@ -324,19 +324,58 @@ final class ConditionRegistryTest {
                 deny: kept
               - type: economy
                 amount: 100
+              - type: nope
+                deny: later
             """);
 
-        assertThat(problems).containsExactly(new Problem("conditions[1].type",
-            "is \"economy\", which is not a registered condition type",
-            "use one of papi, permission, region, world"));
+        assertThat(problems).containsExactly(
+            new Problem("conditions[1].type", "is \"economy\", which is not a registered condition type",
+                "use one of papi, permission, region, world"),
+            new Problem("conditions[2].type", "is \"nope\", which is not a registered condition type",
+                "use one of papi, permission, region, world"));
         assertThat(reason(condition.test(player))).isEqualTo("deny:kept:0");
+        when(player.hasPermission("shop.vip")).thenReturn(true);
+        assertThat(reason(condition.test(player))).isEqualTo("key:condition.requirement-not-met:0");
+        assertThat(reason(build("""
+            conditions:
+              - type: nope
+                deny: mine
+            """).test(player))).isEqualTo("deny:mine:0");
         assertThat(log.lines()).isEmpty();
+        assertThat(reports).isEmpty();
+    }
+
+    @Test
+    void anUnquotedDateIsReadAsItIsWrittenAndADateWithATimeIsAnError() {
+        placeholders.put("%day%", "2026-12-31");
+        Condition condition = build("""
+            conditions:
+              - type: papi
+                placeholder: "%day%"
+                value: 2026-12-31
+              - type: permission
+                permission: shop.vip
+                deny: 2026-12-31
+            """);
+
+        assertThat(problems).isEmpty();
+        assertThat(reason(condition.test(player))).isEqualTo("deny:2026-12-31:0");
+
+        assertThat(reason(build("""
+            conditions:
+              - type: world
+                worlds: [2026-12-31]
+                deny: 2026-12-31T10:00:00Z
+            """).test(player))).isEqualTo("key:condition.requirement-not-met:0");
+        assertThat(problems).containsExactly(
+            new Problem("conditions[0].deny", "is the date 2026-12-31T10:00:00Z; expected a text", null));
     }
 
     @Test
     void aListThatIsNotAListAndAnEntryThatIsNotAGroupOfKeysAreErrors() {
-        assertThat(build("conditions: permission").test(player).passed()).isTrue();
-        assertThat(build("""
+        assertThat(reason(build("conditions: permission").test(player)))
+            .isEqualTo("key:condition.requirement-not-met:0");
+        assertThat(reason(build("""
             conditions:
               - permission
               -
@@ -344,7 +383,13 @@ final class ConditionRegistryTest {
               - 5
               - type: [permission]
               - permission: shop.vip
-            """).test(player).passed()).isTrue();
+            """).test(player))).isEqualTo("key:condition.requirement-not-met:0");
+        when(player.hasPermission("shop.vip")).thenReturn(true);
+        assertThat(reason(build("""
+            conditions:
+              - permission: shop.vip
+                deny: no type
+            """).test(player))).isEqualTo("deny:no type:0");
 
         assertThat(problems).containsExactly(
             new Problem("conditions", "is \"permission\"; expected a list of conditions", null),
@@ -354,11 +399,12 @@ final class ConditionRegistryTest {
             new Problem("conditions[3]", "is 5, which is not a group of keys", null),
             new Problem("conditions[4].type", "is a list, which is not a registered condition type",
                 "use one of papi, permission, region, world"),
-            new Problem("conditions[5].type", "is missing", "name one of papi, permission, region, world"));
+            new Problem("conditions[5].type", "is missing", "name one of papi, permission, region, world"),
+            new Problem("conditions[0].type", "is missing", "name one of papi, permission, region, world"));
     }
 
     @Test
-    void aBadKeyOfABuiltInTypeIsAnErrorAndItsEntryIsLeftOut() {
+    void aBadKeyOfABuiltInTypeIsAnErrorAndItsEntryDenies() {
         Condition condition = build("""
             conditions:
               - type: permission
@@ -412,7 +458,20 @@ final class ConditionRegistryTest {
                 "is \"five\", which is not a number, and the operator >= compares numbers", null),
             new Problem("conditions[12].operator", "is a list; expected a single value", null),
             new Problem("conditions[12].value", "is a group of keys; expected a single value", null));
-        assertThat(condition.test(player).passed()).isTrue();
+        assertThat(reason(condition.test(player))).isEqualTo("key:condition.requirement-not-met:0");
+        when(player.hasPermission("shop.vip")).thenReturn(true);
+        assertThat(reason(build("""
+            conditions:
+              - type: permission
+                permission: shop.vip
+                deny: [a]
+            """).test(player))).isEqualTo("key:condition.requirement-not-met:0");
+        assertThat(reason(build("""
+            conditions:
+              - type: world
+                worlds: spawn
+                deny: closed
+            """).test(player))).isEqualTo("deny:closed:0");
         assertThat(log.lines()).isEmpty();
         assertThat(reports).isEmpty();
     }
@@ -473,16 +532,16 @@ final class ConditionRegistryTest {
     }
 
     @Test
-    void aTypeThatReportsAnErrorIsLeftOutEvenWhenItBuildsACondition() {
+    void aTypeThatReportsAnErrorDeniesEvenWhenItBuildsACondition() {
         registry.register("strict", config -> {
             config.error("amount", "must be above 0", "write a positive amount");
-            return viewer -> ConditionResult.denied(Component.text("never"));
+            return viewer -> ConditionResult.pass();
         });
 
-        assertThat(build("""
+        assertThat(reason(build("""
             conditions:
               - type: strict
-            """).test(player).passed()).isTrue();
+            """).test(player))).isEqualTo("key:condition.requirement-not-met:0");
         assertThat(problems).containsExactly(
             new Problem("conditions[0].amount", "must be above 0", "write a positive amount"));
     }
@@ -491,10 +550,10 @@ final class ConditionRegistryTest {
     void aTypeThatBuildsNothingWithoutAnErrorIsAnErrorOfTheEntry() {
         registry.register("empty", config -> null);
 
-        assertThat(build("""
+        assertThat(reason(build("""
             conditions:
               - type: empty
-            """).test(player).passed()).isTrue();
+            """).test(player))).isEqualTo("key:condition.requirement-not-met:0");
         assertThat(problems).containsExactly(
             new Problem("conditions[0]", "could not be built by the condition type empty", null));
     }
@@ -506,10 +565,10 @@ final class ConditionRegistryTest {
             throw thrown;
         });
 
-        assertThat(build("""
+        assertThat(reason(build("""
             conditions:
               - type: broken
-            """).test(player).passed()).isTrue();
+            """).test(player))).isEqualTo("key:condition.requirement-not-met:0");
 
         assertThat(problems).containsExactly(new Problem("conditions[0]",
             "could not be built, since the condition type broken failed (" + thrown + ")", null));

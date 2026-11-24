@@ -7,15 +7,16 @@ All notable changes to Taffy are documented here. This project follows
 
 ### Added
 - `taffy-config`: `ConfigReader.item(String path)` and `item(String path, ItemKeys keys)` read an item definition
-  out of a group of keys into the new record `ItemSpec`: the material, an item reference kept as text
+  out of a group of keys into the new class `ItemSpec`: the material, an item reference kept as text
   (`serialized:<base64>` or `<plugin>:<id>`), the name and the lore as MiniMessage text, the glow, the item model,
   the custom model data as floats, the enchantment levels and the armour trim. The call needs no running server:
   the material is resolved through `Material.getMaterial`, in any letter case and with or without `minecraft:`,
   and the enchantment and trim keys stay text. No value throws. An absent group gives `null` with nothing
-  reported, a value that is not a group of keys and a material that does not exist are errors and give `null`,
-  and every other bad value (a level that is not a whole number of 1 or more, an item model that is not a key, a
-  custom model data entry that is not a number, a trim without both keys) is a warning that leaves out only that
-  part. A key of the group the reader was not told to read stays in `unreadKeys()`.
+  reported. A value that is not a group of keys, a material that does not exist and a reference that is not a
+  single value (a list, a group of keys or an unquoted date with a time) are errors and give `null`. A bad
+  optional part (a level that is not a whole number of 1 or more, an item model that is not a key, a custom model
+  data entry that is not a number, a trim without both keys) is a warning that leaves out only that part. A key
+  of the group the reader was not told to read stays in `unreadKeys()`.
 - `ItemKeys` names the keys `item` reads, so a plugin keeps the keys its files already have and no owner file
   changes. `ItemKeys.defaults()` reads `material`, `reference`, `name`, `lore`, `glow`, `item-model`,
   `custom-model-data`, `enchantments` and `trim`; each method returns a copy with one key renamed, and `null`
@@ -33,16 +34,19 @@ All notable changes to Taffy are documented here. This project follows
   player. Each entry of the list is a group of keys with a `type`, the keys of that type and an optional `deny`
   text. `ConditionRegistry.create(Logger, ErrorReports, Text, Messages, Supplier<RegionProvider>)` holds four
   types: `permission` (key `permission`), `world` (list `worlds`), `papi` (keys `placeholder`, `operator` and
-  `value`, with the operators `equals`, `!=`, `contains`, `>`, `>=`, `<` and `<=`, and numbers read as
-  `Double.parseDouble` reads them) and `region` (list `regions`, through `RegionProvider`). A plugin adds its own
-  with `register(String name, ConditionType type)`. There is no economy type: a plugin registers its own and runs
-  it on the thread `EconomyProvider.thread` names.
+  `value`, with the operators `equals`, `!=`, `contains`, `>`, `>=`, `<` and `<=`, numbers read as
+  `Double.parseDouble` reads them, and a `value` YAML reads as a boolean or a number, such as `yes` or `010`,
+  compared as `true` or `8` unless it is in quotes) and `region` (list `regions`, through `RegionProvider`). A
+  plugin adds its own with `register(String name, ConditionType type)`. There is no economy type: a plugin
+  registers its own and runs it on the thread `EconomyProvider.thread` names.
 - `ConditionRegistry.build(Object value, String path, ConditionProblems problems)` turns the list into one
   `Condition` when the file loads and throws for no value in it. A `type` that is not registered, a missing or
   unusable key, a `deny` that is not a text and a type that throws are each passed to `problems` as an error with
-  its path, such as `conditions[1].type`, and that entry is left out, so a plugin refuses the file when it got an
-  error. `ConditionProblems` takes the arguments of `ConfigReader.error(String, String, String)`, so a plugin
-  passes `reader::error`.
+  its path, such as `conditions[1].type`, and that entry denies every player at its place in the list, with its
+  `deny` text when that is usable and with `condition.requirement-not-met` otherwise. A value that is not a list
+  gives a condition that denies every player. A plugin that only logs the errors therefore keeps the gate closed,
+  and one that refuses the file never tests such a condition. `ConditionProblems` takes the arguments of
+  `ConfigReader.error(String, String, String)`, so a plugin passes `reader::error`.
 - `Condition.test(Player)` tests the entries in file order on the player's thread, stops at the first one that
   denies and gives a `ConditionResult` with the reason as a component. The reason is the entry's `deny` text
   rendered for the player, or the message of the type's key from the plugin's lang files: `condition.permission`,
@@ -50,6 +54,40 @@ All notable changes to Taffy are documented here. This project follows
   and `condition.requirement-not-met` for `papi`. While PlaceholderAPI is not installed a `papi` placeholder is
   compared as written. A condition that throws denies, and is logged at most once a minute and reported under
   `condition.<type>`.
+- `taffy-platform`: a lang entry can name where `Messages.send(Text, CommandSender, String key, TagResolver...)`
+  shows it, so an owner moves a message from chat to the action bar or a title in the lang file and the plugin
+  changes no code. The entry is written as a section named `delivery` under the key of the message, with any of
+  `chat`, `actionbar`, `title`, `subtitle`, `times` and `sound`:
+  `pay.sent: { delivery: { actionbar: "<green>Sent <amount>", sound: "entity.experience_orb.pickup 1 1.4" } }`.
+  The four texts are MiniMessage templates rendered as any message is, `times` is the fade in, stay and fade out
+  of the title as three whole numbers of ticks (`"10 70 20"`), and `sound` is in the form `Sounds` reads. A player
+  gets each entry the section has, and only the chat message gets the prefix of `withChatPrefix`. A sender that is
+  not a player gets one chat message: `chat`, or without it `actionbar`, or without that `title` and `subtitle`.
+  A message written as a plain value is sent as chat, as before, and the first file of the lookup order that has
+  the message in either form decides.
+- Only `send` reads a delivery section. `render`, `lines`, `has`, `template`, `sendActionBar` and `showTitle`
+  read every file as 0.4.13 does: the entries stay the keys `<key>.delivery.chat` and so on, and the key itself
+  is taken from the next file that has it as a value. A `delivery` section with any other entry, with an entry
+  that has no value or with a section inside it (such as a menu item named `delivery` with a `name`), a key named
+  `delivery` at the top of a file and a `delivery` key that holds a value are read as before.
+- The load and a reload log nothing about a delivery section, so a lang file of 0.4.13 gets no new warning, and
+  the warning about the keys a file lacks still names each bundled entry the file does not have, such as
+  `mail.delivery.subtitle` for a title a plugin shows with `showTitle(text, player, "mail.delivery")`. The
+  warnings about a delivery section are logged by the first `send` that reads it after the load or a reload,
+  each with the file and the key: a `times` that is not three whole numbers of ticks (the title gets the default
+  times), a `sound` that is a list or whose key is not a valid sound key (no sound is played), and a `delivery`
+  section with another entry or an entry with no value in a file the send passes (the message is taken from the
+  next file). No exception is thrown at a send for a bad entry.
+- `Messages.addMissingKeys` adds each entry of a bundled delivery section that the file lacks, as it adds any
+  key, and returns it as `pay.sent.delivery.actionbar`. The entries are written as one nested section under the
+  dotted key (`pay.sent.delivery:` with its entries indented below) when the bundled section has a `chat`,
+  `actionbar`, `times` or `sound` entry and the file writes no key at or under that section, and as dotted keys
+  as before otherwise, so a section a file has in part is completed key by key. Two shapes add nothing and are
+  left out of the warning about the keys a file lacks: the entries of a bundled delivery section whose message
+  the file has as a plain value, and a message the bundled file has as a value and the file has as a delivery
+  section. On 0.4.13 a file of either shape got that warning at each load and made `addMissingKeys` change
+  nothing, with the warning that the keys cannot be added at its end. An owner who wants an entry gone leaves it
+  empty (`sound: ""`) instead of removing the line.
 
 ## [0.4.13] - 2026-11-24
 

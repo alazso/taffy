@@ -692,9 +692,9 @@ public final class ConfigReader {
      *       {@code <path> is <value>; expected a single text, so no name is set.}</li>
      *   <li>The lore reads as {@link #strings} does with an empty fallback.</li>
      *   <li>The glow reads as {@link #bool} does with {@code false} as the fallback.</li>
-     *   <li>The item model is a text {@link org.bukkit.NamespacedKey#fromString(String)} accepts. Anything
-     *       else gives no item model and the warning {@code <path> is <value>; expected a key such as
-     *       minecraft:diamond_sword, so no item model is set.}</li>
+     *   <li>The item model is a text {@link org.bukkit.NamespacedKey#fromString(String)} accepts, with a
+     *       name after the namespace. Anything else gives no item model and the warning
+     *       {@code <path> is <value>; expected a key such as minecraft:diamond_sword, so no item model is set.}</li>
      *   <li>The custom model data is one number or a list of numbers, each kept as a {@code float}. A list
      *       entry that is not a finite number is skipped with the warning {@code <path> has <entry>, which is
      *       not a number, so it is skipped.}, and any other value gives none and the warning

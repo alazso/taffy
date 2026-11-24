@@ -19,8 +19,8 @@ public interface ConditionType {
      * passes it on as an error of the entry.
      *
      * @param config the entry
-     * @return the condition, or {@code null} when an error stopped it. An entry with an error is left out of the
-     *     list whatever is returned, and a {@code null} without an error is passed on as an error of the entry
+     * @return the condition, or {@code null} when an error stopped it. An entry with an error denies every
+     *     player whatever is returned, and a {@code null} without an error is passed on as an error of the entry
      * @since 0.4.14
      */
     @Nullable

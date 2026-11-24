@@ -51,6 +51,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.logging.Logger;
@@ -82,6 +83,40 @@ import java.util.regex.Pattern;
  * {@code {prefix}}, and is empty when no file has the key. {@link #withChatPrefix} gives a {@code Messages} that
  * puts a prefix from the plugin in front of what {@link #send} sends.
  *
+ * <p>From 0.4.14 a message may name where {@link #send} shows it, in a delivery section: a section named
+ * {@code delivery} under the key of the message, in which every entry is one of {@code chat}, {@code actionbar},
+ * {@code title}, {@code subtitle}, {@code times} and {@code sound} and has a value.
+ *
+ * <pre>{@code
+ * pay.sent:
+ *   delivery:
+ *     actionbar: "<green>Sent <amount> to <target>"
+ *     sound: "entity.experience_orb.pickup 1 1.4"
+ * }</pre>
+ *
+ * <p>{@code chat}, {@code actionbar}, {@code title} and {@code subtitle} are templates as any message is, a list
+ * being its lines joined by a newline. {@code times} is the fade in, the stay and the fade out of the title as
+ * three whole numbers of ticks, on one line ({@code "10 70 20"}) or as a list, and {@link Title#DEFAULT_TIMES}
+ * when absent. {@code sound} is a sound in the form {@link Sounds} reads. A file names a message either as a
+ * value or as a delivery section, and the lookup order above picks the first file that has it in either form.
+ *
+ * <p>A {@code delivery} section with any other entry, or with a section inside it, is not a delivery section, and
+ * neither is a key named {@code delivery} at the top of a file or one that holds a value: those are read as before
+ * 0.4.14. Only {@link #send} reads a delivery section. Its entries stay the keys {@code <key>.delivery.chat} and
+ * so on for every other method, and the key of the message itself is one such a file does not have, so a render
+ * of it takes the next file of the lookup order. The load, a reload and {@link #addMissingKeys(String)} treat
+ * each entry as the key it is, so the warning about the keys a file lacks names a bundled entry the file does not
+ * have. Two cases are left out of that warning: a message the bundled English file has as a value and the file has
+ * as a delivery section, and the entries of a bundled delivery section whose message the file has as a value.
+ *
+ * <p>The load and a reload log nothing about a delivery section. The first {@link #send} that reads one after
+ * the load or a reload logs a warning for a {@code times} that is not three whole numbers of ticks (the title
+ * then has the default times) and for a {@code sound} that is a list or whose key is not a valid sound key (no
+ * sound is then played). A {@link #send} of a key also logs a warning, once after the load or a reload, for each
+ * file of the lookup order it passes whose {@code delivery} section under that key has another entry or an entry
+ * with no value (the message is then taken from the next file of the lookup order). Each warning names the file
+ * and the key, and a warning about a bundled file is logged once after the load.
+ *
  * <p>A key that no file has renders as the visible marker {@code <red>missing:key}. A section-sign code in a
  * template, in the prefix or in a value supplied as {@code Placeholder.parsed} is rendered as
  * {@link LegacyText#sectionToMiniMessage} converts it.
@@ -98,6 +133,14 @@ public final class Messages {
     public static final String FALLBACK = "en";
 
     private static final String PREFIX = "prefix";
+    private static final String DELIVERY = ".delivery.";
+    private static final String CHAT = "chat";
+    private static final String ACTION_BAR = "actionbar";
+    private static final String TITLE = "title";
+    private static final String SUBTITLE = "subtitle";
+    private static final String TIMES = "times";
+    private static final String SOUND = "sound";
+    private static final Set<String> DELIVERY_ENTRIES = Set.of(CHAT, ACTION_BAR, TITLE, SUBTITLE, TIMES, SOUND);
     private static final String NEWLINE = "\n";
     private static final String EXTENSION = ".yml";
     private static final MiniMessage MINI = MiniMessage.miniMessage();
@@ -127,7 +170,13 @@ public final class Messages {
         /** Locale code in lower case to the bundled templates of that language, in the order of the file. */
         private final Map<String, Map<String, List<String>>> bundled;
         private final Map<String, List<String>> fallback;
-        private volatile Loaded loaded = new Loaded(Map.of(), Map.of());
+        /** Locale code in lower case to the delivery sections of the bundled file of that language, by message. */
+        private final Map<String, Map<String, Delivery>> bundledDeliveries;
+        private final Map<String, Delivery> fallbackDeliveries;
+        /** Locale code in lower case to the refused delivery sections of the bundled file, by message. */
+        private final Map<String, Map<String, Problem>> bundledRefused;
+        private final Map<String, Problem> fallbackRefused;
+        private volatile Loaded loaded = new Loaded(Map.of(), Map.of(), Map.of(), Map.of());
 
         private Source(
             Path folder,
@@ -139,7 +188,9 @@ public final class Messages {
             boolean perPlayer,
             boolean lenient,
             boolean perLocale,
-            Map<String, Map<String, List<String>>> bundled
+            Map<String, Map<String, List<String>>> bundled,
+            Map<String, Map<String, Delivery>> bundledDeliveries,
+            Map<String, Map<String, Problem>> bundledRefused
         ) {
             this.folder = folder;
             this.folderName = folderName;
@@ -152,16 +203,82 @@ public final class Messages {
             this.perLocale = perLocale;
             this.bundled = bundled;
             this.fallback = bundled.get(FALLBACK);
+            this.bundledDeliveries = bundledDeliveries;
+            this.fallbackDeliveries = bundledDeliveries.get(FALLBACK);
+            this.bundledRefused = bundledRefused;
+            this.fallbackRefused = bundledRefused.get(FALLBACK);
         }
     }
 
     /**
      * One read of the folder. Replaced as a whole and never changed afterwards.
      *
-     * @param locales locale code in lower case to the templates served for that code
-     * @param files   locale code in lower case to the name of the file of that code
+     * @param locales    locale code in lower case to the templates served for that code
+     * @param files      locale code in lower case to the name of the file of that code
+     * @param deliveries locale code in lower case to the delivery sections served for that code, by message
+     * @param refused    locale code in lower case to the {@code delivery} sections that a send for that code
+     *                   passes and that are not delivery sections, by message
      */
-    private record Loaded(Map<String, Map<String, List<String>>> locales, Map<String, String> files) {
+    private record Loaded(
+        Map<String, Map<String, List<String>>> locales,
+        Map<String, String> files,
+        Map<String, Map<String, Delivery>> deliveries,
+        Map<String, Map<String, Problem>> refused
+    ) {
+    }
+
+    /** The warnings about one message of one file, logged by the first send that reads the message there. */
+    private static final class Problem {
+        private static final Problem NONE = new Problem(List.of());
+
+        private final List<String> warnings;
+        private final AtomicBoolean reported = new AtomicBoolean();
+
+        private Problem(List<String> warnings) {
+            this.warnings = warnings;
+        }
+
+        private void report(Logger logger) {
+            if (!warnings.isEmpty() && reported.compareAndSet(false, true)) {
+                warnings.forEach(logger::warning);
+            }
+        }
+
+        /** Marks the warnings as logged when {@code earlier} holds the same ones and has logged them. */
+        private void follow(@Nullable Problem earlier) {
+            if (earlier != null && earlier.reported.get() && earlier.warnings.equals(warnings)) {
+                reported.set(true);
+            }
+        }
+    }
+
+    /**
+     * The {@code delivery} sections of one file.
+     *
+     * @param deliveries the delivery sections, by message
+     * @param refused    the sections with another entry or an entry with no value, by message
+     */
+    private record Sections(Map<String, Delivery> deliveries, Map<String, Problem> refused) {
+    }
+
+    /**
+     * One delivery section. A text that the section does not have is empty.
+     *
+     * @param chat    the chat message for a player
+     * @param console the chat message for a sender that is not a player
+     * @param sound   the sound in the form {@link Sounds} reads, or {@code null} for none
+     * @param problem the warnings about the times and the sound of the section
+     */
+    private record Delivery(
+        String chat,
+        String console,
+        String actionBar,
+        String title,
+        String subtitle,
+        Title.Times times,
+        @Nullable String sound,
+        Problem problem
+    ) {
     }
 
     private Messages(Source source, @Nullable Supplier<@Nullable String> chatPrefix, boolean namesIgnoringCase) {
@@ -325,6 +442,8 @@ public final class Messages {
         boolean perLocale
     ) {
         Map<String, Map<String, List<String>>> bundled = new HashMap<>();
+        Map<String, Map<String, Delivery>> bundledDeliveries = new HashMap<>();
+        Map<String, Map<String, Problem>> bundledRefused = new HashMap<>();
         for (String code : codes) {
             byte[] content = bytes(() -> opener.apply(code));
             Map<String, List<String>> values = content == null || malformedLine(content) > 0 ? null : values(content);
@@ -332,11 +451,15 @@ public final class Messages {
                 throw new IllegalStateException("the bundled " + code + EXTENSION + " is missing or unreadable");
             }
             bundled.put(code(code), Collections.unmodifiableMap(values));
+            Sections sections = sections(values, valueless(content), "The bundled " + code + EXTENSION);
+            bundledDeliveries.put(code(code), sections.deliveries());
+            bundledRefused.put(code(code), sections.refused());
         }
         Relocation.check();
         Messages messages = new Messages(
             new Source(dataFolder.resolve(folderName), folderName, codes, opener, logger,
-                normalizeLocale(defaultLocale), perPlayer, lenient, perLocale, bundled),
+                normalizeLocale(defaultLocale), perPlayer, lenient, perLocale, bundled, bundledDeliveries,
+                bundledRefused),
             null, false);
         messages.reload();
         return messages;
@@ -418,6 +541,7 @@ public final class Messages {
             String shown = source.folderName;
             writeAbsent();
             Map<String, Map<String, List<String>>> owned = new HashMap<>();
+            Map<String, Sections> ownedSections = new HashMap<>();
             Map<String, String> names = new HashMap<>();
             Map<String, String> skipped = new HashMap<>();
             if (Files.isDirectory(source.folder)) {
@@ -445,8 +569,9 @@ public final class Messages {
                             skipped.put(locale, name);
                             continue;
                         }
+                        Sections sections = sections(values, valueless(content), shown + "/" + name);
                         Set<String> missing = new TreeSet<>(source.fallback.keySet());
-                        missing.removeAll(values.keySet());
+                        missing.removeIf(key -> holds(values, sections.deliveries(), key));
                         if (!missing.isEmpty() && !source.perLocale) {
                             source.logger.warning(shown + "/" + name + " lacks " + String.join(", ", missing)
                                 + "; those messages" + fallback(locale));
@@ -458,11 +583,13 @@ public final class Messages {
                                 + " Remove or rename one of them.");
                         }
                         owned.put(locale, values);
+                        ownedSections.put(locale, sections);
                     }
                 } catch (IOException | DirectoryIteratorException failure) {
                     // A failure while iterating arrives unchecked, with the I/O error as its cause.
                     Throwable reason = failure instanceof DirectoryIteratorException ? failure.getCause() : failure;
                     owned.clear();
+                    ownedSections.clear();
                     names.clear();
                     skipped.clear();
                     source.logger.warning("Could not read the " + shown + " folder: " + reason.getMessage()
@@ -470,15 +597,27 @@ public final class Messages {
                 }
             }
             Map<String, Map<String, List<String>>> locales = source.perLocale ? backed(owned) : owned;
+            Map<String, Map<String, Delivery>> ownedDeliveries = new HashMap<>();
+            Map<String, Map<String, Problem>> refused = new HashMap<>();
+            ownedSections.forEach((locale, sections) -> {
+                ownedDeliveries.put(locale, sections.deliveries());
+                refused.put(locale, sections.refused());
+            });
+            Map<String, Map<String, Delivery>> deliveries =
+                source.perLocale ? backedDeliveries(owned, ownedDeliveries) : ownedDeliveries;
+            if (source.perLocale) {
+                source.bundledRefused.forEach((code, shipped) ->
+                    refused.put(code, refused(shipped, owned.get(code), ownedSections.get(code))));
+            }
             if (!source.defaultLocale.equals(FALLBACK) && !locales.containsKey(source.defaultLocale)) {
                 source.logger.warning("The default language " + source.defaultLocale + " has no " + shown + "/"
                     + source.defaultLocale + ".yml, so the bundled English text is used in its place.");
             }
             if (source.perLocale) {
-                warnShownInAnotherLanguage(names, locales);
+                warnShownInAnotherLanguage(names, locales, deliveries);
             }
             skipped.putAll(names);
-            source.loaded = new Loaded(locales, skipped);
+            source.loaded = new Loaded(locales, skipped, deliveries, refused);
         }
     }
 
@@ -540,12 +679,166 @@ public final class Messages {
     }
 
     /**
+     * The delivery sections served for each code: those of the owner's file, and those of the bundled file of
+     * the code for each message the owner's file does not have as a value.
+     */
+    private Map<String, Map<String, Delivery>> backedDeliveries(
+        Map<String, Map<String, List<String>>> owned,
+        Map<String, Map<String, Delivery>> ownedDeliveries
+    ) {
+        Map<String, Map<String, Delivery>> deliveries = new HashMap<>(ownedDeliveries);
+        source.bundledDeliveries.forEach((code, shipped) ->
+            deliveries.put(code, over(shipped, owned.get(code), ownedDeliveries.get(code))));
+        return deliveries;
+    }
+
+    private static Map<String, Delivery> over(
+        Map<String, Delivery> shipped,
+        @Nullable Map<String, List<String>> owner,
+        @Nullable Map<String, Delivery> ownerDeliveries
+    ) {
+        if (owner == null || ownerDeliveries == null) {
+            return shipped;
+        }
+        Map<String, Delivery> both = new HashMap<>(shipped);
+        both.keySet().removeIf(owner::containsKey);
+        both.putAll(ownerDeliveries);
+        return both;
+    }
+
+    /**
+     * The refused sections a send passes for one code: those of the owner's file, and those of the bundled file
+     * of the code for each message the owner's file has in no form.
+     */
+    private static Map<String, Problem> refused(
+        Map<String, Problem> shipped,
+        @Nullable Map<String, List<String>> owner,
+        @Nullable Sections ownerSections
+    ) {
+        if (owner == null || ownerSections == null) {
+            return shipped;
+        }
+        Map<String, Problem> both = new HashMap<>(shipped);
+        both.keySet().removeIf(message -> owner.containsKey(message)
+            || ownerSections.deliveries().containsKey(message));
+        both.putAll(ownerSections.refused());
+        return both;
+    }
+
+    /**
+     * The {@code delivery} sections of one file. A section that holds a key other than the six entries, or a key
+     * of {@code valueless}, is refused.
+     *
+     * @param values    the flat keys of the file
+     * @param valueless the dotted keys the file writes with no value
+     * @param shown     the file as a warning names it
+     */
+    private static Sections sections(Map<String, List<String>> values, Set<String> valueless, String shown) {
+        Map<String, Map<String, List<String>>> sections = new LinkedHashMap<>();
+        Map<String, Set<String>> others = new LinkedHashMap<>();
+        values.forEach((key, lines) -> {
+            for (int at = key.indexOf(DELIVERY, 1); at > 0; at = key.indexOf(DELIVERY, at + 1)) {
+                String message = key.substring(0, at);
+                String entry = key.substring(at + DELIVERY.length());
+                if (DELIVERY_ENTRIES.contains(entry)) {
+                    sections.computeIfAbsent(message, added -> new HashMap<>()).put(entry, lines);
+                } else {
+                    others.computeIfAbsent(message, added -> new TreeSet<>()).add(key);
+                }
+            }
+        });
+        for (String key : valueless) {
+            for (int at = key.indexOf(DELIVERY, 1); at > 0; at = key.indexOf(DELIVERY, at + 1)) {
+                others.computeIfAbsent(key.substring(0, at), added -> new TreeSet<>()).add(key + " (no value)");
+            }
+        }
+        Map<String, Problem> refused = new HashMap<>();
+        others.forEach((message, keys) -> {
+            sections.remove(message);
+            refused.put(message, new Problem(List.of(shown + " has " + String.join(", ", keys)
+                + " in the delivery section of " + message
+                + ", which holds only chat, actionbar, title, subtitle, times and sound, so " + message
+                + " is not read from this file.")));
+        });
+        Map<String, Delivery> deliveries = new HashMap<>();
+        sections.forEach((message, entries) -> deliveries.put(message, delivery(message, entries, shown)));
+        return new Sections(deliveries, refused);
+    }
+
+    private static Delivery delivery(String message, Map<String, List<String>> entries, String shown) {
+        String chat = text(entries, CHAT);
+        String actionBar = text(entries, ACTION_BAR);
+        String title = text(entries, TITLE);
+        String subtitle = text(entries, SUBTITLE);
+        String console = chat;
+        if (!entries.containsKey(CHAT)) {
+            console = !actionBar.isEmpty() ? actionBar
+                : title.isEmpty() || subtitle.isEmpty() ? title + subtitle : title + NEWLINE + subtitle;
+        }
+        List<String> warnings = new ArrayList<>(2);
+        Title.Times times = Title.DEFAULT_TIMES;
+        if (entries.containsKey(TIMES)) {
+            String written = String.join(" ", entries.get(TIMES));
+            String[] parts = written.strip().split("\\s+");
+            Duration fadeIn = parts.length == 3 ? ticks(parts[0]) : null;
+            Duration stay = parts.length == 3 ? ticks(parts[1]) : null;
+            Duration fadeOut = parts.length == 3 ? ticks(parts[2]) : null;
+            if (fadeIn != null && stay != null && fadeOut != null) {
+                times = Title.Times.times(fadeIn, stay, fadeOut);
+            } else {
+                warnings.add(shown + " has the times '" + written + "' at " + message + DELIVERY + TIMES
+                    + ", which is not three whole numbers of ticks (fade in, stay and fade out, such as 10 70 20),"
+                    + " so the title of " + message + " has the default times.");
+            }
+        }
+        String sound = entries.containsKey(SOUND) ? text(entries, SOUND) : null;
+        if (sound != null && entries.get(SOUND).size() != 1) {
+            warnings.add(shown + " has a list of " + entries.get(SOUND).size() + " entries at " + message
+                + DELIVERY + SOUND + ", which takes one sound, so " + message + " plays no sound.");
+            sound = null;
+        } else if (sound != null && !Sounds.isValid(sound)) {
+            warnings.add(shown + " has the sound '" + sound + "' at " + message + DELIVERY + SOUND
+                + ", whose key is not a valid sound key, so " + message + " plays no sound.");
+            sound = null;
+        }
+        Problem problem = warnings.isEmpty() ? Problem.NONE : new Problem(List.copyOf(warnings));
+        return new Delivery(chat, console, actionBar, title, subtitle, times, sound, problem);
+    }
+
+    private static String text(Map<String, List<String>> entries, String entry) {
+        return String.join(NEWLINE, entries.getOrDefault(entry, List.of()));
+    }
+
+    /**
+     * The key of the message that {@code key} is part of: the key of its delivery section when it is an entry of
+     * one of {@code deliveries}, and {@code key} itself otherwise.
+     */
+    private static String message(Map<String, Delivery> deliveries, String key) {
+        int at = key.lastIndexOf(DELIVERY);
+        return at > 0 && deliveries.containsKey(key.substring(0, at)) ? key.substring(0, at) : key;
+    }
+
+    /**
+     * Whether a file with {@code values} and {@code deliveries} has the bundled English {@code key}: as that key,
+     * as a delivery section where the bundled file has a value, or as a value where the key is an entry of a
+     * bundled delivery section.
+     */
+    private boolean holds(Map<String, List<String>> values, Map<String, Delivery> deliveries, String key) {
+        if (values.containsKey(key)) {
+            return true;
+        }
+        String message = message(source.fallbackDeliveries, key);
+        return message.equals(key) ? deliveries.containsKey(key) : values.containsKey(message);
+    }
+
+    /**
      * Warns, once for each file and list of keys, about the keys of the bundled English file that a render for
      * the locale of a file in {@code names} takes from a file of another language.
      */
     private void warnShownInAnotherLanguage(
         Map<String, String> names,
-        Map<String, Map<String, List<String>>> locales
+        Map<String, Map<String, List<String>>> locales,
+        Map<String, Map<String, Delivery>> deliveries
     ) {
         Map<String, List<String>> byDefault = locales.get(source.defaultLocale);
         names.forEach((locale, name) -> {
@@ -554,10 +847,11 @@ public final class Messages {
             Map<String, List<String>> ofLanguage = locales.get(language);
             Set<String> elsewhere = new TreeSet<>();
             for (String key : source.fallback.keySet()) {
-                if (own.containsKey(key) || ofLanguage != null && ofLanguage.containsKey(key)) {
+                if (holds(own, deliveries.get(locale), key)
+                    || ofLanguage != null && holds(ofLanguage, deliveries.get(language), key)) {
                     continue;
                 }
-                String served = byDefault != null && byDefault.containsKey(key)
+                String served = byDefault != null && holds(byDefault, deliveries.get(source.defaultLocale), key)
                     ? language(source.defaultLocale)
                     : FALLBACK;
                 if (!served.equals(language)) {
@@ -609,6 +903,14 @@ public final class Messages {
      * marker {@code ...}, and one that writes its keys as a flow mapping in braces. A file that cannot be written
      * is reported as {@code Could not add keys to <folder>/<name>: <reason>.} Calls and reloads do not overlap.
      *
+     * <p>From 0.4.14 each entry of a delivery section of the bundled file is a key as any other, in the returned
+     * list as {@code pay.sent.delivery.actionbar}: the entries the file lacks are added. They are written as one
+     * nested section under the dotted key ({@code pay.sent.delivery:} with its entries indented below) when the
+     * bundled section has a {@code chat}, {@code actionbar}, {@code times} or {@code sound} entry and the file
+     * writes no key at or under that {@code delivery} section, and each in its dotted form otherwise. Two cases
+     * add nothing: the entries of a bundled delivery section whose message the file has as a value, and a message
+     * that the bundled file has as a value and the file has as a delivery section.
+     *
      * @param locale the language of the file, read as {@link #normalizeLocale} describes
      * @return the keys that were added, in the order of the bundled file; unmodifiable
      */
@@ -633,13 +935,31 @@ public final class Messages {
                 return List.of();
             }
             Set<String> valueless = valueless(content);
+            Map<String, Delivery> shippedDeliveries = source.bundledDeliveries.get(code);
+            Map<String, Delivery> own = sections(values, valueless, shown).deliveries();
             List<String> added = shipped.keySet().stream()
                 .filter(key -> !values.containsKey(key) && !valueless.contains(key))
+                .filter(key -> {
+                    String message = message(shippedDeliveries, key);
+                    return message.equals(key) ? !own.containsKey(key) : !values.containsKey(message);
+                })
                 .toList();
             if (added.isEmpty()) {
                 return added;
             }
-            byte[] extended = extended(content, added, shipped);
+            Set<String> written = new HashSet<>(valueless);
+            written.addAll(values.keySet());
+            Set<String> nested = new HashSet<>();
+            for (String key : added) {
+                String message = message(shippedDeliveries, key);
+                String entry = key.substring(key.lastIndexOf('.') + 1);
+                if (!message.equals(key) && !entry.equals(TITLE) && !entry.equals(SUBTITLE)) {
+                    nested.add(message);
+                }
+            }
+            nested.removeIf(message -> written.stream().anyMatch(key ->
+                (key + ".").startsWith(message + DELIVERY)));
+            byte[] extended = extended(content, added, shipped, shippedDeliveries, nested);
             Map<String, List<String>> result = values(extended);
             if (result == null || !result.entrySet().containsAll(values.entrySet())
                 || !added.stream().allMatch(key -> shipped.get(key).equals(result.get(key)))) {
@@ -655,7 +975,23 @@ public final class Messages {
             }
             Map<String, Map<String, List<String>>> locales = new HashMap<>(loaded.locales());
             locales.put(code, source.perLocale ? over(shipped, result) : result);
-            source.loaded = new Loaded(locales, loaded.files());
+            Sections sections = sections(result, valueless(extended), shown);
+            Map<String, Delivery> earlier = loaded.deliveries().getOrDefault(code, Map.of());
+            sections.deliveries().forEach((message, delivery) -> {
+                Delivery before = earlier.get(message);
+                delivery.problem().follow(before == null ? null : before.problem());
+            });
+            Map<String, Problem> refusedEarlier = loaded.refused().getOrDefault(code, Map.of());
+            sections.refused().forEach((message, problem) -> problem.follow(refusedEarlier.get(message)));
+            Map<String, Map<String, Delivery>> deliveries = new HashMap<>(loaded.deliveries());
+            deliveries.put(code, source.perLocale
+                ? over(shippedDeliveries, result, sections.deliveries())
+                : sections.deliveries());
+            Map<String, Map<String, Problem>> refused = new HashMap<>(loaded.refused());
+            refused.put(code, source.perLocale
+                ? refused(source.bundledRefused.get(code), result, sections)
+                : sections.refused());
+            source.loaded = new Loaded(locales, loaded.files(), deliveries, refused);
             return added;
         }
     }
@@ -691,31 +1027,57 @@ public final class Messages {
         }
     }
 
-    /** {@code content} with an entry for each key of {@code added} after it, in the line ending of the content. */
-    private static byte[] extended(byte[] content, List<String> added, Map<String, List<String>> shipped) {
+    /**
+     * {@code content} with an entry for each key of {@code added} after it, in the line ending of the content. The
+     * entries of the delivery section of {@code deliveries} of each message in {@code nested} are written as one
+     * nested section.
+     */
+    private static byte[] extended(
+        byte[] content,
+        List<String> added,
+        Map<String, List<String>> shipped,
+        Map<String, Delivery> deliveries,
+        Set<String> nested
+    ) {
         String text = new String(content, StandardCharsets.UTF_8);
         String end = text.contains("\r\n") ? "\r\n" : NEWLINE;
         StringBuilder entries = new StringBuilder();
         if (content.length > 0 && content[content.length - 1] != '\n') {
             entries.append(end);
         }
+        Set<String> sections = new HashSet<>();
         for (String key : added) {
-            List<String> lines = shipped.get(key);
-            boolean plain = PLAIN_KEY.matcher(key).matches() && !YAML_WORDS.contains(key.toLowerCase(Locale.ROOT));
-            entries.append(plain ? key : quoted(key)).append(':');
-            if (lines.size() == 1) {
-                entries.append(' ').append(quoted(lines.getFirst()));
-            } else if (lines.isEmpty()) {
-                entries.append(" []");
-            } else {
-                lines.forEach(line -> entries.append(end).append("  - ").append(quoted(line)));
+            String message = message(deliveries, key);
+            if (!nested.contains(message)) {
+                entry(entries, "", key, shipped.get(key), end);
+            } else if (sections.add(message)) {
+                String section = message + DELIVERY;
+                entries.append(name(section.substring(0, section.length() - 1))).append(':').append(end);
+                added.stream().filter(entry -> message(deliveries, entry).equals(message)).forEach(entry ->
+                    entry(entries, "  ", entry.substring(section.length()), shipped.get(entry), end));
             }
-            entries.append(end);
         }
         ByteArrayOutputStream out = new ByteArrayOutputStream(content.length + entries.length());
         out.writeBytes(content);
         out.writeBytes(entries.toString().getBytes(StandardCharsets.UTF_8));
         return out.toByteArray();
+    }
+
+    private static void entry(StringBuilder entries, String indent, String key, List<String> lines, String end) {
+        entries.append(indent).append(name(key)).append(':');
+        if (lines.size() == 1) {
+            entries.append(' ').append(quoted(lines.getFirst()));
+        } else if (lines.isEmpty()) {
+            entries.append(" []");
+        } else {
+            lines.forEach(line -> entries.append(end).append(indent).append("  - ").append(quoted(line)));
+        }
+        entries.append(end);
+    }
+
+    private static String name(String key) {
+        boolean plain = PLAIN_KEY.matcher(key).matches() && !YAML_WORDS.contains(key.toLowerCase(Locale.ROOT));
+        return plain ? key : quoted(key);
     }
 
     /** {@code value} as a double-quoted YAML scalar on one line. */
@@ -883,18 +1245,92 @@ public final class Messages {
      * as one chat message. A message of several lines is sent as one message with its lines joined by a newline.
      * An empty message, one whose lines joined by a newline are an empty text (an empty text, a list of no lines
      * or a list of one empty line), is not sent. A key that no file has sends the missing-key marker. A
-     * {@code Messages} from {@link #withChatPrefix} puts its prefix in front. Belongs on the thread that owns
-     * {@code sender} when it is a player.
+     * {@code Messages} from {@link #withChatPrefix} puts its prefix in front.
+     *
+     * <p>From 0.4.14, a key that the first file of the lookup order to have it writes as a delivery section, as
+     * the class description states it, is delivered as that section says. To a player: the {@code chat} entry as
+     * the chat message above, the {@code actionbar} entry as an action bar, the {@code title} and
+     * {@code subtitle} entries as one title with the {@code times} of the section, and the {@code sound} entry
+     * through {@link Sounds#play}. Each entry is rendered as the message above is, an entry that is absent or an
+     * empty message is left out, the title is shown when either of its two texts is not empty, and only the chat
+     * message gets the prefix of {@link #withChatPrefix}. A sender that is not a player, such as the console,
+     * gets one chat message and nothing else: the {@code chat} entry, or in a section without one the
+     * {@code actionbar} entry, or without that one the {@code title} and {@code subtitle} entries joined by a
+     * newline. A key that is a plain value is sent as chat, as before 0.4.14.
+     *
+     * <p>Belongs on the thread that owns {@code sender} when it is a player, on Folia the thread of the
+     * player's region. For a sender that is not a player it may be called from any thread.
      */
     public void send(Text text, CommandSender sender, String key, TagResolver... values) {
         Player viewer = sender instanceof Player player ? player : null;
-        List<Map<String, List<String>>> chain = resolutionChain(locale(viewer));
-        String template = template(chain, key);
+        Loaded loaded = source.loaded;
+        List<Map<String, List<String>>> chain = resolutionChain(loaded, locale(viewer));
+        Delivery delivery = delivery(loaded, locale(viewer), key);
+        if (delivery == null) {
+            chat(text, sender, viewer, chain, template(chain, key), values);
+            return;
+        }
+        delivery.problem().report(source.logger);
+        chat(text, sender, viewer, chain, viewer == null ? delivery.console() : delivery.chat(), values);
+        if (viewer == null) {
+            return;
+        }
+        if (!delivery.actionBar().isEmpty()) {
+            viewer.sendActionBar(render(text, viewer, chain, delivery.actionBar(), values));
+        }
+        if (!delivery.title().isEmpty() || !delivery.subtitle().isEmpty()) {
+            viewer.showTitle(Title.title(render(text, viewer, chain, delivery.title(), values),
+                render(text, viewer, chain, delivery.subtitle(), values), delivery.times()));
+        }
+        Sounds.play(viewer, delivery.sound());
+    }
+
+    private void chat(
+        Text text,
+        CommandSender sender,
+        @Nullable Player viewer,
+        List<Map<String, List<String>>> chain,
+        String template,
+        TagResolver... values
+    ) {
         if (template.isEmpty()) {
             return;
         }
         String front = chatPrefix == null ? null : chatPrefix.get();
         sender.sendMessage(render(text, viewer, chain, front == null ? template : front + template, values));
+    }
+
+    /**
+     * The delivery section of {@code key} in the first file of the lookup order for {@code locale} that has the
+     * key as a delivery section or as a value, or {@code null} when that file has it as a value or no file has it.
+     */
+    private @Nullable Delivery delivery(Loaded loaded, @Nullable Locale locale, String key) {
+        List<String> codes = new ArrayList<>(3);
+        if (source.perPlayer && locale != null) {
+            codes.add(code(locale.toString()));
+            codes.add(code(locale.getLanguage()));
+        }
+        codes.add(source.defaultLocale);
+        for (String code : codes) {
+            Map<String, List<String>> served = loaded.locales().get(code);
+            if (served == null) {
+                continue;
+            }
+            report(loaded.refused().get(code), key);
+            Delivery delivery = loaded.deliveries().get(code).get(key);
+            if (delivery != null || served.containsKey(key)) {
+                return delivery;
+            }
+        }
+        report(source.fallbackRefused, key);
+        return source.fallbackDeliveries.get(key);
+    }
+
+    private void report(@Nullable Map<String, Problem> refused, String key) {
+        Problem problem = refused == null ? null : refused.get(key);
+        if (problem != null) {
+            problem.report(source.logger);
+        }
     }
 
     /**
@@ -957,14 +1393,17 @@ public final class Messages {
 
     private static Duration ticks(List<Map<String, List<String>>> chain, String key, Duration absent) {
         List<String> lines = lookup(chain, key);
-        if (lines == null || lines.size() != 1) {
-            return absent;
-        }
+        Duration ticks = lines == null || lines.size() != 1 ? null : ticks(lines.getFirst().strip());
+        return ticks == null ? absent : ticks;
+    }
+
+    /** {@code written} as a whole number of ticks of at least 0, or {@code null} when it is not one. */
+    private static @Nullable Duration ticks(String written) {
         try {
-            long ticks = Long.parseLong(lines.getFirst().strip());
-            return ticks < 0 ? absent : Duration.ofMillis(Math.multiplyExact(ticks, Ticks.SINGLE_TICK_DURATION_MS));
+            long ticks = Long.parseLong(written);
+            return ticks < 0 ? null : Duration.ofMillis(Math.multiplyExact(ticks, Ticks.SINGLE_TICK_DURATION_MS));
         } catch (NumberFormatException | ArithmeticException notTicks) {
-            return absent;
+            return null;
         }
     }
 
@@ -1004,8 +1443,12 @@ public final class Messages {
 
     /** Maps to look in, most specific first, always ending at the bundled English text. */
     private List<Map<String, List<String>>> resolutionChain(@Nullable Locale locale) {
+        return resolutionChain(source.loaded, locale);
+    }
+
+    private List<Map<String, List<String>>> resolutionChain(Loaded loaded, @Nullable Locale locale) {
         List<Map<String, List<String>>> chain = new ArrayList<>(3);
-        Map<String, Map<String, List<String>>> langs = source.loaded.locales();
+        Map<String, Map<String, List<String>>> langs = loaded.locales();
         if (source.perPlayer && locale != null) {
             Map<String, List<String>> exact = langs.get(code(locale.toString()));
             if (exact != null) {

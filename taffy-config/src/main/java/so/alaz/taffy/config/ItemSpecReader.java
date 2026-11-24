@@ -113,9 +113,10 @@ final class ItemSpecReader {
             return null;
         }
         NamespacedKey key = value instanceof String text ? NamespacedKey.fromString(text.trim()) : null;
-        if (key == null) {
+        if (key == null || key.getKey().isEmpty()) {
             reader.warn(path, "is " + ConfigReader.describe(value)
                 + "; expected a key such as minecraft:diamond_sword, so no item model is set", null);
+            return null;
         }
         return key;
     }
