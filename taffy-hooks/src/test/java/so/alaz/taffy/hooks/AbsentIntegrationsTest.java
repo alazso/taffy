@@ -247,7 +247,9 @@ final class AbsentIntegrationsTest {
             HologramProvider.class,
             DisplayHolograms.class,
             NpcPlugin.class,
-            NpcProvider.class);
+            NpcProvider.class,
+            Condition.class, ConditionResult.class, ConditionType.class, ConditionConfig.class,
+            ConditionDenial.class, ConditionProblems.class, ConditionRegistry.class);
         assertThat(exported).doesNotContain(EconomyLookup.class, Detection.class, PlayerPointsEconomy.class,
             VaultUnlockedEconomy.class, CoinsEngineEconomy.class, CoinsEngineLookup.class);
 

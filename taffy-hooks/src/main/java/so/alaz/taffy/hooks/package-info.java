@@ -3,7 +3,8 @@
  * currencies, PlayerPoints points, LuckPerms permissions, WorldGuard regions, Bedrock players through Floodgate and
  * Geyser, placeholder expansions for PlaceholderAPI and MiniPlaceholders, text holograms through DecentHolograms,
  * FancyHolograms, Holograms and HologramLib, or as display entities with no hologram plugin, and NPCs through
- * Citizens, FancyNpcs and ZNPCsPlus.
+ * Citizens, FancyNpcs and ZNPCsPlus. A {@link so.alaz.taffy.hooks.ConditionRegistry} builds the conditions an owner
+ * lists in a config file, over those integrations and over types the plugin registers.
  *
  * <p>The module compiles against each integration's API but ships none of them, and its published metadata names
  * none of them. Floodgate and Geyser are the exception: they are read through method handles, so the module compiles
@@ -200,7 +201,9 @@
  * for a failed spawn, text change or removal of a display hologram and a line MiniMessage refuses, and
  * {@code hook.citizens}, {@code hook.fancynpcs} or {@code hook.znpcsplus} for a failed lookup of an NPC's location,
  * a click that could not be read or handed to the player's thread, and a click listener that throws. Reading an
- * item's id and resolving a placeholder log a failure and do not report it.
+ * item's id and resolving a placeholder log a failure and do not report it. A condition type that throws while a
+ * {@link so.alaz.taffy.hooks.ConditionRegistry} builds or tests a condition is logged as a warning and reported under
+ * {@code condition.<type>}.
  *
  * <p>A {@code null} argument throws {@link java.lang.NullPointerException}, except where a parameter is marked
  * {@code @Nullable}, and except a reference given to {@link so.alaz.taffy.hooks.CustomItemRef#parse} or

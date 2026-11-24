@@ -29,6 +29,27 @@ All notable changes to Taffy are documented here. This project follows
   here: one the server does not have, and a material that is not an item, each reach the consumer as a
   `ConfigProblem` warning with the file and the path of the item, and the item is built without it. Both need a
   running server and may be called on any thread, on Folia too.
+- `taffy-hooks`: `ConditionRegistry` builds the conditions an owner lists in a config file and tests them for a
+  player. Each entry of the list is a group of keys with a `type`, the keys of that type and an optional `deny`
+  text. `ConditionRegistry.create(Logger, ErrorReports, Text, Messages, Supplier<RegionProvider>)` holds four
+  types: `permission` (key `permission`), `world` (list `worlds`), `papi` (keys `placeholder`, `operator` and
+  `value`, with the operators `equals`, `!=`, `contains`, `>`, `>=`, `<` and `<=`, and numbers read as
+  `Double.parseDouble` reads them) and `region` (list `regions`, through `RegionProvider`). A plugin adds its own
+  with `register(String name, ConditionType type)`. There is no economy type: a plugin registers its own and runs
+  it on the thread `EconomyProvider.thread` names.
+- `ConditionRegistry.build(Object value, String path, ConditionProblems problems)` turns the list into one
+  `Condition` when the file loads and throws for no value in it. A `type` that is not registered, a missing or
+  unusable key, a `deny` that is not a text and a type that throws are each passed to `problems` as an error with
+  its path, such as `conditions[1].type`, and that entry is left out, so a plugin refuses the file when it got an
+  error. `ConditionProblems` takes the arguments of `ConfigReader.error(String, String, String)`, so a plugin
+  passes `reader::error`.
+- `Condition.test(Player)` tests the entries in file order on the player's thread, stops at the first one that
+  denies and gives a `ConditionResult` with the reason as a component. The reason is the entry's `deny` text
+  rendered for the player, or the message of the type's key from the plugin's lang files: `condition.permission`,
+  `condition.world`, `condition.region`, `condition.region-unavailable` while no region provider is available,
+  and `condition.requirement-not-met` for `papi`. While PlaceholderAPI is not installed a `papi` placeholder is
+  compared as written. A condition that throws denies, and is logged at most once a minute and reported under
+  `condition.<type>`.
 
 ## [0.4.13] - 2026-11-24
 

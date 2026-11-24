@@ -27,7 +27,9 @@ class PublicApiRulesTest {
                 FloodgateBedrock.class, GeyserBedrock.class, PlaceholderExpansionBuilder.class,
                 PlaceholderRegistration.class, PapiExpansion.class, MiniExpansion.class, PlaceholderPrefixes.class,
                 PlaceholderCache.class, NpcPlugin.class, NpcProvider.class, PluginNpcs.class, NpcBackend.class,
-                NpcClicks.class, CitizensNpcBackend.class, FancyNpcsBackend.class, ZnpcsPlusBackend.class)
+                NpcClicks.class, CitizensNpcBackend.class, FancyNpcsBackend.class, ZnpcsPlusBackend.class,
+                Condition.class, ConditionResult.class, ConditionType.class, ConditionConfig.class,
+                ConditionDenial.class, ConditionProblems.class, ConditionRegistry.class, BuiltinConditions.class)
             .allSatisfy(type -> assertThat(type.getPackageName()).startsWith(getClass().getPackageName()));
     }
 
