@@ -36,6 +36,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.logging.Logger;
 import java.util.stream.IntStream;
@@ -170,8 +171,19 @@ final class MenuHarness {
         return other;
     }
 
+    // A second Menus as another() builds, whose menu inventories come from the function given.
+    Menus another(Function<PreviewMarker, Inventories> inventories) {
+        Menus other = build(inventories);
+        listeners.add(other.menuListener());
+        return other;
+    }
+
     private Menus build() {
-        return new Menus(parts, marker -> inventories, player -> owned.test(player),
+        return build(marker -> inventories);
+    }
+
+    private Menus build(Function<PreviewMarker, Inventories> inventories) {
+        return new Menus(parts, inventories, player -> owned.test(player),
             material -> !notItems.contains(material), clock, registered::add);
     }
 
@@ -208,6 +220,13 @@ final class MenuHarness {
 
     void drain() {
         tasks.drain();
+    }
+
+    // Runs the given number of ticks: each runs the tasks queued before it.
+    void tick(int ticks) {
+        for (int tick = 0; tick < ticks; tick++) {
+            tasks.tick();
+        }
     }
 
     void advance(Duration step) {

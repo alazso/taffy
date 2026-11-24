@@ -92,14 +92,23 @@ final class GuiFakes {
         }
     }
 
-    // Tasks queue until drain runs them in order, including tasks they queue.
+    // Tasks queue until drain runs them in order, including tasks they queue, or tick runs the ones queued at its
+    // call and leaves the tasks they queue for the next tick. players holds the player of each task, in order.
     static final class FakeTasks implements BiConsumer<Player, Runnable> {
 
         final Queue<Runnable> queue = new ArrayDeque<>();
+        final List<Player> players = new ArrayList<>();
 
         @Override
         public void accept(Player player, Runnable task) {
+            players.add(player);
             queue.add(task);
+        }
+
+        void tick() {
+            for (int due = queue.size(); due > 0; due--) {
+                queue.remove().run();
+            }
         }
 
         void drain() {

@@ -27,6 +27,7 @@ public final class MenuSession<S> implements InventoryHolder {
     private @Nullable Object data;
     private int generation;
     private long loadToken;
+    private long animation;
     private Map<Integer, Button> buttons = Map.of();
     private Map<Integer, Long> changedAt = Map.of();
     private @Nullable Inventory inventory;
@@ -162,6 +163,16 @@ public final class MenuSession<S> implements InventoryHolder {
     /** The token of the latest load; a load applies only while its token is the latest. */
     long loadToken() {
         return loadToken;
+    }
+
+    /** The number of the latest animation; an animation runs only while its number is the latest. */
+    long animation() {
+        return animation;
+    }
+
+    /** Starts an animation, which replaces the one before it, and gives its number. */
+    long nextAnimation() {
+        return ++animation;
     }
 
     Map<Integer, Button> buttons() {

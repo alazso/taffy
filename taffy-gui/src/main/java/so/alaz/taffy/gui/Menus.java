@@ -16,6 +16,7 @@ import so.alaz.taffy.platform.EntityUnavailableException;
 import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.platform.Messages;
 
+import java.time.Duration;
 import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -48,9 +49,10 @@ import java.util.logging.Logger;
  * not own the viewer, such as the thread that completed a storage future, each throws an
  * {@link IllegalStateException} that names what to call instead, before it changes anything. The {@code *Later}
  * methods are called from any thread and schedule that work for the next tick on the viewer's entity thread through
- * {@link Parts#tasks()}, which is how a {@link ClickHandler} opens, closes and redraws menus. The session map serves
- * {@link #session(UUID)}, a quit and {@link #shutdown()}; listeners find a menu by its inventory holder, the
- * {@link MenuSession}.
+ * {@link Parts#tasks()}, which is how a {@link ClickHandler} opens, closes and redraws menus.
+ * {@link #animate(MenuSession, Duration, Predicate)} is called on the viewer's entity thread too and then redraws the
+ * session every few ticks through the same tasks. The session map serves {@link #session(UUID)}, a quit and
+ * {@link #shutdown()}; listeners find a menu by its inventory holder, the {@link MenuSession}.
  *
  * <p>A plugin may build more than one {@code Menus}. Each listener cancels the clicks and drags in a menu of any of
  * them, and only the menus that opened a session run its button handlers, play its sounds and end it.
@@ -71,6 +73,8 @@ import java.util.logging.Logger;
  * <p>A load that fails, a menu that fails to draw in a task {@code openLater} or {@link #rerenderLater(MenuSession)}
  * scheduled, or a {@link Menu#closed(MenuSession, boolean)} that throws is logged with its stack through the plugin's
  * logger and reported to its {@link ErrorReports} under {@code gui.load}, {@code gui.render} or {@code gui.close}. A
+ * step or a draw of {@link #animate(MenuSession, Duration, Predicate)} that fails is logged and reported under
+ * {@code gui.render} too. A
  * failed load also tells the viewer the lang key {@link #ERROR} and plays {@link Cue#FAIL} while its session is open.
  * {@link #keys(Collection)} lists the lang keys the menus read.
  */
@@ -78,6 +82,9 @@ public final class Menus {
 
     /** The lang key of the message a viewer is told when a menu's load fails. */
     public static final String ERROR = "gui.error";
+
+    private static final long TICKS_PER_SECOND = 20;
+    private static final long NANOS_PER_TICK = 50_000_000;
 
     /** A listener with no event handler. */
     static final Listener INERT = new Listener() {
@@ -602,6 +609,100 @@ public final class Menus {
      */
     public void rerenderLater(MenuSession<?> session) {
         later(session.viewer(), () -> rerender(session));
+    }
+
+    /**
+     * Redraws the session every {@code period} until it closes. Call on the viewer's entity thread, such as from
+     * {@link Menu#opened(MenuSession, Player)} or a {@link ClickHandler}. Nothing happens for a session that closed or
+     * once {@link #shutdown()} ran.
+     *
+     * <p>The period is counted in server ticks of 50 ms, rounded up, and is at least one tick, so a zero, negative or
+     * shorter period is one tick. The first frame comes one period after the call, not at the call. Each frame runs
+     * {@code step}, which moves the state through {@link MenuSession#state(Object)}, and then draws the session as
+     * {@link #rerender(MenuSession)} does. When {@code step} returns {@code false} the frame is still drawn and is the
+     * last one, which is how a plugin stops an animation: there is no handle to cancel. The step and the draw run on
+     * the viewer's entity thread, which on Folia is the region thread that owns the player.
+     *
+     * <p>The animation also ends, without another step or draw, when the session closed (the viewer closed the menu,
+     * quit, or another menu or a prompt opened in its place, which is a new session that is not animated), when
+     * {@link #shutdown()} ran, and when {@code animate} is called again for the session: a session has one animation,
+     * and the later call replaces the earlier one, also when the step makes that call. A {@code step} that throws a
+     * {@link RuntimeException} draws nothing, and a draw that throws ends the animation as well; either is logged with
+     * its stack and reported under {@code gui.render}.
+     *
+     * <p>The ticks are counted by one task a tick through {@link Parts#tasks()}, whatever the period, so a lagging
+     * server stretches the period, and tasks that run nothing for a viewer who is gone end the animation. Nothing
+     * stays scheduled once the animation ended. A redraw writes only the slots whose icon changed. A list row that
+     * keeps its {@link Frame.Entry#key()} takes clicks on every frame; a row with no key whose icon changes, and a
+     * slot that gets a row with another key, drops clicks for the click debounce window after that frame.
+     *
+     * @param session the session to animate
+     * @param period the time between two frames
+     * @param step runs before each draw, on the viewer's entity thread, and returns whether another frame follows
+     * @param <S> the type of the state the menu shows
+     * @throws NullPointerException if an argument is {@code null}; no animation starts or ends then
+     * @throws IllegalArgumentException if another {@code Menus} opened the session; no animation starts or ends then
+     * @throws IllegalStateException if the session is open and the calling thread does not own its viewer; no
+     *     animation starts or ends then. Hop to the viewer's thread through {@link EntityThread#call}
+     * @since 0.4.15
+     */
+    public <S> void animate(MenuSession<S> session, Duration period, Predicate<MenuSession<S>> step) {
+        Objects.requireNonNull(session, "session");
+        long ticks = ticks(Objects.requireNonNull(period, "period"));
+        Objects.requireNonNull(step, "step");
+        if (session.owner() != this) {
+            throw new IllegalArgumentException("another Menus opened the " + session.id() + " menu");
+        }
+        if (session.closed() || stopping) {
+            return;
+        }
+        onViewerThread(session.viewer(), "Menus.animate",
+            "call it from Menu.opened or a ClickHandler, or hop there through EntityThread.call");
+        hop(session, session.nextAnimation(), ticks, ticks, step);
+    }
+
+    /** {@code period} in server ticks of 50 ms, rounded up, and at least one. */
+    static long ticks(Duration period) {
+        long seconds = period.getSeconds();
+        if (seconds < 0) {
+            return 1;
+        }
+        if (seconds >= Long.MAX_VALUE / TICKS_PER_SECOND) {
+            return Long.MAX_VALUE;
+        }
+        return Math.max(1, seconds * TICKS_PER_SECOND + Math.ceilDiv(period.getNano(), NANOS_PER_TICK));
+    }
+
+    /** Schedules the next tick of the animation {@code run} of the session, whose frame is {@code left} ticks away. */
+    private <S> void hop(MenuSession<S> session, long run, long period, long left, Predicate<MenuSession<S>> step) {
+        parts.tasks().accept(session.viewer(), () -> {
+            if (!animating(session, run)) {
+                return;
+            }
+            if (left > 1) {
+                hop(session, run, period, left - 1, step);
+                return;
+            }
+            boolean more;
+            try {
+                more = step.test(session);
+                rerender(session);
+            } catch (RuntimeException failure) {
+                parts.logger().log(Level.WARNING, "gui: " + session.id() + " failed to animate for "
+                    + session.viewer().getName() + ": " + failure, failure);
+                parts.errors().report("gui.render", failure);
+                return;
+            }
+            if (more && animating(session, run)) {
+                hop(session, run, period, period, step);
+            }
+        });
+    }
+
+    /** Tells whether the animation {@code run} is the session's latest and the session is still the viewer's. */
+    private boolean animating(MenuSession<?> session, long run) {
+        return !stopping && !session.closed() && session.animation() == run
+            && sessions.get(session.viewer().getUniqueId()) == session;
     }
 
     /**

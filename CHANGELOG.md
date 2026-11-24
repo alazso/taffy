@@ -32,6 +32,19 @@ All notable changes to Taffy are documented here. This project follows
   importer without regard to case; `presentIds()` and `allIds()` give the ids a command suggests, in registration
   order. `presentIds()` calls `present()` of every importer each time, and one that throws counts as absent, is
   logged at most once a minute and is reported under `importer.<id>`. The registry is thread-safe.
+- `taffy-gui`: `Menus.animate(MenuSession<S> session, Duration period, Predicate<MenuSession<S>> step)` redraws an
+  open menu every `period`, such as a countdown or an opening animation. Each frame runs `step`, which moves the
+  state through `MenuSession.state`, and then draws the session as `rerender` does. The period is counted in
+  server ticks, rounded up, and is at least one tick (a zero or negative period is one tick); the first frame
+  comes one period after the call. The call returns nothing: the animation ends when `step` returns `false`
+  (that frame is still drawn), when the session closes (the viewer closed it or quit, or another menu or a prompt
+  opened in its place), when `Menus.shutdown` runs, and when `animate` is called again for the session, which
+  replaces the running animation. A `step` or a draw that throws ends it too, logged and reported under
+  `gui.render`. Call it on the viewer's entity thread, such as in `Menu.opened` or a `ClickHandler`; elsewhere it
+  throws `IllegalStateException`, and the step and the draw run on that thread, on Folia too. It counts ticks with
+  one task a tick through `Menus.Parts.tasks()`, so `Menus.Parts` is unchanged and nothing stays scheduled once
+  the animation ended. A list row that keeps its `Frame.Entry.key` takes clicks on every frame, while a row with
+  no key whose icon changes drops the clicks of the click debounce window after each frame.
 
 ## [0.4.14] - 2026-11-24
 
