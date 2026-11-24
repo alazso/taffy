@@ -16,6 +16,8 @@ luckperms        = "5.5"
 vault            = "1.7.1"
 vaultunlocked    = "2.20"
 playerpoints     = "3.3.5"
+excellenteconomy = "2.8.0"  # the plugin CoinsEngine was renamed to
+nightcore        = "2.16.7"  # the supertypes of the ExcellentEconomy API; its bridge module is for tests only
 itemsadder       = "4.0.17"
 oraxen           = "1.220.1"
 nexo             = "1.30.2"
@@ -55,6 +57,9 @@ luckperms-api             = { module = "net.luckperms:api",                     
 vault-api                 = { module = "com.github.MilkBowl:VaultAPI",                     version.ref = "vault" }
 vaultunlocked-api         = { module = "net.milkbowl.vault:VaultUnlockedAPI",              version.ref = "vaultunlocked" }
 playerpoints              = { module = "org.black_ixx:playerpoints",                       version.ref = "playerpoints" }
+excellenteconomy          = { module = "su.nightexpress.excellenteconomy:ExcellentEconomy", version.ref = "excellenteconomy" }
+nightcore-main            = { module = "su.nightexpress.nightcore:main",                   version.ref = "nightcore" }
+nightcore-bridge          = { module = "su.nightexpress.nightcore:bridge",                 version.ref = "nightcore" }
 itemsadder-api            = { module = "beer.devs:itemsadder-api",                         version.ref = "itemsadder" }
 oraxen                    = { module = "io.th0rgal:oraxen",                                version.ref = "oraxen" }
 nexo                      = { module = "com.nexomc:nexo",                                  version.ref = "nexo" }

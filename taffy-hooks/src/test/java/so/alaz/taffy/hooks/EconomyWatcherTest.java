@@ -47,6 +47,33 @@ final class EconomyWatcherTest {
     }
 
     @Test
+    void aVaultUnlockedWatcherHearsTheVaultUnlockedEconomyAndTheConstructorsWatcherDoesNot() {
+        Class<?> unlocked = net.milkbowl.vault2.economy.Economy.class;
+        AtomicInteger late = new AtomicInteger();
+        EconomyWatcher unlockedWatcher = EconomyWatcher.vaultUnlocked(late::incrementAndGet, stopping::get);
+
+        watcher.onRegister(registered(unlocked));
+        watcher.onUnregister(unregistered(unlocked));
+        assertThat(resolves).hasValue(0);
+
+        unlockedWatcher.onRegister(registered(Economy.class));
+        unlockedWatcher.onRegister(registered(Runnable.class));
+        assertThat(late).hasValue(0);
+        unlockedWatcher.onRegister(registered(unlocked));
+        unlockedWatcher.onUnregister(unregistered(unlocked));
+        assertThat(late).hasValue(2);
+
+        stopping.set(true);
+        unlockedWatcher.onUnregister(unregistered(unlocked));
+        assertThat(late).hasValue(2);
+        assertThat(EconomyWatcher.UNLOCKED_ECONOMY).isEqualTo(unlocked.getName());
+        assertThatThrownBy(() -> EconomyWatcher.vaultUnlocked(null, stopping::get))
+            .isInstanceOf(NullPointerException.class).hasMessage("resolve");
+        assertThatThrownBy(() -> EconomyWatcher.vaultUnlocked(late::incrementAndGet, null))
+            .isInstanceOf(NullPointerException.class).hasMessage("stopping");
+    }
+
+    @Test
     void aMissingResolveOrStoppingCheckIsRefused() {
         assertThatThrownBy(() -> new EconomyWatcher(null, stopping::get))
             .isInstanceOf(NullPointerException.class).hasMessage("resolve");

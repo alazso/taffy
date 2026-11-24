@@ -41,6 +41,9 @@ public enum HookState {
     /**
      * The integration plugin is installed and the API that is read is visible, but no plugin has registered the
      * service read through it, such as an economy with Vault. A later registration can turn the integration on.
+     * {@link EconomyProvider#vaultUnlocked} and {@link EconomyProvider#coinsEngine} also give this state, with a
+     * reason, when the economy has no currency of the id asked for; {@link HookStatus#describe()} reads
+     * {@code has nothing registered with it} then too, and the reason names the currency.
      */
     NOT_REGISTERED,
     /** The API is present, but building or registering the integration failed, so it stays off. */

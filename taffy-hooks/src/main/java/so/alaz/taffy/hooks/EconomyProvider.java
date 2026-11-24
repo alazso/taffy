@@ -9,6 +9,7 @@ import so.alaz.taffy.platform.ThreadTag;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
@@ -259,6 +260,241 @@ public interface EconomyProvider {
     }
 
     /**
+     * Looks up one currency of the economy registered with the VaultUnlocked economy API
+     * ({@code net.milkbowl.vault2.economy.Economy}), which carries amounts as {@link BigDecimal}, names an account
+     * by {@link UUID} and has several currencies. {@link #vault} keeps reading the Vault API
+     * ({@code net.milkbowl.vault.economy.Economy}), which VaultUnlocked serves too, and is not changed by this
+     * entry point. The VaultUnlocked plugin is named {@code Vault}: the plugin that calls this lists {@code Vault}
+     * in its {@code paper-plugin.yml} with {@code load: BEFORE} and {@code required: false}. Built against
+     * VaultUnlockedAPI 2.20. An installed VaultUnlocked whose {@code Economy} lacks
+     * {@code set(String, UUID, String, String, BigDecimal)} or {@code fractionalDigits(String, String)}, the two
+     * methods of those the provider calls that VaultUnlocked added in 2025, is still read: without the first,
+     * {@link #setBalance(UUID, BigDecimal)} answers {@link EconomyResult.Status#UNSUPPORTED} once the thread is
+     * checked, and without the second the decimal places are those {@code Economy.fractionalDigits(String)} gives
+     * for the economy. One that lacks any other method the provider calls is {@link HookState#FAILED}.
+     *
+     * <p>The lookup reads the registration and asks the economy whether it has the currency, through
+     * {@code Economy.hasCurrency(String)}; when it has not, it also reads {@code Economy.currencies()} for the
+     * reason. No balance is read and no money moves. The VaultUnlocked classes are loaded only when that API is
+     * visible to the plugin. The status's plugin is always {@code VaultUnlocked}, with the version of the installed
+     * {@code Vault} plugin, and each status but {@link HookState#SWITCHED_OFF} and {@link HookState#ON} carries a
+     * reason for the owner:
+     *
+     * <ul>
+     *   <li>{@link HookState#SWITCHED_OFF} when {@code switchedOn} is {@code false}; nothing is read;</li>
+     *   <li>{@link HookState#NOT_INSTALLED} when no plugin named {@code Vault} is installed;</li>
+     *   <li>{@link HookState#NOT_VISIBLE} when the installed plugin holds the API but the plugin does not list
+     *     {@code Vault}, with a warning;</li>
+     *   <li>{@link HookState#API_MISSING} when the installed {@code Vault} is not VaultUnlocked, with a
+     *     warning;</li>
+     *   <li>{@link HookState#NOT_REGISTERED} when no economy has registered with the VaultUnlocked economy API, and
+     *     when the registered economy has no currency of that id, with a reason that names the economy and the ids
+     *     it has. For that currency {@link HookStatus#describe()} still reads
+     *     {@code VaultUnlocked <version> has nothing registered with it}, so {@link HookStatus#line()} is such as
+     *     {@code VaultUnlocked 2.20.3 has nothing registered with it. TNE has no currency named tokens. It has
+     *     dollars, gems.};</li>
+     *   <li>{@link HookState#FAILED} when the lookup throws an exception or a {@link LinkageError}, which is logged
+     *     with a warning and reported to {@code errors} under {@code hook.vaultunlocked}; any other {@link Error}
+     *     propagates;</li>
+     *   <li>{@link HookState#ON} with the provider otherwise.</li>
+     * </ul>
+     *
+     * <p>The status is fixed, as the one of {@link #vault} is. An economy plugin that enables later registers only
+     * then, so the caller looks the economy up again from an
+     * {@link EconomyWatcher#vaultUnlocked(Runnable, BooleanSupplier)} watcher, and once more on the first tick. A
+     * watcher made by the {@link EconomyWatcher} constructor does not hear this registration. Every call logs its
+     * own warning and makes its own report.
+     *
+     * <p>{@link #thread(UUID)} answers {@link ThreadTag#GLOBAL} for every player. {@link #balance(UUID)},
+     * {@link #has(UUID, BigDecimal)}, a withdraw, a deposit and {@link #setBalance(UUID, BigDecimal)} throw
+     * {@link IllegalStateException} on a thread {@code Server.isGlobalTickThread()} is {@code false} on, with a
+     * message that names {@code thread(player)} and {@code Scheduler.dispatch}, after the {@code null} checks and
+     * before anything in the economy is called. The asynchronous API of VaultUnlocked is not used.
+     *
+     * <p>Every call names the plugin that pays, by the owner's name, the currency, and a world, which is the name of
+     * the first world of {@code Server.getWorlds()}, since the VaultUnlocked calls that name a currency also name a
+     * world. While no world is loaded, a balance read throws {@link IllegalStateException} and a withdraw, a deposit
+     * and a balance set give {@link EconomyResult.Status#FAILED}. Amounts reach the economy as {@link BigDecimal},
+     * rounded half-even to {@link #scale()} and never as a {@code double}, so no amount is refused for its size. A
+     * withdraw reads the balance, gives {@link EconomyResult.Status#INSUFFICIENT} when it is short, runs
+     * {@code start}, withdraws and reads the balance again to tell {@link EconomyResult.Status#OVERDRAWN}, as
+     * {@link VaultOptions.FundsCheck#EMULATED} does for the Vault economy. A response of the type
+     * {@code NOT_IMPLEMENTED} gives {@link EconomyResult.Status#UNSUPPORTED}, and any other response that is not a
+     * success gives {@link EconomyResult.Status#FAILED} with the economy's message.
+     *
+     * <p>Before a withdraw, a deposit or a balance set reaches the economy, the provider asks
+     * {@code Economy.hasCurrency(String)} again, and gives {@link EconomyResult.Status#FAILED} with a message that
+     * names the currency when the economy no longer has it, so no money moves in another currency.
+     * {@link #balance(UUID)} and {@link #has(UUID, BigDecimal)} do not ask and give what the economy answers. While
+     * the plugin that registered the economy is disabled, a withdraw, a deposit and a balance set give
+     * {@link EconomyResult.Status#FAILED} with a message that names the plugin, with no call into the economy.
+     *
+     * <p>{@link #setBalance(UUID, BigDecimal)} calls {@code Economy.set}, which in VaultUnlockedAPI 2.20 is a
+     * default method that reads the balance and withdraws or deposits the difference unless the economy overrides
+     * it. After a set the economy answered as a success, the provider reads the balance again. When it is not the
+     * amount, as after a fee the economy took or a change another plugin made in between, the call throws
+     * {@link IllegalStateException} with a message that names the balance and the amount: the balance changed and
+     * is not what was asked for. When that read throws an exception or a {@link LinkageError}, the result is
+     * {@link EconomyResult.Status#OK} and a warning is logged.
+     *
+     * <p>{@link #currencyNameSingular()} and {@link #currencyNamePlural()} answer
+     * {@code Economy.defaultCurrencyNameSingular} and {@code defaultCurrencyNamePlural} when the currency is the
+     * one {@code Economy.getDefaultCurrency} names, and {@code null} for every other currency, since the API names
+     * only its default currency. {@link #currencySymbol()} answers {@code null}: the API has no symbol.
+     * {@link #format(BigDecimal)} answers {@code Economy.format(String, BigDecimal, String)} for the amount rounded
+     * half-even to {@link #scale()}. A receipt has no transaction id: a VaultUnlocked response carries none.
+     *
+     * @param owner the plugin that pays through the economy: its name is passed to the economy with every call, its
+     *     server's plugin manager and services manager are read, and its logger receives every warning
+     * @param errors receives a lookup that failed
+     * @param switchedOn whether the owner switched the economy on; {@code false} gives {@link HookState#SWITCHED_OFF}
+     *     and reads nothing from the server
+     * @param folia whether the server is Folia, which decides what each reason asks the owner to install
+     * @param currency the id of the currency, as {@link #vaultUnlockedCurrencies} lists it
+     * @param scale decimal places to use instead of the currency's own, from 0 to {@value #MAX_SCALE}, or
+     *     {@code null} to use {@code Economy.fractionalDigits(String, String)}, or
+     *     {@code Economy.fractionalDigits(String)} where the installed VaultUnlocked lacks it, capped at
+     *     {@value #MAX_SCALE}, or 2 when it reports none; a scale finer than the economy keeps is warned about on its
+     *     first use
+     * @return the lookup result, with a provider when the state is {@link HookState#ON}
+     * @throws IllegalArgumentException if {@code currency} is blank or {@code scale} is outside 0 to
+     *     {@value #MAX_SCALE}, checked before the switch
+     * @throws NullPointerException if {@code owner}, {@code errors} or {@code currency} is {@code null}
+     * @since 0.4.13
+     */
+    static Detected<EconomyProvider> vaultUnlocked(Plugin owner, ErrorReports errors, boolean switchedOn,
+                                                   boolean folia, String currency, @Nullable Integer scale) {
+        return EconomyLookup.vaultUnlocked(owner, errors, switchedOn, folia, currency, scale);
+    }
+
+    /**
+     * Lists the currencies of the economy registered with the VaultUnlocked economy API, in the order
+     * {@code Economy.currencies()} gives them. The API names only its default currency, so that one carries the
+     * name {@code Economy.defaultCurrencyNameSingular} gives, and every other currency has no name. No currency has
+     * a symbol.
+     *
+     * @param owner the plugin that asks: its name is passed to the economy, its server's services manager is read,
+     *     and its logger receives a warning
+     * @param errors receives a listing that failed, under {@code hook.vaultunlocked}
+     * @return the currencies, which cannot be changed: an empty list when the VaultUnlocked economy API is not
+     *     visible to the plugin, when no economy is registered with it, and when the economy throws an exception or
+     *     a {@link LinkageError}, which is logged with a warning and reported
+     * @throws NullPointerException if {@code owner} or {@code errors} is {@code null}
+     * @since 0.4.13
+     */
+    static List<EconomyCurrency> vaultUnlockedCurrencies(Plugin owner, ErrorReports errors) {
+        return EconomyLookup.vaultUnlockedCurrencies(owner, errors);
+    }
+
+    /**
+     * Detects ExcellentEconomy, the plugin CoinsEngine was renamed to, and builds a provider on one of its
+     * currencies. The plugin that calls this lists {@code ExcellentEconomy} and {@code nightcore}, which the
+     * ExcellentEconomy API is read through, in its {@code paper-plugin.yml} with {@code load: BEFORE} and
+     * {@code required: false}. Built against ExcellentEconomy 2.8.0 and nightcore 2.16.7. A plugin named
+     * {@code CoinsEngine}, the name of the releases before the rename, is not read: with it and no
+     * {@code ExcellentEconomy} the status is {@link HookState#NOT_INSTALLED} with a reason that says so.
+     *
+     * <p>ExcellentEconomy is read only when it is switched on, installed, enabled, and its API and nightcore are
+     * visible; otherwise the result carries the state that stopped it and no provider. It is
+     * {@link HookState#FAILED}, logged with a warning and reported to {@code errors} under
+     * {@code hook.excellenteconomy}, when a method the provider calls is missing or ExcellentEconomy has registered
+     * no API with the services manager, and {@link HookState#NOT_REGISTERED}, with a reason that names the ids it
+     * has, when it has no currency of that id. For that currency {@link HookStatus#describe()} still reads
+     * {@code ExcellentEconomy <version> has nothing registered with it}, so {@link HookStatus#line()} is such as
+     * {@code ExcellentEconomy 2.8.0 has nothing registered with it. ExcellentEconomy has no currency named gems. It
+     * has coins.} Detection asks ExcellentEconomy for the currency and reads whether
+     * it holds decimals; no balance is read and no money moves. The result is bound to the ExcellentEconomy plugin,
+     * as the one of {@link #playerPoints} is to PlayerPoints: its status reads {@link HookState#NOT_ENABLED} while
+     * ExcellentEconomy is disabled. ExcellentEconomy registers nothing an {@link EconomyWatcher} hears, and needs
+     * none: it is enabled before the plugin that lists it.
+     *
+     * <p>{@link #scale()} is 2 for a currency that holds decimals and 0 for one that holds whole units, as detection
+     * found it. ExcellentEconomy holds a balance as a {@code double}, so a withdraw, a deposit and a balance set
+     * refuse with {@link IllegalArgumentException} an amount that, rounded half-even to {@link #scale()}, does not
+     * convert to a {@code double} and back unchanged. Every whole amount up to 2^53, which is 9007199254740992,
+     * and every amount of up to 15 significant digits is exact. A balance read is rounded as {@link #vault}
+     * describes for a {@code double}.
+     *
+     * <p>{@link #thread(UUID)} answers {@link ThreadTag#ASYNC} for every player. The provider calls the methods of
+     * {@code ExcellentEconomyAPI} that name a {@link UUID}, which also reach a player who is not online:
+     * ExcellentEconomy loads that player's data from its database on another thread and completes a future, and
+     * the provider waits for it. {@link #balance(UUID)}, {@link #has(UUID, BigDecimal)}, a withdraw, a deposit and
+     * {@link #setBalance(UUID, BigDecimal)} therefore throw {@link IllegalStateException} on a thread
+     * {@code Server.isPrimaryThread()} is {@code true} on, with a message that names {@code thread(player)} and
+     * {@code Scheduler.dispatch}, after the {@code null} checks and before anything in ExcellentEconomy is called.
+     * A player ExcellentEconomy has no data for has a balance of 0, and a move for that player gives
+     * {@link EconomyResult.Status#FAILED}.
+     *
+     * <p>A withdraw reads the balance, gives {@link EconomyResult.Status#INSUFFICIENT} when it is short, runs
+     * {@code start} and takes the amount; a balance that cannot be read gives
+     * {@link EconomyResult.Status#FAILED} before {@code start} runs. A deposit and a balance set read no balance.
+     * ExcellentEconomy answers a change it applied and a change a listener of its {@code ChangeBalanceEvent}
+     * cancelled alike, and a removal from a balance that does not cover it stops at zero. The provider therefore
+     * registers a listener of that event for the owner, at {@code EventPriority.MONITOR}, with the first withdraw,
+     * deposit or balance set, and reads what each of them did from the change heard for the player and the currency
+     * while it ran, never from a second balance read. A change a listener cancelled gives
+     * {@link EconomyResult.Status#FAILED} with the message {@code ExcellentEconomy left the balance unchanged}. A
+     * withdraw that took less than the amount, because another plugin lowered the balance after the check, gives
+     * back what it took and gives {@link EconomyResult.Status#INSUFFICIENT}, with {@code start} already run. The
+     * server registers a listener only for a plugin that is enabled and keeps it through that plugin's
+     * {@code onDisable}: a move made while the owner is not enabled, by a provider that has not moved money before,
+     * gives {@link EconomyResult.Status#FAILED} before anything moves.
+     *
+     * <p>The moves of this provider for one player run one at a time, and {@code start} runs while the others for
+     * that player wait. A change another plugin makes to the same account is not held back, and does not change the
+     * result of a move: it is told from the provider's own change by its size. A move throws
+     * {@link IllegalStateException}, with an unknown outcome, when ExcellentEconomy answered a success and no
+     * change of the move's size was heard, when two such changes were heard and only one of them was cancelled, and
+     * when what a short withdraw took could not be given back. An operation ExcellentEconomy refuses, which it
+     * does while its operations are switched off and for a player it has no data for, gives
+     * {@link EconomyResult.Status#FAILED} with the message {@code ExcellentEconomy refused it}. A withdraw never
+     * gives {@link EconomyResult.Status#OVERDRAWN} or {@link EconomyResult.Status#UNSUPPORTED}: ExcellentEconomy
+     * holds no balance below zero. A currency ExcellentEconomy no longer has, and ExcellentEconomy being disabled,
+     * give {@link EconomyResult.Status#FAILED} before anything moves.
+     *
+     * <p>{@link #setBalance(UUID, BigDecimal)} gives {@link EconomyResult.Status#FAILED} for an amount above the
+     * limit of the currency, which ExcellentEconomy would lower to that limit. {@link #currencyNameSingular()} and
+     * {@link #currencyNamePlural()} both answer {@code ExcellentCurrency.getName()}, the one name a currency has,
+     * {@link #currencySymbol()} answers {@code getSymbol()}, and {@link #format(BigDecimal)} answers
+     * {@code ExcellentCurrency.format(double)} for the amount rounded half-even to {@link #scale()}, with the tags
+     * the owner wrote into the format of the currency. A receipt has no transaction id: ExcellentEconomy gives
+     * none.
+     *
+     * @param owner the plugin that pays in the currency: its server's plugin manager and services manager are read,
+     *     the listener of {@code ChangeBalanceEvent} is registered for it, and its logger receives every warning
+     * @param errors receives a failed detection
+     * @param switchedOn whether the owner switched the economy on; {@code false} gives
+     *     {@link HookState#SWITCHED_OFF} and looks at nothing
+     * @param currency the id of the currency, as {@link #coinsEngineCurrencies} lists it
+     * @return the detection result, with a provider when detection found the currency {@link HookState#ON}; its
+     *     status is read when asked
+     * @throws IllegalArgumentException if {@code currency} is blank, checked before the switch
+     * @throws NullPointerException if {@code owner}, {@code errors} or {@code currency} is {@code null}
+     * @since 0.4.13
+     */
+    static Detected<EconomyProvider> coinsEngine(Plugin owner, ErrorReports errors, boolean switchedOn,
+                                                 String currency) {
+        return CoinsEngineLookup.detect(owner, errors, switchedOn, currency);
+    }
+
+    /**
+     * Lists the currencies of ExcellentEconomy, the plugin CoinsEngine was renamed to, each with the id, the name
+     * and the symbol ExcellentEconomy holds for it, in the order ExcellentEconomy gives them.
+     *
+     * @param owner the plugin that asks: its server's plugin manager and services manager are read, and its logger
+     *     receives a warning
+     * @param errors receives a listing that failed, under {@code hook.excellenteconomy}
+     * @return the currencies, which cannot be changed: an empty list when ExcellentEconomy is not installed, not
+     *     enabled or not visible to the plugin, and when it throws an exception or a {@link LinkageError}, which is
+     *     logged with a warning and reported
+     * @throws NullPointerException if {@code owner} or {@code errors} is {@code null}
+     * @since 0.4.13
+     */
+    static List<EconomyCurrency> coinsEngineCurrencies(Plugin owner, ErrorReports errors) {
+        return CoinsEngineLookup.currencies(owner, errors);
+    }
+
+    /**
      * Looks the economy up as {@link #vault(Plugin, ErrorReports, boolean, boolean, Integer)} does, with the server
      * kind given as a {@link Scheduler.Mode}.
      *
@@ -406,6 +642,8 @@ public interface EconomyProvider {
      * logged with a warning; the PlayerPoints economy also answers {@code null} when the installed PlayerPoints
      * lacks that method.
      *
+     * <p>The name is the text the economy gave, unchanged, as {@link #format(BigDecimal)} describes.
+     *
      * @return the name, or {@code null} when the economy has none to give
      * @since 0.4.13
      */
@@ -416,7 +654,8 @@ public interface EconomyProvider {
     /**
      * The name of several units of the currency, such as {@code Dollars}. It answers as
      * {@link #currencyNameSingular()} does, for the Vault economy from {@code Economy.currencyNamePlural()} and for
-     * the PlayerPoints economy from {@code PlayerPointsAPI.getCurrencyNamePlural()}.
+     * the PlayerPoints economy from {@code PlayerPointsAPI.getCurrencyNamePlural()}. The name is the text the
+     * economy gave, unchanged, as {@link #format(BigDecimal)} describes.
      *
      * @return the name, or {@code null} when the economy has none to give
      * @since 0.4.13
@@ -429,7 +668,8 @@ public interface EconomyProvider {
      * The symbol of the currency, such as {@code $}. The call names no player and is not checked against a thread.
      *
      * <p>This default answers {@code null}, and so do the Vault economy and the PlayerPoints economy: neither API
-     * has a call that gives a symbol.
+     * has a call that gives a symbol. A symbol is the text the economy gave, unchanged, as
+     * {@link #format(BigDecimal)} describes.
      *
      * @return the symbol, or {@code null} when the economy has none to give
      * @since 0.4.13
@@ -446,7 +686,15 @@ public interface EconomyProvider {
      * economy. The Vault economy rounds the amount half-even to {@link #scale()} and answers
      * {@code Economy.format(double)} for the {@code double} nearest to it, so beyond 15 significant digits the text
      * can differ from the amount in its last digits. It answers {@code null} for a text that is {@code null} or
-     * blank, and when the call throws an exception or a {@link LinkageError}, which is logged with a warning.
+     * blank, and when the economy throws an exception or a {@link LinkageError}, in {@code Economy.format} or while
+     * {@link #scale()} is worked out, which is logged with a warning.
+     *
+     * <p>The text is returned as the economy gave it: it is not parsed and nothing is taken out of it. It can hold
+     * legacy colour codes, which start with a section sign, or the tags of the economy plugin's own format, which
+     * are not MiniMessage. A plugin puts it into a component as literal text, as {@code Component.text} does, and
+     * never into {@code MiniMessage.deserialize}, unless it converts the text on purpose. The same holds for
+     * {@link #currencyNameSingular()}, {@link #currencyNamePlural()}, {@link #currencySymbol()} and the name and
+     * symbol of an {@link EconomyCurrency}.
      *
      * @param amount the amount
      * @return the text, or {@code null} when the economy formats no amount

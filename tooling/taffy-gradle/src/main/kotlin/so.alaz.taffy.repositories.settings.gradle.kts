@@ -43,6 +43,13 @@ dependencyResolutionManagement {
             name = "playerpoints"
             content { includeGroup("org.black_ixx") }
         }
+        maven("https://repo.nightexpressdev.com/releases") {
+            name = "nightexpress"
+            content {
+                includeGroup("su.nightexpress.excellenteconomy")
+                includeGroup("su.nightexpress.nightcore")
+            }
+        }
         maven("https://repo.oraxen.com/releases") {
             name = "oraxen"
             content {

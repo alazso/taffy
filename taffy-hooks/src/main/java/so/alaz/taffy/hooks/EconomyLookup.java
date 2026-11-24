@@ -6,7 +6,9 @@ import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.Classes;
 import so.alaz.taffy.platform.ErrorReports;
 
+import java.util.List;
 import java.util.Objects;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 // Reads the Vault plugin and the economy registration once and calls nothing in the economy. Vault's enabled state is
@@ -14,6 +16,8 @@ import java.util.logging.Logger;
 final class EconomyLookup {
 
     private static final String VAULT = "Vault";
+
+    private static final String UNLOCKED = "VaultUnlocked";
 
     private EconomyLookup() {
     }
@@ -74,5 +78,86 @@ final class EconomyLookup {
 
     private static Detected<EconomyProvider> off(HookState state, @Nullable String version, @Nullable String reason) {
         return new Detected<>(new HookStatus(VAULT, state, version, reason), null);
+    }
+
+    // One currency of the economy registered with VaultUnlocked. The VaultUnlocked plugin is named Vault, and the
+    // status's plugin is VaultUnlocked. Unlike the Vault lookup, this one asks the economy whether it has the
+    // currency.
+    static Detected<EconomyProvider> vaultUnlocked(Plugin owner, ErrorReports errors, boolean switchedOn,
+                                                   boolean folia, String currency, @Nullable Integer scale) {
+        Objects.requireNonNull(owner, "owner");
+        Objects.requireNonNull(errors, "errors");
+        Objects.requireNonNull(currency, "currency");
+        if (currency.isBlank()) {
+            throw new IllegalArgumentException("a currency id is not blank");
+        }
+        if (scale != null && (scale < 0 || scale > EconomyProvider.MAX_SCALE)) {
+            throw new IllegalArgumentException(
+                "a scale runs from 0 to " + EconomyProvider.MAX_SCALE + ", not " + scale);
+        }
+        if (!switchedOn) {
+            return unlocked(HookState.SWITCHED_OFF, null, null);
+        }
+        Server server = owner.getServer();
+        Logger logger = owner.getLogger();
+        Plugin vault = server.getPluginManager().getPlugin(VAULT);
+        String version = vault == null ? null : vault.getPluginMeta().getVersion();
+        if (!Classes.present(EconomyWatcher.UNLOCKED_ECONOMY, EconomyLookup.class, logger)) {
+            if (vault == null) {
+                return unlocked(HookState.NOT_INSTALLED, null, MissingEconomy.unlocked(folia, false));
+            }
+            if (Classes.present(EconomyWatcher.UNLOCKED_ECONOMY, vault.getClass(), logger)) {
+                logger.warning(UNLOCKED + " " + version + " is not visible to this plugin, so it stays off: this"
+                    + " plugin's paper-plugin.yml does not list Vault, the name of the VaultUnlocked plugin, under"
+                    + " dependencies.server.");
+                return unlocked(HookState.NOT_VISIBLE, version, MissingEconomy.unlockedNotVisible());
+            }
+            logger.warning("The installed Vault " + version + " lacks the VaultUnlocked economy API, so " + UNLOCKED
+                + " stays off.");
+            return unlocked(HookState.API_MISSING, version, MissingEconomy.unlockedApiMissing());
+        }
+        String shown = version == null ? "unknown" : version;
+        VaultUnlockedEconomy.Found found;
+        try {
+            found = VaultUnlockedEconomy.lookup(server, owner.getName(), currency, scale, logger);
+        } catch (RuntimeException | LinkageError failure) {
+            Detection.failed(UNLOCKED, shown, failure, logger, errors);
+            return unlocked(HookState.FAILED, shown, "The economy could not be read (" + failure + ").");
+        }
+        if (found == null) {
+            return vault == null
+                ? unlocked(HookState.NOT_INSTALLED, null, MissingEconomy.unlocked(folia, false))
+                : unlocked(HookState.NOT_REGISTERED, version, MissingEconomy.unlocked(folia, true));
+        }
+        EconomyProvider provider = found.provider();
+        if (provider == null) {
+            return unlocked(HookState.NOT_REGISTERED, shown,
+                MissingEconomy.noCurrency(found.economy(), currency, found.currencies()));
+        }
+        return new Detected<>(new HookStatus(UNLOCKED, HookState.ON, shown, null), provider);
+    }
+
+    // An empty list when the VaultUnlocked economy API is not visible or no economy is registered, and when the
+    // economy throws, which is logged and reported.
+    static List<EconomyCurrency> vaultUnlockedCurrencies(Plugin owner, ErrorReports errors) {
+        Objects.requireNonNull(owner, "owner");
+        Objects.requireNonNull(errors, "errors");
+        Logger logger = owner.getLogger();
+        if (!Classes.present(EconomyWatcher.UNLOCKED_ECONOMY, EconomyLookup.class, logger)) {
+            return List.of();
+        }
+        try {
+            return VaultUnlockedEconomy.currencies(owner.getServer(), owner.getName());
+        } catch (RuntimeException | LinkageError failure) {
+            logger.log(Level.WARNING, "The currencies of the " + UNLOCKED + " economy could not be listed ("
+                + failure + ").", failure);
+            errors.report(Detection.source(UNLOCKED), failure);
+            return List.of();
+        }
+    }
+
+    private static Detected<EconomyProvider> unlocked(HookState state, @Nullable String version,
+                                                      @Nullable String reason) {
+        return new Detected<>(new HookStatus(UNLOCKED, state, version, reason), null);
     }
 }

@@ -11,7 +11,10 @@ All notable changes to Taffy are documented here. This project follows
   gives `UNSUPPORTED`, `String currencyNameSingular()`, `currencyNamePlural()`, `currencySymbol()` and
   `format(BigDecimal)` give `null`, and `EconomyReceipt withdrawReceipt(UUID, BigDecimal, BooleanSupplier)` and
   `depositReceipt(UUID, BigDecimal)` give the result of `withdraw` and `deposit` with no transaction id. No
-  `EconomyResult.Status` constant is added.
+  `EconomyResult.Status` constant is added. The one implementation that stops compiling is one that already
+  declares a method of one of these names and parameters with another return type, such as
+  `void setBalance(UUID, BigDecimal)` or `Component format(BigDecimal)`: that method is renamed or takes the
+  return type above. A plugin jar built against 0.4.12 keeps running.
 - `setBalance` sets a balance to an amount of zero or more, rounded half-even to `scale()`, on the thread
   `thread(player)` names. `OK` tells that the economy set it, `UNSUPPORTED` that this economy cannot set a
   balance, and `FAILED` that it can and refused; in the last two the balance is unchanged. The Vault provider
@@ -28,11 +31,75 @@ All notable changes to Taffy are documented here. This project follows
   so does a call that throws an exception or a `LinkageError`, which is logged with a warning. Neither API has a
   currency symbol, so `currencySymbol()` gives `null` for both. These four calls name no player and are not
   checked against a thread.
+- A name, a symbol and a formatted amount are the text the economy gave, unchanged: Taffy parses nothing and takes
+  nothing out. The text can hold legacy colour codes, which start with a section sign, or the tags of the economy
+  plugin's own format, which are not MiniMessage, so a plugin shows it as literal text, with `Component.text`.
 - `EconomyReceipt` is a record of an `EconomyResult` and a `transactionId`, which is `null` when the economy
   gave none or no money moved, and `EconomyReceipt.of(EconomyResult)` gives one with no id. Neither Vault nor
   PlayerPoints gives a transaction an id, so every receipt of both providers has none.
 - A PlayerPoints that lacks `set(UUID, int)` or the two name methods is still detected: `setBalance` then gives
   `UNSUPPORTED` and the names `null`.
+- `taffy-hooks`: `EconomyProvider.vaultUnlocked(Plugin owner, ErrorReports errors, boolean switchedOn, boolean
+  folia, String currency, Integer scale)` gives a `Detected<EconomyProvider>` for one currency of the economy
+  registered with the VaultUnlocked economy API (`net.milkbowl.vault2.economy.Economy`), built against
+  VaultUnlockedAPI 2.20. `EconomyProvider.vault` is unchanged: it keeps reading the Vault API
+  (`net.milkbowl.vault.economy.Economy`) and never the VaultUnlocked one. The plugin lists `Vault`, the name of
+  the VaultUnlocked plugin, in `paper-plugin.yml`. The status's plugin is `VaultUnlocked`, a failed lookup is
+  reported under `hook.vaultunlocked`, and a currency the economy does not have gives `NOT_REGISTERED` with a
+  reason that names the currencies it has. `HookStatus.describe()` has no text of its own for that case, so
+  `line()` reads `VaultUnlocked 2.20.3 has nothing registered with it. TNE has no currency named tokens. It has
+  dollars, gems.` The lookup asks the economy for the currency and reads no balance. A VaultUnlocked whose
+  `Economy` lacks `set(String, UUID, String, String, BigDecimal)` or `fractionalDigits(String, String)`, both
+  added in 2025, is still read: `setBalance` then gives `UNSUPPORTED`, and the decimal places come from
+  `fractionalDigits(String)`.
+- The VaultUnlocked provider sends amounts as `BigDecimal`, rounded half-even to `scale()`, so no amount is
+  refused for its size. `scale` is the currency's `fractionalDigits(String, String)` capped at 4, 2 when it
+  reports none, or the `scale` argument. Every call names the owner's plugin name, the currency and the name of
+  the server's first world. `thread(player)` is `ThreadTag.GLOBAL`, and a call on another thread throws
+  `IllegalStateException`. A withdraw checks the balance itself and can give `INSUFFICIENT` and `OVERDRAWN`. A
+  withdraw, a deposit and a balance set give `FAILED` when the economy no longer has the currency, while no world
+  is loaded, and while the plugin that registered the economy is disabled. `setBalance` calls `Economy.set`,
+  which withdraws or deposits the difference unless the economy overrides it, and reads the balance again: a
+  balance that is not the amount after a set the economy answered as a success throws `IllegalStateException`.
+  The two currency names are those of the default currency and `null` for every other currency,
+  `currencySymbol()` is `null`, `format` calls `Economy.format(String, BigDecimal, String)`, and a receipt has no
+  transaction id.
+- `EconomyWatcher.vaultUnlocked(Runnable resolve, BooleanSupplier stopping)` gives a watcher that runs `resolve`
+  when an economy registers with or leaves the VaultUnlocked economy API. A watcher made by the `EconomyWatcher`
+  constructor hears only the Vault API economy, as before, so it does not cover a late VaultUnlocked registration.
+- `EconomyProvider.coinsEngine(Plugin owner, ErrorReports errors, boolean switchedOn, String currency)` gives a
+  `Detected<EconomyProvider>` for one currency of ExcellentEconomy, the plugin CoinsEngine was renamed to, built
+  against ExcellentEconomy 2.8.0 and nightcore 2.16.7. The plugin lists `ExcellentEconomy` and `nightcore` in
+  `paper-plugin.yml`. The status's plugin is `ExcellentEconomy`, a failed detection is reported under
+  `hook.excellenteconomy`, a currency ExcellentEconomy does not have gives `NOT_REGISTERED`, whose `line()`
+  reads `ExcellentEconomy 2.8.0 has nothing registered with it. ExcellentEconomy has no currency named gems. It
+  has coins.`, and a plugin named `CoinsEngine`, the name before the rename, is not read. The result is bound to
+  the plugin, as the PlayerPoints one is, and needs no watcher.
+- The ExcellentEconomy provider calls the `ExcellentEconomyAPI` methods that name a `UUID`, which also reach a
+  player who is not online. `thread(player)` is `ThreadTag.ASYNC`, and a call on a thread
+  `Server.isPrimaryThread()` is `true` on throws `IllegalStateException`. `scale()` is 2 for a currency that holds
+  decimals and 0 for one that holds whole units. ExcellentEconomy holds a `double`, so an amount that does not
+  convert to a `double` and back unchanged throws `IllegalArgumentException`: whole amounts are exact up to 2^53
+  (9007199254740992), and any amount of up to 15 significant digits is. ExcellentEconomy answers a change a
+  listener cancelled as a success and stops a removal at zero, so the provider registers a `MONITOR` listener of
+  `ChangeBalanceEvent` for the owner with its first move and reads what a withdraw, a deposit and a balance set
+  did from the change heard while it ran: a cancelled change gives `FAILED`, and a withdraw that took less than
+  the amount, because another plugin lowered the balance after the check, gives back what it took and gives
+  `INSUFFICIENT`. A change another plugin makes at the same time does not change the result. A move throws
+  `IllegalStateException` when no change of its size was heard or two were heard with different outcomes, and
+  gives `FAILED` before anything moves while the owner is not enabled and no listener is registered yet. The
+  moves of the provider for one player run one at a time. `setBalance` sets the balance, both currency names are
+  `ExcellentCurrency.getName()`, `currencySymbol()` is `getSymbol()`, `format` calls
+  `ExcellentCurrency.format(double)`, and a receipt has no transaction id.
+- `EconomyCurrency` is a record of a currency's `id`, `name` and `symbol`, the last two `null` when the economy
+  gives none. `EconomyProvider.vaultUnlockedCurrencies(Plugin, ErrorReports)` and
+  `EconomyProvider.coinsEngineCurrencies(Plugin, ErrorReports)` list a backend's currencies, and give an empty
+  list when the backend is absent or throws, which is logged and reported. VaultUnlocked names only its default
+  currency and has no symbols.
+- The catalog gains `alaz.excellenteconomy` (`su.nightexpress.excellenteconomy:ExcellentEconomy` 2.8.0),
+  `alaz.nightcore.main` and `alaz.nightcore.bridge` (`su.nightexpress.nightcore` 2.16.7), and
+  `so.alaz.taffy.repositories` adds `https://repo.nightexpressdev.com/releases` for those two groups only. The
+  artifact `su.nightexpress.coinsengine:CoinsEngine` is no longer in that repository.
 
 ## [0.4.12] - 2026-11-23
 

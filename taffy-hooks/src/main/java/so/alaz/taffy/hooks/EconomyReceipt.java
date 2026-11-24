@@ -12,6 +12,7 @@ import java.util.Objects;
  * @param result what happened
  * @param transactionId the economy's id for the transaction, or {@code null} when the economy gave none or no money
  *     moved
+ * @since 0.4.13
  */
 public record EconomyReceipt(EconomyResult result, @Nullable String transactionId) {
 

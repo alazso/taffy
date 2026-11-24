@@ -1,16 +1,17 @@
 /**
- * Integrations with other Paper plugins: custom item plugins, a Vault economy, PlayerPoints points, LuckPerms
- * permissions, WorldGuard regions, Bedrock players through Floodgate and Geyser, placeholder expansions for
- * PlaceholderAPI and MiniPlaceholders, text holograms through DecentHolograms, FancyHolograms, Holograms and
- * HologramLib, or as display entities with no hologram plugin, and NPCs through Citizens, FancyNpcs and ZNPCsPlus.
+ * Integrations with other Paper plugins: custom item plugins, a Vault economy, VaultUnlocked and ExcellentEconomy
+ * currencies, PlayerPoints points, LuckPerms permissions, WorldGuard regions, Bedrock players through Floodgate and
+ * Geyser, placeholder expansions for PlaceholderAPI and MiniPlaceholders, text holograms through DecentHolograms,
+ * FancyHolograms, Holograms and HologramLib, or as display entities with no hologram plugin, and NPCs through
+ * Citizens, FancyNpcs and ZNPCsPlus.
  *
  * <p>The module compiles against each integration's API but ships none of them, and its published metadata names
  * none of them. Floodgate and Geyser are the exception: they are read through method handles, so the module compiles
  * against neither API and a plugin needs no dependency for them. No public signature names an integration type: each
  * integration sits behind an interface of this package, and the class that calls the integration loads only after
- * the integration's API classes are found visible to the plugin, and, for every integration but Vault, after its
- * plugin is found installed and enabled. A server without an integration plugin therefore never loads a class that
- * names it.
+ * the integration's API classes are found visible to the plugin, and, for every integration but the Vault and
+ * VaultUnlocked economies, after its plugin is found installed and enabled. A server without an integration plugin
+ * therefore never loads a class that names it.
  *
  * <h2>Declaring the integrations</h2>
  *
@@ -30,11 +31,13 @@
  * }</pre>
  *
  * <p>The names are {@code ItemsAdder}, {@code Nexo}, {@code Oraxen}, {@code HeadDatabase}, {@code CraftEngine},
- * {@code MMOItems}, {@code Vault}, {@code PlayerPoints}, {@code LuckPerms}, {@code WorldGuard}, {@code floodgate},
- * {@code Geyser-Spigot}, {@code PlaceholderAPI}, {@code MiniPlaceholders}, {@code DecentHolograms},
- * {@code FancyHolograms}, {@code Holograms}, {@code HologramLib}, {@code Citizens}, {@code FancyNpcs} and
- * {@code ZNPCsPlus}. A plugin that uses WorldGuard also lists
- * {@code WorldEdit}, which WorldGuard's regions are read through. An integration that is
+ * {@code MMOItems}, {@code Vault}, {@code PlayerPoints}, {@code ExcellentEconomy}, {@code LuckPerms},
+ * {@code WorldGuard}, {@code floodgate}, {@code Geyser-Spigot}, {@code PlaceholderAPI}, {@code MiniPlaceholders},
+ * {@code DecentHolograms}, {@code FancyHolograms}, {@code Holograms}, {@code HologramLib}, {@code Citizens},
+ * {@code FancyNpcs} and {@code ZNPCsPlus}. The {@code Vault} entry also covers
+ * {@link so.alaz.taffy.hooks.EconomyProvider#vaultUnlocked}, since the VaultUnlocked plugin is named {@code Vault}.
+ * A plugin that uses WorldGuard also lists {@code WorldEdit}, which WorldGuard's regions are read through, and one
+ * that uses ExcellentEconomy also lists {@code nightcore}, which its API is read through. An integration that is
  * installed but not listed is {@link so.alaz.taffy.hooks.HookState#NOT_VISIBLE}, and its warning names the missing
  * entry.
  *
@@ -64,6 +67,11 @@
  *     {@link so.alaz.taffy.hooks.EconomyProvider#watchVault} does all three and keeps the latest result in a
  *     {@link so.alaz.taffy.hooks.VaultWatch}, and a plugin that pays in points detects PlayerPoints with
  *     {@link so.alaz.taffy.hooks.EconomyProvider#playerPoints} and keeps the
+ *     {@link so.alaz.taffy.hooks.Detected}. A plugin that pays in one currency of a VaultUnlocked economy looks it
+ *     up with {@link so.alaz.taffy.hooks.EconomyProvider#vaultUnlocked}, again from an
+ *     {@link so.alaz.taffy.hooks.EconomyWatcher#vaultUnlocked} watcher and once more on the first tick, and one
+ *     that pays in an ExcellentEconomy currency detects it with
+ *     {@link so.alaz.taffy.hooks.EconomyProvider#coinsEngine} and keeps the
  *     {@link so.alaz.taffy.hooks.Detected};</li>
  *   <li>adds its placeholders to a {@link so.alaz.taffy.hooks.PlaceholderExpansionBuilder} and calls
  *     {@link so.alaz.taffy.hooks.PlaceholderExpansionBuilder#register}, keeping the
@@ -157,7 +165,8 @@
  * per plugin through {@link so.alaz.taffy.hooks.CustomItems#statuses()} and
  * {@link so.alaz.taffy.hooks.PlaceholderRegistration#statuses()}. Every status is read when asked: an integration
  * that was on reads {@link so.alaz.taffy.hooks.HookState#NOT_ENABLED} while its plugin is disabled, and on again once
- * it is enabled. The Vault economy is the exception: its status changes only through a new lookup.
+ * it is enabled. The Vault and VaultUnlocked economies are the exception: their status changes only through a new
+ * lookup.
  * {@link so.alaz.taffy.hooks.HookStatus#describe()} names the state, and
  * {@link so.alaz.taffy.hooks.HookStatus#reason()}, when it is set, says what is missing or what went wrong, and what
  * the owner can do when there is something to do; together they are the owner's line, which

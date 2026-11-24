@@ -20,6 +20,8 @@ class PublicApiRulesTest {
                 EconomyReceipt.class, EconomyProvider.class, VaultOptions.class, VaultOptions.ThreadRule.class,
                 VaultOptions.FundsCheck.class, Emulated.class, VaultEconomy.class, MissingEconomy.class,
                 EconomyLookup.class, EconomyWatcher.class, VaultWatch.class, PlayerPointsEconomy.class,
+                EconomyCurrency.class, DoubleMoney.class, VaultUnlockedEconomy.class, CoinsEngineLookup.class,
+                CoinsEngineEconomy.class,
                 PermissionProvider.class, LuckPermsPermissions.class,
                 RegionProvider.class, WorldGuardRegions.class, BedrockProvider.class, PluginBedrock.class,
                 FloodgateBedrock.class, GeyserBedrock.class, PlaceholderExpansionBuilder.class,

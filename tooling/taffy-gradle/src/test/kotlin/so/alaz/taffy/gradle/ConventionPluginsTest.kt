@@ -24,8 +24,8 @@ class ConventionPluginsTest {
 
     private val repositoryNames = listOf(
         "MavenRepo", "papermc", "alazso", "alazsoSnapshots", "placeholderapi", "faststats", "vaultunlocked",
-        "playerpoints", "oraxen", "nexo", "enginehub", "fancyinnovations", "thenextlvl", "packetevents", "momirealms",
-        "phoenix", "citizens", "jitpack",
+        "playerpoints", "nightexpress", "oraxen", "nexo", "enginehub", "fancyinnovations", "thenextlvl",
+        "packetevents", "momirealms", "phoenix", "citizens", "jitpack",
     )
 
     /**
@@ -38,7 +38,7 @@ class ConventionPluginsTest {
         "team.unnamed", "com.sk89q", "org.enginehub", "de.oliver", "net.thenextlvl", "com.github.retrooper",
         "net.momirealms", "net.Indyuce", "io.lumine", "com.github.MilkBowl", "com.github.Arcaniax-Development",
         "net.citizensnpcs", "com.github.decentsoftware-eu", "com.github.HologramLib", "com.github.maximjsx.EntityLib",
-        "com.github.Pyrbu", "org.example",
+        "com.github.Pyrbu", "su.nightexpress.excellenteconomy", "su.nightexpress.nightcore", "org.example",
     )
 
     private val centralOnly = """
@@ -2563,6 +2563,8 @@ class ConventionPluginsTest {
                 "groups=[net.milkbowl.vault]",
             "repository playerpoints https://repo.rosewooddev.io/repository/public/ versions=any " +
                 "groups=[org.black_ixx]",
+            "repository nightexpress https://repo.nightexpressdev.com/releases versions=any " +
+                "groups=[su.nightexpress.excellenteconomy, su.nightexpress.nightcore]",
             "repository oraxen https://repo.oraxen.com/releases versions=any groups=[io.th0rgal, md.thomas.hopper]",
             "repository nexo https://repo.nexomc.com/releases versions=any " +
                 "groups=[com.nexomc, com.tcoded, me.gabytm.util, team.unnamed]",
@@ -2625,6 +2627,9 @@ class ConventionPluginsTest {
                 "dev.faststats.metrics:missing:1.0",
                 "net.milkbowl.vault:missing:1.0",
                 "org.black_ixx:missing:1.0",
+                "su.nightexpress.excellenteconomy:missing:1.0",
+                "su.nightexpress.nightcore:missing:1.0",
+                "su.nightexpress.other:missing:1.0",
                 "io.th0rgal:missing:1.0",
                 "md.thomas.hopper:missing:1.0",
                 "com.nexomc:missing:1.0",
@@ -2679,6 +2684,9 @@ class ConventionPluginsTest {
             "asked dev.faststats.metrics:missing:1.0=[MavenRepo, faststats]",
             "asked net.milkbowl.vault:missing:1.0=[MavenRepo, vaultunlocked]",
             "asked org.black_ixx:missing:1.0=[MavenRepo, playerpoints]",
+            "asked su.nightexpress.excellenteconomy:missing:1.0=[MavenRepo, nightexpress]",
+            "asked su.nightexpress.nightcore:missing:1.0=[MavenRepo, nightexpress]",
+            "asked su.nightexpress.other:missing:1.0=[MavenRepo]",
             "asked io.th0rgal:missing:1.0=[MavenRepo, oraxen]",
             "asked md.thomas.hopper:missing:1.0=[MavenRepo, oraxen]",
             "asked com.nexomc:missing:1.0=[MavenRepo, nexo]",

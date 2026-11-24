@@ -61,11 +61,16 @@ final class AbsentIntegrationsTest {
         "net.luckperms.api.", "com.sk89q.", "me.clip.placeholderapi.", "io.github.miniplaceholders.",
         "eu.decentsoftware.holograms.", "de.oliver.fancyholograms.", "net.thenextlvl.hologram.",
         "com.maximde.hologramlib.", "org.geysermc.", "org.black_ixx.", "net.momirealms.", "net.Indyuce.",
-        "io.lumine.", "net.citizensnpcs.", "de.oliver.fancynpcs.", "lol.pyr.znpcsplus."};
+        "io.lumine.", "net.citizensnpcs.", "de.oliver.fancynpcs.", "lol.pyr.znpcsplus.", "net.milkbowl.vault2.",
+        "su.nightexpress."};
 
     private static final String VAULT_ECONOMY = "net.milkbowl.vault.economy.Economy";
 
     private static final String PLAYERPOINTS = "org.black_ixx.playerpoints.PlayerPointsAPI";
+
+    private static final String VAULTUNLOCKED_ECONOMY = "net.milkbowl.vault2.economy.Economy";
+
+    private static final String EXCELLENTECONOMY = "su.nightexpress.excellenteconomy.api.ExcellentEconomyAPI";
 
     private static final String LUCKPERMS = "net.luckperms.api.LuckPerms";
 
@@ -115,7 +120,11 @@ final class AbsentIntegrationsTest {
         "net.citizensnpcs.api.CitizensAPI", "net.citizensnpcs.api.event.NPCRightClickEvent",
         "net.citizensnpcs.api.event.NPCLeftClickEvent", "de.oliver.fancynpcs.api.FancyNpcsPlugin",
         "de.oliver.fancynpcs.api.events.NpcInteractEvent", "lol.pyr.znpcsplus.api.NpcApiProvider",
-        "lol.pyr.znpcsplus.api.event.NpcInteractEvent"};
+        "lol.pyr.znpcsplus.api.event.NpcInteractEvent", VAULTUNLOCKED_ECONOMY,
+        "net.milkbowl.vault2.economy.EconomyResponse", EXCELLENTECONOMY,
+        "su.nightexpress.excellenteconomy.api.currency.ExcellentCurrency",
+        "su.nightexpress.excellenteconomy.api.currency.operation.OperationResult",
+        "su.nightexpress.nightcore.util.placeholder.PlaceholderResolvable"};
 
     private static ClassLoader hidden() {
         return SimulatedClasspath.hiding(OWN, HIDDEN);
@@ -168,6 +177,9 @@ final class AbsentIntegrationsTest {
         }
         probes.add(VAULT_ECONOMY);
         probes.add(PLAYERPOINTS);
+        probes.add(EconomyWatcher.UNLOCKED_ECONOMY);
+        probes.add(CoinsEngineLookup.API);
+        probes.add(CoinsEngineLookup.NIGHTCORE_PROBE);
         probes.add(LUCKPERMS);
         probes.add(WORLDGUARD);
         probes.add(PluginBedrock.FLOODGATE_PROBE);
@@ -227,8 +239,8 @@ final class AbsentIntegrationsTest {
         assertThat(exported).containsExactlyInAnyOrder(HookState.class, HookStatus.class, Detected.class,
             CustomItemPlugin.class, CustomItemRef.class, CustomItems.class, CustomItems.Resolution.class,
             CustomItems.Built.class, CustomItems.Built.Reason.class, EconomyResult.class, EconomyResult.Status.class,
-            EconomyReceipt.class, EconomyProvider.class, VaultOptions.class, VaultOptions.ThreadRule.class,
-            VaultOptions.FundsCheck.class, EconomyWatcher.class, VaultWatch.class,
+            EconomyReceipt.class, EconomyCurrency.class, EconomyProvider.class, VaultOptions.class,
+            VaultOptions.ThreadRule.class, VaultOptions.FundsCheck.class, EconomyWatcher.class, VaultWatch.class,
             PermissionProvider.class, RegionProvider.class, BedrockProvider.class,
             PlaceholderExpansionBuilder.class, PlaceholderRegistration.class, PlaceholderCache.class,
             HologramPlugin.class,
@@ -236,7 +248,8 @@ final class AbsentIntegrationsTest {
             DisplayHolograms.class,
             NpcPlugin.class,
             NpcProvider.class);
-        assertThat(exported).doesNotContain(EconomyLookup.class, Detection.class, PlayerPointsEconomy.class);
+        assertThat(exported).doesNotContain(EconomyLookup.class, Detection.class, PlayerPointsEconomy.class,
+            VaultUnlockedEconomy.class, CoinsEngineEconomy.class, CoinsEngineLookup.class);
 
         for (Class<?> type : exported) {
             assertThatCode(() -> {
@@ -668,6 +681,151 @@ final class AbsentIntegrationsTest {
         assertThat(hiddenLog.lines()).containsExactly("WARNING PlayerPoints 3.3.5 is not visible to this plugin, so it"
             + " stays off: this plugin's paper-plugin.yml does not list PlayerPoints under dependencies.server.");
         assertThat(reported).isEmpty();
+    }
+
+    private static Object unlockedLookup(ClassLoader loader, Plugin owner, ErrorReports errors, boolean folia)
+        throws Throwable {
+        Class<?> providerType = Class.forName(EconomyProvider.class.getName(), true, loader);
+        Class<?> detectedType = Class.forName(Detected.class.getName(), true, loader);
+        MethodHandle lookup = MethodHandles.publicLookup().findStatic(providerType, "vaultUnlocked",
+            MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class, boolean.class,
+                String.class, Integer.class));
+        Object detected = lookup.invoke(owner, errors, true, folia, "gems", (Integer) null);
+        assertThat(detected.getClass().getClassLoader()).isSameAs(loader);
+        assertThat(MethodHandles.publicLookup().findVirtual(detectedType, "provider",
+            MethodType.methodType(Object.class)).invoke(detected)).isNull();
+        return MethodHandles.publicLookup().findVirtual(detectedType, "status",
+            MethodType.methodType(Class.forName(HookStatus.class.getName(), true, loader))).invoke(detected);
+    }
+
+    @Test
+    void theVaultUnlockedLookupOnTheHiddenCopyTellsAVaultWithoutTheApiFromOneOutOfSightAndLoadsNoClassOfIt()
+        throws Throwable {
+        assertThatCode(() -> Class.forName(VAULTUNLOCKED_ECONOMY, false, withApis())).doesNotThrowAnyException();
+        ClassLoader loader = hidden();
+        assertThatThrownBy(() -> Class.forName(VAULTUNLOCKED_ECONOMY, false, loader))
+            .isInstanceOf(ClassNotFoundException.class);
+        List<String> reported = new ArrayList<>();
+        ErrorReports errors = new ErrorReports();
+        errors.install((source, error) -> reported.add(source));
+
+        CapturedLog lackingLog = new CapturedLog();
+        Plugin lackingOwner = owner(installed(pluginOn(loader, "1.7.3"), "Vault"), lackingLog);
+        Object lacking = unlockedLookup(loader, lackingOwner, errors, false);
+
+        assertThat(stateOf(loader, lacking)).isEqualTo(HookState.API_MISSING.name());
+        assertThat(read(loader, lacking, "plugin", String.class)).isEqualTo("VaultUnlocked");
+        assertThat(read(loader, lacking, "reason", String.class)).isEqualTo("The installed Vault lacks the"
+            + " VaultUnlocked economy API that is read. Install VaultUnlocked in its place.");
+        assertThat(lackingLog.lines()).containsExactly("WARNING The installed Vault 1.7.3 lacks the VaultUnlocked"
+            + " economy API, so VaultUnlocked stays off.");
+
+        CapturedLog hiddenLog = new CapturedLog();
+        Plugin unseenOwner = owner(installed(pluginOn(withApis(), "2.20.3"), "Vault"), hiddenLog);
+        Object unseen = unlockedLookup(loader, unseenOwner, errors, true);
+
+        assertThat(stateOf(loader, unseen)).isEqualTo(HookState.NOT_VISIBLE.name());
+        assertThat(read(loader, unseen, "reason", String.class)).isEqualTo("VaultUnlocked is installed, but this"
+            + " plugin cannot see it, because its paper-plugin.yml does not list Vault, the name of the VaultUnlocked"
+            + " plugin, under dependencies.server.");
+        assertThat(hiddenLog.lines()).containsExactly("WARNING VaultUnlocked 2.20.3 is not visible to this plugin, so"
+            + " it stays off: this plugin's paper-plugin.yml does not list Vault, the name of the VaultUnlocked"
+            + " plugin, under dependencies.server.");
+
+        CapturedLog absentLog = new CapturedLog();
+        Object absent = unlockedLookup(loader, owner(mock(PluginManager.class), absentLog), errors, true);
+
+        assertThat(stateOf(loader, absent)).isEqualTo(HookState.NOT_INSTALLED.name());
+        assertThat(read(loader, absent, "reason", String.class)).isEqualTo("VaultUnlocked and an economy plugin that"
+            + " supports VaultUnlocked and Folia are needed. Install both.");
+        assertThat(absentLog.lines()).isEmpty();
+        assertThat(reported).isEmpty();
+        verify(lackingOwner.getServer(), never()).getServicesManager();
+        verify(unseenOwner.getServer(), never()).getServicesManager();
+    }
+
+    @Test
+    void coinsEngineDetectionOnTheHiddenCopyFindsExcellentEconomyWithoutItsApiOrOutOfSight() throws Throwable {
+        assertThatCode(() -> Class.forName(EXCELLENTECONOMY, false, withApis())).doesNotThrowAnyException();
+        ClassLoader loader = hidden();
+        assertThatThrownBy(() -> Class.forName(EXCELLENTECONOMY, false, loader))
+            .isInstanceOf(ClassNotFoundException.class);
+        List<String> reported = new ArrayList<>();
+        ErrorReports errors = new ErrorReports();
+        errors.install((source, error) -> reported.add(source));
+        Class<?> providerType = Class.forName(EconomyProvider.class.getName(), true, loader);
+        Class<?> detectedType = Class.forName(Detected.class.getName(), true, loader);
+        Class<?> statusType = Class.forName(HookStatus.class.getName(), true, loader);
+        MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+        MethodHandle detect = lookup.findStatic(providerType, "coinsEngine",
+            MethodType.methodType(detectedType, Plugin.class, ErrorReports.class, boolean.class, String.class));
+        MethodHandle status = lookup.findVirtual(detectedType, "status", MethodType.methodType(statusType));
+        MethodHandle provider = lookup.findVirtual(detectedType, "provider", MethodType.methodType(Object.class));
+
+        CapturedLog lackingLog = new CapturedLog();
+        Object lacking = detect.invoke(
+            owner(installed(pluginOn(loader, "2.8.0"), "ExcellentEconomy"), lackingLog), errors, true, "gems");
+
+        assertThat(lacking.getClass().getClassLoader()).isSameAs(loader);
+        assertThat(read(loader, status.invoke(lacking), "describe", String.class))
+            .isEqualTo("ExcellentEconomy 2.8.0 lacks the API that is read");
+        assertThat(provider.invoke(lacking)).isNull();
+        assertThat(lackingLog.lines())
+            .containsExactly("WARNING ExcellentEconomy 2.8.0 lacks the API that is read, so it stays off.");
+
+        CapturedLog hiddenLog = new CapturedLog();
+        Object unseen = detect.invoke(
+            owner(installed(pluginOn(withApis(), "2.8.0"), "ExcellentEconomy"), hiddenLog), errors, true, "gems");
+
+        assertThat(stateOf(loader, status.invoke(unseen))).isEqualTo(HookState.NOT_VISIBLE.name());
+        assertThat(read(loader, status.invoke(unseen), "reason", String.class)).isEqualTo("ExcellentEconomy is"
+            + " installed, but this plugin cannot see it, because its paper-plugin.yml does not list"
+            + " ExcellentEconomy under dependencies.server.");
+        assertThat(provider.invoke(unseen)).isNull();
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void theCurrencyListsOnTheHiddenCopyAreEmptyAndLoadNoClassOfEitherPlugin() throws Throwable {
+        ClassLoader loader = hidden();
+        Class<?> providerType = Class.forName(EconomyProvider.class.getName(), true, loader);
+        MethodType listing = MethodType.methodType(List.class, Plugin.class, ErrorReports.class);
+        CapturedLog log = new CapturedLog();
+        Plugin owner = owner(installed(pluginOn(withApis(), "2.8.0"), "Vault", "ExcellentEconomy", "nightcore"), log);
+
+        assertThat((List<?>) MethodHandles.publicLookup().findStatic(providerType, "vaultUnlockedCurrencies", listing)
+            .invoke(owner, new ErrorReports())).isEmpty();
+        assertThat((List<?>) MethodHandles.publicLookup().findStatic(providerType, "coinsEngineCurrencies", listing)
+            .invoke(owner, new ErrorReports())).isEmpty();
+
+        assertThat(log.lines()).isEmpty();
+        verify(owner.getServer(), never()).getServicesManager();
+    }
+
+    @Test
+    void theVaultUnlockedWatcherOnTheHiddenCopyHearsOnlyTheVaultUnlockedEconomy() throws Throwable {
+        ClassLoader loader = hidden();
+        AtomicInteger resolved = new AtomicInteger();
+        Class<?> watcherType = Class.forName(EconomyWatcher.class.getName(), true, loader);
+        Runnable resolve = resolved::incrementAndGet;
+        BooleanSupplier stopping = () -> false;
+        Object watcher = MethodHandles.publicLookup().findStatic(watcherType, "vaultUnlocked",
+            MethodType.methodType(watcherType, Runnable.class, BooleanSupplier.class)).invoke(resolve, stopping);
+        MethodHandle onRegister = MethodHandles.publicLookup().findVirtual(watcherType, "onRegister",
+            MethodType.methodType(void.class, ServiceRegisterEvent.class));
+        Plugin owner = mock(Plugin.class);
+        RegisteredServiceProvider<Economy> classic = new RegisteredServiceProvider<>(Economy.class,
+            mock(Economy.class), ServicePriority.Normal, owner);
+        RegisteredServiceProvider<net.milkbowl.vault2.economy.Economy> unlocked = new RegisteredServiceProvider<>(
+            net.milkbowl.vault2.economy.Economy.class, mock(net.milkbowl.vault2.economy.Economy.class),
+            ServicePriority.Normal, owner);
+
+        onRegister.invoke(watcher, registered(classic));
+        assertThat(resolved).hasValue(0);
+        onRegister.invoke(watcher, registered(unlocked));
+        assertThat(resolved).hasValue(1);
+        assertThatThrownBy(() -> Class.forName(VAULTUNLOCKED_ECONOMY, false, loader))
+            .isInstanceOf(ClassNotFoundException.class);
     }
 
     @Test

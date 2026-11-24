@@ -202,6 +202,18 @@ final class VaultEconomyTest extends EconomyProviderContract {
     }
 
     @Test
+    void aFormattedAmountIsNullAndLoggedWhenTheEconomyThrowsWhileTheScaleIsWorkedOut() {
+        VaultEconomy provider = economy(null);
+        when(economy.fractionalDigits()).thenThrow(new IllegalStateException("not loaded"));
+
+        assertThat(provider.format(BigDecimal.ONE)).isNull();
+
+        assertThat(log.lines()).containsExactly("WARNING The economy threw in format, so it is read as having none ("
+            + "java.lang.IllegalStateException: not loaded).");
+        verify(economy, never()).format(anyDouble());
+    }
+
+    @Test
     void aReceiptOfTheVaultEconomyHasNoTransactionId() {
         held.set(PLAYER, 10.0);
         EconomyProvider provider = provider(2);

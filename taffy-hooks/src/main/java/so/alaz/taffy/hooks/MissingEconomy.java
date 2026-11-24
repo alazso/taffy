@@ -1,5 +1,7 @@
 package so.alaz.taffy.hooks;
 
+import java.util.List;
+
 // The owner's reasons for a Vault economy that is not there. On Folia the classic Vault API comes from VaultUnlocked,
 // whose plugin is named Vault, and the economy must support Folia.
 final class MissingEconomy {
@@ -30,5 +32,31 @@ final class MissingEconomy {
         String vault = folia ? "VaultUnlocked" : "Vault";
         return vault + " is installed, but it lacks the economy API that is read. Install a version of " + vault
             + " that holds it.";
+    }
+
+    // No economy to read through the VaultUnlocked economy API.
+    static String unlocked(boolean folia, boolean vaultPluginPresent) {
+        String economy = folia ? "economy plugin that supports VaultUnlocked and Folia"
+            : "economy plugin that supports VaultUnlocked";
+        return vaultPluginPresent
+            ? "VaultUnlocked is installed, but no " + economy + " has registered with it. Install one."
+            : "VaultUnlocked and an " + economy + " are needed. Install both.";
+    }
+
+    static String unlockedNotVisible() {
+        return "VaultUnlocked is installed, but this plugin cannot see it, because its paper-plugin.yml does not list"
+            + " Vault, the name of the VaultUnlocked plugin, under dependencies.server.";
+    }
+
+    // The installed plugin named Vault holds no VaultUnlocked economy API in its own class loader.
+    static String unlockedApiMissing() {
+        return "The installed Vault lacks the VaultUnlocked economy API that is read. Install VaultUnlocked in its"
+            + " place.";
+    }
+
+    // The backend is there and has no currency of that id.
+    static String noCurrency(String backend, String currency, List<String> known) {
+        return backend + " has no currency named " + currency + ". "
+            + (known.isEmpty() ? "It lists no currency." : "It has " + String.join(", ", known) + ".");
     }
 }

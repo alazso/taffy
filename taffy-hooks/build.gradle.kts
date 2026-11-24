@@ -16,8 +16,12 @@ dependencies {
     compileOnly(libs.craftengine.core) { isTransitive = false }
     compileOnly(libs.mmoitems.api) { isTransitive = false }
     compileOnly(libs.mythiclib) { isTransitive = false }
+    // The VaultUnlockedAPI jar also holds the net.milkbowl.vault.economy classes, so VaultAPI is declared before it.
     compileOnly(libs.vault.api) { isTransitive = false }
+    compileOnly(libs.vaultunlocked.api) { isTransitive = false }
     compileOnly(libs.playerpoints) { isTransitive = false }
+    compileOnly(libs.excellenteconomy) { isTransitive = false }
+    compileOnly(libs.nightcore.main) { isTransitive = false }
     compileOnly(libs.luckperms.api) { isTransitive = false }
     compileOnly(libs.worldguard.bukkit) { isTransitive = false }
     compileOnly(libs.worldguard.core) { isTransitive = false }
@@ -48,7 +52,11 @@ dependencies {
     testImplementation(libs.mmoitems.api) { isTransitive = false }
     testImplementation(libs.mythiclib) { isTransitive = false }
     testImplementation(libs.vault.api) { isTransitive = false }
+    testImplementation(libs.vaultunlocked.api) { isTransitive = false }
     testImplementation(libs.playerpoints) { isTransitive = false }
+    testImplementation(libs.excellenteconomy) { isTransitive = false }
+    testImplementation(libs.nightcore.main) { isTransitive = false }
+    testImplementation(libs.nightcore.bridge) { isTransitive = false }
     testImplementation(libs.luckperms.api) { isTransitive = false }
     testImplementation(libs.worldguard.core) { isTransitive = false }
     testImplementation(libs.worldedit.core) { isTransitive = false }

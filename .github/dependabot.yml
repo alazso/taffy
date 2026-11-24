@@ -22,6 +22,9 @@ registries:
   playerpoints:
     type: maven-repository
     url: https://repo.rosewooddev.io/repository/public
+  nightexpress:
+    type: maven-repository
+    url: https://repo.nightexpressdev.com/releases
   oraxen:
     type: maven-repository
     url: https://repo.oraxen.com/releases
@@ -70,6 +73,8 @@ updates:
           - "com.github.MilkBowl:*"
           - "net.milkbowl.vault:*"
           - "org.black_ixx:*"
+          - "su.nightexpress.excellenteconomy:*"
+          - "su.nightexpress.nightcore:*"
           - "beer.devs:*"
           - "io.th0rgal:*"
           - "com.nexomc:*"
