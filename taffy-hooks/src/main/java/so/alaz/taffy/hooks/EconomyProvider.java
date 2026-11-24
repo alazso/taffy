@@ -24,6 +24,12 @@ import java.util.logging.Logger;
  * deposit that throws has an unknown outcome: money may or may not have moved. A {@code null} argument throws
  * {@link NullPointerException}. An implementation may refuse a call made off the thread {@link #thread(UUID)} names
  * with {@link IllegalStateException}, before anything in the economy is called, as the Vault economy does.
+ *
+ * <p>{@link #setBalance(UUID, BigDecimal)}, {@link #currencyNameSingular()}, {@link #currencyNamePlural()},
+ * {@link #currencySymbol()}, {@link #format(BigDecimal)}, {@link #withdrawReceipt(UUID, BigDecimal, BooleanSupplier)}
+ * and {@link #depositReceipt(UUID, BigDecimal)} are default methods, so an implementation that has none of them
+ * compiles and answers that it cannot: {@link EconomyResult.Status#UNSUPPORTED} for a balance to set, {@code null}
+ * for a name, a symbol and a formatted amount, and a receipt with no transaction id.
  */
 public interface EconomyProvider {
 
@@ -249,7 +255,7 @@ public interface EconomyProvider {
         Server server = owner.getServer();
         return Detection.run("PlayerPoints", PlayerPointsEconomy.API, switchedOn,
             new PluginPresence(server.getPluginManager(), logger),
-            plugin -> PlayerPointsEconomy.create(plugin, server), logger, errors);
+            plugin -> PlayerPointsEconomy.create(plugin, server, logger), logger, errors);
     }
 
     /**
@@ -354,6 +360,134 @@ public interface EconomyProvider {
      * @throws IllegalArgumentException if the amount is negative, rounds to zero, or cannot reach the economy exactly
      */
     EconomyResult deposit(UUID player, BigDecimal amount);
+
+    /**
+     * Sets a player's balance to an amount, where the economy has a call that sets a balance. The amount is rounded
+     * half-even to {@link #scale()} before it reaches the economy, and zero is an amount. The call runs on the thread
+     * {@link #thread(UUID)} names, as a withdraw does.
+     *
+     * <p>{@link EconomyResult.Status#OK} tells that the economy set the balance, also when the balance already was
+     * the amount. {@link EconomyResult.Status#UNSUPPORTED} tells that this economy cannot set a balance, and
+     * {@link EconomyResult.Status#FAILED} that it can and refused this call; in both the balance is unchanged. A
+     * call that throws has an unknown outcome.
+     *
+     * <p>This default checks its arguments for {@code null} and answers {@link EconomyResult.Status#UNSUPPORTED}. The
+     * Vault economy answers {@link EconomyResult.Status#UNSUPPORTED} for every amount, once the thread is checked:
+     * the Vault API has no call that sets a balance, and a withdraw or deposit of the difference is not ordered
+     * against a change another plugin makes between the balance read and the move. The PlayerPoints economy sets the
+     * points through {@code PlayerPointsAPI.set(UUID, int)}: it refuses an amount with a fraction of a point or
+     * above {@link Integer#MAX_VALUE} with {@link IllegalArgumentException}, answers
+     * {@link EconomyResult.Status#FAILED} while PlayerPoints is disabled or when PlayerPoints refuses, which it does
+     * when a listener cancelled its {@code PlayerPointsChangeEvent}, and answers
+     * {@link EconomyResult.Status#UNSUPPORTED} when the installed PlayerPoints lacks that method. It runs in turn
+     * with the withdraws of this provider for the player.
+     *
+     * @param player the player
+     * @param amount the balance to set, zero or more
+     * @return what happened: {@link EconomyResult.Status#OK}, {@link EconomyResult.Status#UNSUPPORTED} or
+     *     {@link EconomyResult.Status#FAILED}
+     * @throws IllegalArgumentException if the economy can set a balance and the amount is negative or cannot reach
+     *     the economy exactly
+     * @since 0.4.13
+     */
+    default EconomyResult setBalance(UUID player, BigDecimal amount) {
+        Objects.requireNonNull(player, "player");
+        Objects.requireNonNull(amount, "amount");
+        return EconomyResult.of(EconomyResult.Status.UNSUPPORTED);
+    }
+
+    /**
+     * The name of one unit of the currency, such as {@code Dollar}. The call names no player and is not checked
+     * against a thread, as {@link #scale()} is not.
+     *
+     * <p>This default answers {@code null}. The Vault economy answers {@code Economy.currencyNameSingular()} and the
+     * PlayerPoints economy {@code PlayerPointsAPI.getCurrencyNameSingular()}. Both answer {@code null} for a name
+     * that is {@code null} or blank, and when the call throws an exception or a {@link LinkageError}, which is
+     * logged with a warning; the PlayerPoints economy also answers {@code null} when the installed PlayerPoints
+     * lacks that method.
+     *
+     * @return the name, or {@code null} when the economy has none to give
+     * @since 0.4.13
+     */
+    default @Nullable String currencyNameSingular() {
+        return null;
+    }
+
+    /**
+     * The name of several units of the currency, such as {@code Dollars}. It answers as
+     * {@link #currencyNameSingular()} does, for the Vault economy from {@code Economy.currencyNamePlural()} and for
+     * the PlayerPoints economy from {@code PlayerPointsAPI.getCurrencyNamePlural()}.
+     *
+     * @return the name, or {@code null} when the economy has none to give
+     * @since 0.4.13
+     */
+    default @Nullable String currencyNamePlural() {
+        return null;
+    }
+
+    /**
+     * The symbol of the currency, such as {@code $}. The call names no player and is not checked against a thread.
+     *
+     * <p>This default answers {@code null}, and so do the Vault economy and the PlayerPoints economy: neither API
+     * has a call that gives a symbol.
+     *
+     * @return the symbol, or {@code null} when the economy has none to give
+     * @since 0.4.13
+     */
+    default @Nullable String currencySymbol() {
+        return null;
+    }
+
+    /**
+     * An amount as the economy writes it for a player to read, such as {@code $1,250.50}. Any amount is accepted,
+     * a negative one too. The call names no player and is not checked against a thread.
+     *
+     * <p>This default checks {@code amount} for {@code null} and answers {@code null}, and so does the PlayerPoints
+     * economy. The Vault economy rounds the amount half-even to {@link #scale()} and answers
+     * {@code Economy.format(double)} for the {@code double} nearest to it, so beyond 15 significant digits the text
+     * can differ from the amount in its last digits. It answers {@code null} for a text that is {@code null} or
+     * blank, and when the call throws an exception or a {@link LinkageError}, which is logged with a warning.
+     *
+     * @param amount the amount
+     * @return the text, or {@code null} when the economy formats no amount
+     * @throws IllegalArgumentException if the economy takes a {@code double} and the amount is beyond its range
+     * @since 0.4.13
+     */
+    default @Nullable String format(BigDecimal amount) {
+        Objects.requireNonNull(amount, "amount");
+        return null;
+    }
+
+    /**
+     * Takes money from a player as {@link #withdraw(UUID, BigDecimal, BooleanSupplier)} does, and gives the id the
+     * economy gave the transaction. This default gives the result of that withdraw with no id, as the Vault and
+     * PlayerPoints economies do: neither API gives a transaction an id.
+     *
+     * @param player the player
+     * @param amount a positive amount
+     * @param start decides, once the balance covers the amount, whether the withdraw goes ahead
+     * @return the result of the withdraw, with the transaction id when the economy gave one and the money moved
+     * @throws IllegalArgumentException if the amount is negative, rounds to zero, or cannot reach the economy exactly
+     * @since 0.4.13
+     */
+    default EconomyReceipt withdrawReceipt(UUID player, BigDecimal amount, BooleanSupplier start) {
+        return EconomyReceipt.of(withdraw(player, amount, start));
+    }
+
+    /**
+     * Gives money to a player as {@link #deposit(UUID, BigDecimal)} does, and gives the id the economy gave the
+     * transaction. This default gives the result of that deposit with no id, as the Vault and PlayerPoints economies
+     * do.
+     *
+     * @param player the player
+     * @param amount a positive amount
+     * @return the result of the deposit, with the transaction id when the economy gave one and the money moved
+     * @throws IllegalArgumentException if the amount is negative, rounds to zero, or cannot reach the economy exactly
+     * @since 0.4.13
+     */
+    default EconomyReceipt depositReceipt(UUID player, BigDecimal amount) {
+        return EconomyReceipt.of(deposit(player, amount));
+    }
 
     /**
      * A self-test that reads what the economy reports about itself and moves no money.

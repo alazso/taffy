@@ -8,6 +8,7 @@ import java.util.UUID;
 import java.util.function.BooleanSupplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 final class EconomyProviderTest {
 
@@ -64,6 +65,38 @@ final class EconomyProviderTest {
         assertThat(economy.withdraw(PLAYER, BigDecimal.ONE)).isEqualTo(EconomyResult.ok());
         assertThat(economy.started).isTrue();
         assertThat(economy.withdrawn).isEqualTo(BigDecimal.ONE);
+    }
+
+    @Test
+    void anImplementationWithoutTheLaterMethodsAnswersThatItCannot() {
+        Fixed economy = new Fixed(2, BigDecimal.TEN);
+
+        assertThat(economy.setBalance(PLAYER, BigDecimal.ONE))
+            .isEqualTo(EconomyResult.of(EconomyResult.Status.UNSUPPORTED));
+        assertThat(economy.setBalance(PLAYER, new BigDecimal("-1")).moved()).isFalse();
+        assertThat(economy.currencyNameSingular()).isNull();
+        assertThat(economy.currencyNamePlural()).isNull();
+        assertThat(economy.currencySymbol()).isNull();
+        assertThat(economy.format(BigDecimal.ONE)).isNull();
+        assertThatThrownBy(() -> economy.setBalance(null, BigDecimal.ONE))
+            .isInstanceOf(NullPointerException.class).hasMessage("player");
+        assertThatThrownBy(() -> economy.setBalance(PLAYER, null))
+            .isInstanceOf(NullPointerException.class).hasMessage("amount");
+        assertThatThrownBy(() -> economy.format(null)).isInstanceOf(NullPointerException.class).hasMessage("amount");
+        assertThat(economy.withdrawn).isNull();
+    }
+
+    @Test
+    void aReceiptOfAnImplementationWithoutTheLaterMethodsCarriesItsResultAndNoTransactionId() {
+        Fixed economy = new Fixed(2, BigDecimal.TEN);
+
+        assertThat(economy.withdrawReceipt(PLAYER, BigDecimal.ONE, () -> true))
+            .isEqualTo(new EconomyReceipt(EconomyResult.ok(), null));
+        assertThat(economy.withdrawn).isEqualTo(BigDecimal.ONE);
+        assertThat(economy.withdrawReceipt(PLAYER, BigDecimal.ONE, () -> false))
+            .isEqualTo(new EconomyReceipt(EconomyResult.of(EconomyResult.Status.NOT_STARTED), null));
+        assertThat(economy.depositReceipt(PLAYER, BigDecimal.ONE))
+            .isEqualTo(new EconomyReceipt(EconomyResult.of(EconomyResult.Status.UNSUPPORTED), null));
     }
 
     private static final class Fixed implements EconomyProvider {

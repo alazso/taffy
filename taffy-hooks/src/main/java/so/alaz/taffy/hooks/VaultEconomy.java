@@ -16,6 +16,7 @@ import java.math.RoundingMode;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 import java.util.logging.Logger;
 
 // A Vault 1.7 economy. Vault works in double, so an amount that does not convert to a double and back unchanged, which
@@ -155,6 +156,35 @@ final class VaultEconomy implements EconomyProvider {
         return result(economy.depositPlayer(server.getOfflinePlayer(player), payable.doubleValue()));
     }
 
+    // The Vault 1.7 Economy has no call that sets a balance.
+    @Override
+    public EconomyResult setBalance(UUID player, BigDecimal amount) {
+        Objects.requireNonNull(player, "player");
+        Objects.requireNonNull(amount, "amount");
+        onThread(player);
+        return EconomyResult.of(EconomyResult.Status.UNSUPPORTED);
+    }
+
+    @Override
+    public @Nullable String currencyNameSingular() {
+        return told("currencyNameSingular", economy::currencyNameSingular);
+    }
+
+    @Override
+    public @Nullable String currencyNamePlural() {
+        return told("currencyNamePlural", economy::currencyNamePlural);
+    }
+
+    @Override
+    public @Nullable String format(BigDecimal amount) {
+        Objects.requireNonNull(amount, "amount");
+        double sent = amount.setScale(scale(), RoundingMode.HALF_EVEN).doubleValue();
+        if (!Double.isFinite(sent)) {
+            throw new IllegalArgumentException(amount + " is beyond the range of a double");
+        }
+        return told("format", () -> economy.format(sent));
+    }
+
     @Override
     public String probe() {
         int digits = economy.fractionalDigits();
@@ -199,6 +229,19 @@ final class VaultEconomy implements EconomyProvider {
     private BigDecimal unrounded(UUID player) {
         double read = economy.getBalance(server.getOfflinePlayer(player));
         return amount(read, scale(), read);
+    }
+
+    // What the economy says about its currency, or null for a null or blank answer and for a call that throws.
+    private @Nullable String told(String call, Supplier<@Nullable String> read) {
+        String text;
+        try {
+            text = read.get();
+        } catch (RuntimeException | LinkageError failure) {
+            throwLog.warn(SOURCE + "." + call, "The economy threw in " + call + ", so it is read as having none ("
+                + failure + ").", failure);
+            return null;
+        }
+        return text == null || text.isBlank() ? null : text;
     }
 
     private void unchecked(Throwable failure) {

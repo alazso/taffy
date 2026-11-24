@@ -227,7 +227,7 @@ final class AbsentIntegrationsTest {
         assertThat(exported).containsExactlyInAnyOrder(HookState.class, HookStatus.class, Detected.class,
             CustomItemPlugin.class, CustomItemRef.class, CustomItems.class, CustomItems.Resolution.class,
             CustomItems.Built.class, CustomItems.Built.Reason.class, EconomyResult.class, EconomyResult.Status.class,
-            EconomyProvider.class, VaultOptions.class, VaultOptions.ThreadRule.class,
+            EconomyReceipt.class, EconomyProvider.class, VaultOptions.class, VaultOptions.ThreadRule.class,
             VaultOptions.FundsCheck.class, EconomyWatcher.class, VaultWatch.class,
             PermissionProvider.class, RegionProvider.class, BedrockProvider.class,
             PlaceholderExpansionBuilder.class, PlaceholderRegistration.class, PlaceholderCache.class,

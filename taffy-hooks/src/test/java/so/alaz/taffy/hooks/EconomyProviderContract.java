@@ -26,7 +26,7 @@ abstract class EconomyProviderContract {
         // The balance of PLAYER as the economy holds it, not rounded to the provider's scale.
         BigDecimal held();
 
-        // The next withdraw or deposit is refused with this message and moves no money.
+        // The next withdraw, deposit or balance set is refused with this message and moves no money.
         void refuseNext(String message);
 
         // The next withdraw or deposit is answered as a call the economy does not support and moves no money.
@@ -43,6 +43,137 @@ abstract class EconomyProviderContract {
     abstract EconomyProvider provider(int scale);
 
     abstract Bank bank();
+
+    // Whether the economy behind the provider has a call that sets a balance.
+    abstract boolean setsBalance();
+
+    @Test
+    void settingABalanceSetsItOrAnswersUnsupportedAndLeavesIt() {
+        EconomyProvider provider = provider(2);
+        bank().hold("10");
+
+        EconomyResult set = provider.setBalance(PLAYER, new BigDecimal("25"));
+
+        if (!setsBalance()) {
+            assertThat(set).isEqualTo(EconomyResult.of(EconomyResult.Status.UNSUPPORTED));
+            assertThat(set.moved()).isFalse();
+            assertThat(provider.setBalance(PLAYER, BigDecimal.ZERO).status())
+                .isEqualTo(EconomyResult.Status.UNSUPPORTED);
+            assertThat(bank().held()).isEqualByComparingTo("10");
+            return;
+        }
+        assertThat(set).isEqualTo(EconomyResult.ok());
+        assertThat(bank().held()).isEqualByComparingTo("25");
+        assertThat(provider.setBalance(PLAYER, new BigDecimal("25"))).isEqualTo(EconomyResult.ok());
+        assertThat(bank().held()).isEqualByComparingTo("25");
+        assertThat(provider.setBalance(PLAYER, BigDecimal.ZERO)).isEqualTo(EconomyResult.ok());
+        assertThat(bank().held()).isEqualByComparingTo("0");
+
+        assertThatThrownBy(() -> provider.setBalance(PLAYER, new BigDecimal("-1")))
+            .isInstanceOf(IllegalArgumentException.class);
+        bank().refuseNext("Account is locked");
+        EconomyResult refused = provider.setBalance(PLAYER, new BigDecimal("7"));
+        assertThat(refused.status()).isEqualTo(EconomyResult.Status.FAILED);
+        assertThat(refused.moved()).isFalse();
+        assertThat(bank().held()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void settingABalanceRefusesANullArgumentAndACallOffTheThreadTheProviderNames() {
+        EconomyProvider provider = provider(2);
+        bank().hold("10");
+
+        assertThatThrownBy(() -> provider.setBalance(null, BigDecimal.ONE)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> provider.setBalance(PLAYER, null)).isInstanceOf(NullPointerException.class);
+
+        bank().onThread(false);
+
+        assertThatThrownBy(() -> provider.setBalance(PLAYER, BigDecimal.ONE))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("thread(player)").hasMessageContaining("Scheduler.dispatch");
+        assertThat(bank().held()).isEqualByComparingTo("10");
+    }
+
+    @Test
+    void theCurrencyNamesTheSymbolAndAFormattedAmountAreTextOrNullAndAnswerOffTheThreadTheProviderNames() {
+        EconomyProvider provider = provider(2);
+        bank().hold("10");
+
+        bank().onThread(false);
+
+        for (String text : new String[] {provider.currencyNameSingular(), provider.currencyNamePlural(),
+            provider.currencySymbol(), provider.format(new BigDecimal("1250.5")),
+            provider.format(new BigDecimal("-3"))}) {
+            if (text != null) {
+                assertThat(text).isNotBlank();
+            }
+        }
+        assertThatThrownBy(() -> provider.format(null)).isInstanceOf(NullPointerException.class);
+        assertThat(bank().held()).isEqualByComparingTo("10");
+    }
+
+    @Test
+    void aReceiptCarriesTheResultOfItsWithdrawOrDepositAndAnIdOnlyWhenMoneyMoved() {
+        EconomyProvider provider = provider(2);
+        bank().hold("10");
+        List<String> started = new ArrayList<>();
+
+        EconomyReceipt taken = provider.withdrawReceipt(PLAYER, new BigDecimal("4"), () -> started.add("covered"));
+        assertThat(taken.result()).isEqualTo(EconomyResult.ok());
+        assertThat(started).containsExactly("covered");
+        assertThat(bank().held()).isEqualByComparingTo("6");
+        if (taken.transactionId() != null) {
+            assertThat(taken.transactionId()).isNotBlank();
+        }
+
+        EconomyReceipt given = provider.depositReceipt(PLAYER, new BigDecimal("2"));
+        assertThat(given.result()).isEqualTo(EconomyResult.ok());
+        assertThat(bank().held()).isEqualByComparingTo("8");
+        if (given.transactionId() != null) {
+            assertThat(given.transactionId()).isNotBlank();
+        }
+
+        assertThat(provider.withdrawReceipt(PLAYER, new BigDecimal("9"), () -> started.add("short")))
+            .isEqualTo(EconomyReceipt.of(EconomyResult.of(EconomyResult.Status.INSUFFICIENT)));
+        assertThat(provider.withdrawReceipt(PLAYER, BigDecimal.ONE, () -> false))
+            .isEqualTo(EconomyReceipt.of(EconomyResult.of(EconomyResult.Status.NOT_STARTED)));
+        bank().refuseNext("Account is locked");
+        EconomyReceipt refused = provider.depositReceipt(PLAYER, BigDecimal.ONE);
+        assertThat(refused.result().status()).isEqualTo(EconomyResult.Status.FAILED);
+        assertThat(refused.transactionId()).isNull();
+        assertThat(started).containsExactly("covered");
+        assertThat(bank().held()).isEqualByComparingTo("8");
+    }
+
+    @Test
+    void aReceiptCallRefusesWhatItsWithdrawOrDepositRefuses() {
+        EconomyProvider provider = provider(2);
+        bank().hold("10");
+
+        assertThatThrownBy(() -> provider.withdrawReceipt(null, BigDecimal.ONE, () -> true))
+            .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> provider.withdrawReceipt(PLAYER, null, () -> true))
+            .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> provider.withdrawReceipt(PLAYER, BigDecimal.ONE, null))
+            .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> provider.depositReceipt(null, BigDecimal.ONE))
+            .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> provider.depositReceipt(PLAYER, null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> provider.withdrawReceipt(PLAYER, new BigDecimal("-1"), () -> true))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> provider.depositReceipt(PLAYER, BigDecimal.ZERO))
+            .isInstanceOf(IllegalArgumentException.class);
+
+        bank().onThread(false);
+
+        assertThatThrownBy(() -> provider.withdrawReceipt(PLAYER, BigDecimal.ONE, () -> true))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("thread(player)").hasMessageContaining("Scheduler.dispatch");
+        assertThatThrownBy(() -> provider.depositReceipt(PLAYER, BigDecimal.ONE))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("thread(player)").hasMessageContaining("Scheduler.dispatch");
+        assertThat(bank().held()).isEqualByComparingTo("10");
+    }
 
     @Test
     void aBalanceIsRoundedHalfEvenToTheScale() {

@@ -17,7 +17,7 @@ class PublicApiRulesTest {
                 CraftEngineProvider.class, MMOItemsProvider.class,
                 CustomItems.class, CustomItems.Resolution.class, CustomItems.Built.class,
                 CustomItems.Built.Reason.class, EconomyResult.class, EconomyResult.Status.class,
-                EconomyProvider.class, VaultOptions.class, VaultOptions.ThreadRule.class,
+                EconomyReceipt.class, EconomyProvider.class, VaultOptions.class, VaultOptions.ThreadRule.class,
                 VaultOptions.FundsCheck.class, Emulated.class, VaultEconomy.class, MissingEconomy.class,
                 EconomyLookup.class, EconomyWatcher.class, VaultWatch.class, PlayerPointsEconomy.class,
                 PermissionProvider.class, LuckPermsPermissions.class,

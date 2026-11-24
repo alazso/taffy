@@ -5,6 +5,35 @@ All notable changes to Taffy are documented here. This project follows
 
 ## [Unreleased]
 
+### Added
+- `taffy-hooks`: `EconomyProvider` has seven more methods, all default methods, so a plugin's or a test's own
+  `EconomyProvider` compiles unchanged and answers that it cannot: `EconomyResult setBalance(UUID, BigDecimal)`
+  gives `UNSUPPORTED`, `String currencyNameSingular()`, `currencyNamePlural()`, `currencySymbol()` and
+  `format(BigDecimal)` give `null`, and `EconomyReceipt withdrawReceipt(UUID, BigDecimal, BooleanSupplier)` and
+  `depositReceipt(UUID, BigDecimal)` give the result of `withdraw` and `deposit` with no transaction id. No
+  `EconomyResult.Status` constant is added.
+- `setBalance` sets a balance to an amount of zero or more, rounded half-even to `scale()`, on the thread
+  `thread(player)` names. `OK` tells that the economy set it, `UNSUPPORTED` that this economy cannot set a
+  balance, and `FAILED` that it can and refused; in the last two the balance is unchanged. The Vault provider
+  gives `UNSUPPORTED` for every amount, once the thread is checked, since the Vault 1.7.1 API has no call that
+  sets a balance. The PlayerPoints provider sets whole points through `PlayerPointsAPI.set(UUID, int)`, in turn
+  with its withdraws for that player: an amount with a fraction of a point, a negative one or one above
+  `Integer.MAX_VALUE` throws `IllegalArgumentException`, and a set that PlayerPoints refuses, or one made while
+  PlayerPoints is disabled, gives `FAILED`.
+- The Vault provider answers `currencyNameSingular()` and `currencyNamePlural()` from the economy, and
+  `format(BigDecimal)` from `Economy.format(double)` with the amount rounded half-even to `scale()` and sent as
+  the nearest `double`; an amount beyond the range of a `double` throws `IllegalArgumentException`. The
+  PlayerPoints provider answers the two names from `PlayerPointsAPI.getCurrencyNameSingular()` and
+  `getCurrencyNamePlural()` and formats no amount. A name or text that is `null` or blank reads as `null`, and
+  so does a call that throws an exception or a `LinkageError`, which is logged with a warning. Neither API has a
+  currency symbol, so `currencySymbol()` gives `null` for both. These four calls name no player and are not
+  checked against a thread.
+- `EconomyReceipt` is a record of an `EconomyResult` and a `transactionId`, which is `null` when the economy
+  gave none or no money moved, and `EconomyReceipt.of(EconomyResult)` gives one with no id. Neither Vault nor
+  PlayerPoints gives a transaction an id, so every receipt of both providers has none.
+- A PlayerPoints that lacks `set(UUID, int)` or the two name methods is still detected: `setBalance` then gives
+  `UNSUPPORTED` and the names `null`.
+
 ## [0.4.12] - 2026-11-23
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.33.0 and bStats 3.2.1.

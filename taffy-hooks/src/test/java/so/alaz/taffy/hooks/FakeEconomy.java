@@ -15,7 +15,8 @@ import java.util.UUID;
 // answerNext makes the next withdraw or deposit give that response and move no money, and feeNext makes the next
 // withdraw take that much on top of its amount. Once credit is called the economy allows an overdraft up to that
 // limit: has answers true for an amount the balance and the limit cover together, and a withdraw beyond them is
-// refused. Only the calls that take an OfflinePlayer and no world are supported.
+// refused. It names its currency Dollar and Dollars and formats an amount as a dollar sign and the double. Of the
+// calls for an account, only those that take an OfflinePlayer and no world are supported.
 @SuppressWarnings("deprecation")
 final class FakeEconomy implements Economy {
 
@@ -127,17 +128,18 @@ final class FakeEconomy implements Economy {
 
     @Override
     public String format(double amount) {
-        throw new UnsupportedOperationException("format");
+        calls.add("format " + amount);
+        return "$" + amount;
     }
 
     @Override
     public String currencyNamePlural() {
-        throw new UnsupportedOperationException("currencyNamePlural");
+        return "Dollars";
     }
 
     @Override
     public String currencyNameSingular() {
-        throw new UnsupportedOperationException("currencyNameSingular");
+        return "Dollar";
     }
 
     @Override

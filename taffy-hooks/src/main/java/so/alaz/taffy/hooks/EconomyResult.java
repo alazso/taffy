@@ -6,7 +6,10 @@ import java.util.Objects;
 
 /**
  * The outcome of an {@link EconomyProvider} withdraw or deposit. A call that throws has no result: its outcome is
- * unknown, and money may or may not have moved.
+ * unknown, and money may or may not have moved. {@link EconomyProvider#setBalance} gives one too: {@link Status#OK}
+ * when the economy set the balance, for which {@link #moved()} is {@code true} also when the balance already was
+ * the amount, {@link Status#UNSUPPORTED} when the economy cannot set a balance, and {@link Status#FAILED} when it
+ * refused.
  *
  * @param status what happened
  * @param message the reason, for {@link Status#FAILED}

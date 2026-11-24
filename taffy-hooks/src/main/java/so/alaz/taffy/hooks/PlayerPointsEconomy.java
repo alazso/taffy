@@ -4,48 +4,75 @@ import org.black_ixx.playerpoints.PlayerPoints;
 import org.black_ixx.playerpoints.PlayerPointsAPI;
 import org.bukkit.Server;
 import org.bukkit.plugin.Plugin;
+import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.ThreadTag;
+import so.alaz.taffy.platform.ThrowLog;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
+import java.util.logging.Logger;
 
 // PlayerPoints 3 points, which are whole and held as int. look loads a balance that is not cached from the database
 // on the calling thread, and give and take fire a PlayerPointsChangeEvent that is asynchronous off a tick thread, so
 // every call runs on an async thread. give and take check the balance and queue the change in two steps, so a
-// withdraw holds one of LOCKS for its player from its balance read to its take. Loaded only after PlayerPoints was
-// found installed, enabled and with its API present.
+// withdraw holds one of LOCKS for its player from its balance read to its take. set reads the points, fires a
+// PlayerPointsChangeEvent with the difference and stores the points read plus the change of the event. Loaded only
+// after PlayerPoints was found installed, enabled and with its API present.
 final class PlayerPointsEconomy implements EconomyProvider {
 
     static final String API = "org.black_ixx.playerpoints.PlayerPointsAPI";
 
     static final String REFUSED = "PlayerPoints refused it";
 
+    private static final String SOURCE = "hook.playerpoints";
+
     private static final int LOCKS = 64;
 
     private final Server server;
     private final Plugin plugin;
     private final PlayerPointsAPI api;
+    private final ThrowLog throwLog;
+    private final boolean sets;
+    private final boolean names;
     private final Object[] locks = new Object[LOCKS];
 
-    PlayerPointsEconomy(Server server, Plugin plugin, PlayerPointsAPI api) {
+    // sets and names tell whether the installed PlayerPoints has set(UUID, int) and the two currency name methods.
+    PlayerPointsEconomy(Server server, Plugin plugin, PlayerPointsAPI api, Logger logger, boolean sets,
+                        boolean names) {
         this.server = server;
         this.plugin = plugin;
         this.api = api;
+        this.throwLog = new ThrowLog(logger);
+        this.sets = sets;
+        this.names = names;
         for (int i = 0; i < LOCKS; i++) {
             locks[i] = new Object();
         }
     }
 
-    static EconomyProvider create(Plugin plugin, Server server) {
+    static EconomyProvider create(Plugin plugin, Server server, Logger logger) {
         ApiLink.instanceMethod(PlayerPoints.class, "getAPI", PlayerPointsAPI.class);
         ApiLink.instanceMethod(PlayerPointsAPI.class, "look", int.class, UUID.class);
         ApiLink.instanceMethod(PlayerPointsAPI.class, "give", boolean.class, UUID.class, int.class);
         ApiLink.instanceMethod(PlayerPointsAPI.class, "take", boolean.class, UUID.class, int.class);
         PlayerPointsAPI api = Objects.requireNonNull(((PlayerPoints) plugin).getAPI(), "PlayerPoints gave no API");
-        return new PlayerPointsEconomy(server, plugin, api);
+        boolean sets = linked("set", boolean.class, UUID.class, int.class);
+        boolean names = linked("getCurrencyNameSingular", String.class)
+            && linked("getCurrencyNamePlural", String.class);
+        return new PlayerPointsEconomy(server, plugin, api, logger, sets, names);
+    }
+
+    private static boolean linked(String name, Class<?> returns, Class<?>... parameters) {
+        try {
+            ApiLink.instanceMethod(PlayerPointsAPI.class, name, returns, parameters);
+            return true;
+        } catch (NoSuchMethodError missing) {
+            return false;
+        }
     }
 
     @Override
@@ -114,6 +141,33 @@ final class PlayerPointsEconomy implements EconomyProvider {
     }
 
     @Override
+    public EconomyResult setBalance(UUID player, BigDecimal amount) {
+        Objects.requireNonNull(player, "player");
+        Objects.requireNonNull(amount, "amount");
+        offTickThread(player);
+        if (!plugin.isEnabled()) {
+            return disabled();
+        }
+        if (!sets) {
+            return EconomyResult.of(EconomyResult.Status.UNSUPPORTED);
+        }
+        int points = amount.signum() == 0 ? 0 : points(amount);
+        synchronized (locks[Math.floorMod(player.hashCode(), LOCKS)]) {
+            return api.set(player, points) ? EconomyResult.ok() : EconomyResult.failed(REFUSED);
+        }
+    }
+
+    @Override
+    public @Nullable String currencyNameSingular() {
+        return names ? told("getCurrencyNameSingular", api::getCurrencyNameSingular) : null;
+    }
+
+    @Override
+    public @Nullable String currencyNamePlural() {
+        return names ? told("getCurrencyNamePlural", api::getCurrencyNamePlural) : null;
+    }
+
+    @Override
     public String probe() {
         if (!plugin.isEnabled()) {
             throw new IllegalStateException("PlayerPoints is disabled");
@@ -129,6 +183,19 @@ final class PlayerPointsEconomy implements EconomyProvider {
                 + " names, " + ThreadTag.ASYNC + ", not on " + Thread.currentThread().getName()
                 + "; run it through Scheduler.dispatch(economy.thread(player), ...)");
         }
+    }
+
+    // The name PlayerPoints gives, or null for a null or blank answer and for a call that throws.
+    private @Nullable String told(String call, Supplier<@Nullable String> read) {
+        String text;
+        try {
+            text = read.get();
+        } catch (RuntimeException | LinkageError failure) {
+            throwLog.warn(SOURCE + "." + call, "PlayerPoints threw in " + call + ", so it is read as having none ("
+                + failure + ").", failure);
+            return null;
+        }
+        return text == null || text.isBlank() ? null : text;
     }
 
     private static EconomyResult disabled() {

@@ -40,6 +40,7 @@ final class PlayerPointsEconomyTest extends EconomyProviderContract {
     private final PluginMeta meta = mock(PluginMeta.class);
     private final PlayerPointsAPI api = mock(PlayerPointsAPI.class);
     private final List<String> calls = new ArrayList<>();
+    private final CapturedLog log = new CapturedLog();
     private int held;
     private boolean refuse;
 
@@ -52,6 +53,20 @@ final class PlayerPointsEconomyTest extends EconomyProviderContract {
         when(api.look(PLAYER)).thenAnswer(call -> look());
         when(api.take(eq(PLAYER), anyInt())).thenAnswer(call -> offset("take", -call.getArgument(1, Integer.class)));
         when(api.give(eq(PLAYER), anyInt())).thenAnswer(call -> offset("give", call.getArgument(1, Integer.class)));
+        when(api.set(eq(PLAYER), anyInt())).thenAnswer(call -> store(call.getArgument(1, Integer.class)));
+        when(api.getCurrencyNameSingular()).thenReturn("Point");
+        when(api.getCurrencyNamePlural()).thenReturn("Points");
+    }
+
+    // As PlayerPoints does when a listener cancelled its change event, a refused set leaves the points as they were.
+    private synchronized boolean store(int points) {
+        calls.add("set " + points);
+        if (refuse) {
+            refuse = false;
+            return false;
+        }
+        held = points;
+        return true;
     }
 
     private synchronized int look() {
@@ -76,7 +91,12 @@ final class PlayerPointsEconomyTest extends EconomyProviderContract {
 
     @Override
     EconomyProvider provider(int scale) {
-        return new PlayerPointsEconomy(server, plugin, api);
+        return new PlayerPointsEconomy(server, plugin, api, log.logger, true, true);
+    }
+
+    @Override
+    boolean setsBalance() {
+        return true;
     }
 
     @Override
@@ -369,6 +389,88 @@ final class PlayerPointsEconomyTest extends EconomyProviderContract {
         return plugins;
     }
 
+    @Test
+    void settingABalanceStoresWholePointsThroughSetAndRefusesAFractionAndAnAmountBeyondTheLargestInt() {
+        EconomyProvider provider = provider(0);
+        held = 10;
+
+        assertThat(provider.setBalance(PLAYER, new BigDecimal("25.00"))).isEqualTo(EconomyResult.ok());
+        assertThat(provider.setBalance(PLAYER, new BigDecimal("0.0"))).isEqualTo(EconomyResult.ok());
+        assertThat(provider.setBalance(PLAYER, BigDecimal.valueOf(Integer.MAX_VALUE))).isEqualTo(EconomyResult.ok());
+        assertThat(held).isEqualTo(Integer.MAX_VALUE);
+        assertThat(calls).containsExactly("set 25", "set 0", "set 2147483647");
+
+        for (String refused : List.of("2.5", "-1", "2147483648")) {
+            assertThatThrownBy(() -> provider.setBalance(PLAYER, new BigDecimal(refused))).as(refused)
+                .isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(calls).hasSize(3);
+        assertThat(held).isEqualTo(Integer.MAX_VALUE);
+    }
+
+    @Test
+    void aSetThatPlayerPointsRefusesFailsAndOneWhilePlayerPointsIsDisabledFailsBeforeTheAmountIsChecked() {
+        EconomyProvider provider = provider(0);
+        held = 10;
+        refuse = true;
+
+        assertThat(provider.setBalance(PLAYER, BigDecimal.ONE))
+            .isEqualTo(EconomyResult.failed("PlayerPoints refused it"));
+        assertThat(held).isEqualTo(10);
+
+        when(plugin.isEnabled()).thenReturn(false);
+        assertThat(provider.setBalance(PLAYER, new BigDecimal("-1")))
+            .isEqualTo(EconomyResult.failed("the economy plugin PlayerPoints is disabled"));
+        assertThat(calls).containsExactly("set 1");
+        assertThat(held).isEqualTo(10);
+    }
+
+    @Test
+    void aPlayerPointsWithoutSetAnswersUnsupportedAndOneWithoutTheNameMethodsHasNoNames() {
+        EconomyProvider older = new PlayerPointsEconomy(server, plugin, api, log.logger, false, false);
+        held = 10;
+
+        assertThat(older.setBalance(PLAYER, new BigDecimal("2.5")))
+            .isEqualTo(EconomyResult.of(EconomyResult.Status.UNSUPPORTED));
+        assertThat(older.currencyNameSingular()).isNull();
+        assertThat(older.currencyNamePlural()).isNull();
+        assertThat(held).isEqualTo(10);
+        verifyNoInteractions(api);
+        assertThat(older.deposit(PLAYER, BigDecimal.ONE)).isEqualTo(EconomyResult.ok());
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void theCurrencyNamesComeFromPlayerPointsAndThereIsNoSymbolAndNoFormattedAmount() {
+        EconomyProvider provider = provider(0);
+        when(server.isPrimaryThread()).thenReturn(true);
+
+        assertThat(provider.currencyNameSingular()).isEqualTo("Point");
+        assertThat(provider.currencyNamePlural()).isEqualTo("Points");
+        assertThat(provider.currencySymbol()).isNull();
+        assertThat(provider.format(BigDecimal.TEN)).isNull();
+
+        when(api.getCurrencyNameSingular()).thenReturn(" ");
+        when(api.getCurrencyNamePlural()).thenThrow(new IllegalStateException("no locale"));
+        assertThat(provider.currencyNameSingular()).isNull();
+        assertThat(provider.currencyNamePlural()).isNull();
+        assertThat(provider.currencyNamePlural()).isNull();
+        assertThat(log.lines()).containsExactly("WARNING PlayerPoints threw in getCurrencyNamePlural, so it is read as"
+            + " having none (java.lang.IllegalStateException: no locale).");
+    }
+
+    @Test
+    void aReceiptOfThePlayerPointsEconomyHasNoTransactionId() {
+        EconomyProvider provider = provider(0);
+        held = 10;
+
+        assertThat(provider.withdrawReceipt(PLAYER, new BigDecimal("4"), () -> true))
+            .isEqualTo(new EconomyReceipt(EconomyResult.ok(), null));
+        assertThat(provider.depositReceipt(PLAYER, BigDecimal.ONE))
+            .isEqualTo(new EconomyReceipt(EconomyResult.ok(), null));
+        assertThat(held).isEqualTo(7);
+    }
+
     // The PlayerPoints class names Treasury types that are not on the test classpath, so no instance of it is built
     // here: the factory below stands for the one of the entry point.
     @Test
@@ -378,8 +480,9 @@ final class PlayerPointsEconomyTest extends EconomyProviderContract {
         held = 7;
 
         Detected<EconomyProvider> found = Detection.run("PlayerPoints", PlayerPointsEconomy.API, true,
-            new PluginPresence(plugins, log.logger), bound -> new PlayerPointsEconomy(server, bound, api),
-            log.logger, new ErrorReports());
+            new PluginPresence(plugins, log.logger),
+            bound -> new PlayerPointsEconomy(server, bound, api, log.logger, true, true), log.logger,
+            new ErrorReports());
 
         assertThat(found.status()).isEqualTo(new HookStatus("PlayerPoints", HookState.ON, "3.3.5", null));
         assertThat(found.provider()).isInstanceOf(PlayerPointsEconomy.class);

@@ -117,6 +117,103 @@ final class VaultEconomyTest extends EconomyProviderContract {
         };
     }
 
+    @Override
+    boolean setsBalance() {
+        return false;
+    }
+
+    @Test
+    void settingABalanceIsUnsupportedOnceTheThreadIsCheckedAndCallsNothingInTheEconomy() {
+        VaultEconomy provider = economy(2);
+
+        assertThat(provider.setBalance(PLAYER, new BigDecimal("25")))
+            .isEqualTo(EconomyResult.of(EconomyResult.Status.UNSUPPORTED));
+        assertThat(provider.setBalance(PLAYER, new BigDecimal("-1")).status())
+            .isEqualTo(EconomyResult.Status.UNSUPPORTED);
+        when(registrant.isEnabled()).thenReturn(false);
+        assertThat(provider.setBalance(PLAYER, BigDecimal.ONE).status()).isEqualTo(EconomyResult.Status.UNSUPPORTED);
+
+        onThread(false);
+        assertThatThrownBy(() -> provider.setBalance(PLAYER, BigDecimal.ONE))
+            .isInstanceOf(IllegalStateException.class);
+        verifyNoInteractions(economy, registrant);
+    }
+
+    @Test
+    void theCurrencyNamesComeFromTheEconomyAndABlankOrMissingOneIsNull() {
+        VaultEconomy provider = economy(2);
+        when(economy.currencyNameSingular()).thenReturn("Dollar", " ", null);
+        when(economy.currencyNamePlural()).thenReturn("Dollars", "", null);
+        onThread(false);
+
+        assertThat(provider.currencyNameSingular()).isEqualTo("Dollar");
+        assertThat(provider.currencyNamePlural()).isEqualTo("Dollars");
+        assertThat(provider.currencyNameSingular()).isNull();
+        assertThat(provider.currencyNamePlural()).isNull();
+        assertThat(provider.currencyNameSingular()).isNull();
+        assertThat(provider.currencyNamePlural()).isNull();
+        assertThat(provider.currencySymbol()).isNull();
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void aFormattedAmountIsRoundedHalfEvenToTheScaleAndSentAsADouble() {
+        VaultEconomy provider = economy(2);
+        when(economy.format(anyDouble())).thenAnswer(call -> "$" + call.getArgument(0, Double.class));
+        onThread(false);
+
+        assertThat(provider.format(new BigDecimal("1250.505"))).isEqualTo("$1250.5");
+        assertThat(provider.format(new BigDecimal("1250.515"))).isEqualTo("$1250.52");
+        assertThat(provider.format(new BigDecimal("-3"))).isEqualTo("$-3.0");
+        assertThat(provider.format(BigDecimal.ZERO)).isEqualTo("$0.0");
+        verify(economy).format(1250.5);
+        verify(economy).format(1250.52);
+
+        when(economy.format(anyDouble())).thenReturn(" ", (String) null);
+        assertThat(provider.format(BigDecimal.ONE)).isNull();
+        assertThat(provider.format(BigDecimal.ONE)).isNull();
+        assertThatThrownBy(() -> provider.format(new BigDecimal("1E+400")))
+            .isInstanceOf(IllegalArgumentException.class).hasMessage("1E+400 is beyond the range of a double");
+        assertThat(log.lines()).isEmpty();
+    }
+
+    @Test
+    void aCurrencyNameOrAFormatThatThrowsIsNullAndLoggedOnceForEachCall() {
+        VaultEconomy provider = economy(2);
+        IllegalStateException closed = new IllegalStateException("the economy is closed");
+        when(economy.currencyNameSingular()).thenThrow(closed);
+        when(economy.currencyNamePlural()).thenThrow(new NoSuchMethodError("currencyNamePlural"));
+        when(economy.format(anyDouble())).thenThrow(new UnsupportedOperationException("format"));
+
+        assertThat(provider.currencyNameSingular()).isNull();
+        assertThat(provider.currencyNameSingular()).isNull();
+        assertThat(provider.currencyNamePlural()).isNull();
+        assertThat(provider.format(BigDecimal.ONE)).isNull();
+        assertThat(provider.format(BigDecimal.TEN)).isNull();
+
+        assertThat(log.lines()).containsExactly(
+            "WARNING The economy threw in currencyNameSingular, so it is read as having none ("
+                + "java.lang.IllegalStateException: the economy is closed).",
+            "WARNING The economy threw in currencyNamePlural, so it is read as having none ("
+                + "java.lang.NoSuchMethodError: currencyNamePlural).",
+            "WARNING The economy threw in format, so it is read as having none ("
+                + "java.lang.UnsupportedOperationException: format).");
+        assertThat(log.records.getFirst().getThrown()).isSameAs(closed);
+    }
+
+    @Test
+    void aReceiptOfTheVaultEconomyHasNoTransactionId() {
+        held.set(PLAYER, 10.0);
+        EconomyProvider provider = provider(2);
+
+        assertThat(provider.withdrawReceipt(PLAYER, new BigDecimal("4"), () -> true))
+            .isEqualTo(new EconomyReceipt(EconomyResult.ok(), null));
+        assertThat(provider.depositReceipt(PLAYER, BigDecimal.ONE))
+            .isEqualTo(new EconomyReceipt(EconomyResult.ok(), null));
+        assertThat(held.calls).containsExactly("getBalance", "withdrawPlayer 4.0", "getBalance",
+            "depositPlayer 1.0");
+    }
+
     @Test
     @SuppressWarnings("unchecked")
     void lookingUpFindsTheRegisteredEconomyAndCallsNothingInIt() {
