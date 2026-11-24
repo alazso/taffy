@@ -74,9 +74,8 @@ import java.util.logging.Logger;
  * scheduled, or a {@link Menu#closed(MenuSession, boolean)} that throws is logged with its stack through the plugin's
  * logger and reported to its {@link ErrorReports} under {@code gui.load}, {@code gui.render} or {@code gui.close}. A
  * step or a draw of {@link #animate(MenuSession, Duration, Predicate)} that fails is logged and reported under
- * {@code gui.render} too. A
- * failed load also tells the viewer the lang key {@link #ERROR} and plays {@link Cue#FAIL} while its session is open.
- * {@link #keys(Collection)} lists the lang keys the menus read.
+ * {@code gui.render} too. A failed load also tells the viewer the lang key {@link #ERROR} and plays
+ * {@link Cue#FAIL} while its session is open. {@link #keys(Collection)} lists the lang keys the menus read.
  */
 public final class Menus {
 
@@ -621,7 +620,9 @@ public final class Menus {
      * {@code step}, which moves the state through {@link MenuSession#state(Object)}, and then draws the session as
      * {@link #rerender(MenuSession)} does. When {@code step} returns {@code false} the frame is still drawn and is the
      * last one, which is how a plugin stops an animation: there is no handle to cancel. The step and the draw run on
-     * the viewer's entity thread, which on Folia is the region thread that owns the player.
+     * the viewer's entity thread, which on Folia is the region thread that owns the player. A frame is a step of its
+     * own for {@link MenuSession#busy(boolean)}: a hold the step takes belongs to a load only when the same frame
+     * starts that load.
      *
      * <p>The animation also ends, without another step or draw, when the session closed (the viewer closed the menu,
      * quit, or another menu or a prompt opened in its place, which is a new session that is not animated), when
@@ -684,6 +685,7 @@ public final class Menus {
                 return;
             }
             boolean more;
+            session.step();
             try {
                 more = step.test(session);
                 rerender(session);
@@ -692,6 +694,8 @@ public final class Menus {
                     + session.viewer().getName() + ": " + failure, failure);
                 parts.errors().report("gui.render", failure);
                 return;
+            } finally {
+                session.step();
             }
             if (more && animating(session, run)) {
                 hop(session, run, period, period, step);

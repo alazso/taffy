@@ -202,11 +202,13 @@ public final class MenuSession<S> implements InventoryHolder {
      * session busy when it throws.
      *
      * <p>A hold belongs to a load when both start in one step: the same run of a {@link ClickHandler}, the same
-     * {@link Menu#opened(MenuSession, Player)}, or the time between two of those. Such a hold is released when that
-     * load applies, fails or is cancelled, also when a later load started meanwhile, so a handler that calls
-     * {@code busy(true)} and then {@code Menus.load} calls no {@code busy(false)}. A hold with no load in its step is
-     * released only by {@code busy(false)} or when the handler that took it throws: a load another button or a timer
-     * starts does not release it. {@code busy(true)} on a session that is already held changes nothing.
+     * {@link Menu#opened(MenuSession, Player)}, the same frame of
+     * {@link Menus#animate(MenuSession, java.time.Duration, java.util.function.Predicate)}, or the time between two
+     * of those. Such a hold is released when that load applies, fails or is cancelled, also when a later load
+     * started meanwhile, so a handler that calls {@code busy(true)} and then {@code Menus.load} calls no
+     * {@code busy(false)}. A hold with no load in its step is released only by {@code busy(false)} or when the
+     * handler that took it throws: a load another button or a timer starts does not release it. {@code busy(true)}
+     * on a session that is already held changes nothing.
      *
      * @param busy {@code true} to hold the session, {@code false} to release it
      */
@@ -233,7 +235,8 @@ public final class MenuSession<S> implements InventoryHolder {
 
     /**
      * Ends a step: a hold and a load belong together only when both started between two calls. The listener calls it
-     * around each handler, and the menus after {@link Menu#opened(MenuSession, Player)}.
+     * around each handler, and the menus after {@link Menu#opened(MenuSession, Player)} and around each frame of an
+     * animation.
      */
     void step() {
         step++;

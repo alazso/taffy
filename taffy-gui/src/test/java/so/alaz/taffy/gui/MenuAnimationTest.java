@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 
@@ -405,6 +406,86 @@ final class MenuAnimationTest {
         assertThat(session.closed()).isFalse();
         assertThat(steps).isZero();
         assertThat(harness.tasks.queue).isEmpty();
+    }
+
+    @Test
+    void anAnimationEndsWhenAPromptTakesOverAsAHandOff() {
+        MenuSession<Integer> session = open();
+        Prompts prompts = new Prompts(harness.menus, PromptMode.CHAT, BedrockPlayers.NONE,
+            new PromptFakes.ManualTimer(), null, new PromptFakes.FakeLink(), player -> true, harness.clock);
+        harness.menus.animate(session, Duration.ofMillis(100), count);
+        harness.tick(1);
+        int renders = menu.renders;
+
+        prompts.ask(viewer.player, new PromptRequest(Component.text("Price?"), "10", session.route(),
+            text -> new Answer.Accept(session.route())));
+        harness.tick(2);
+
+        assertThat(session.closed()).isTrue();
+        assertThat(menu.closes).containsExactly(false);
+        assertThat(steps).isZero();
+        assertThat(menu.renders).isEqualTo(renders);
+        assertThat(harness.tasks.queue).isEmpty();
+    }
+
+    @Test
+    void anAnimationEndsWhenAPromptWithNoMenuClosesTheMenu() {
+        MenuSession<Integer> session = open();
+        Prompts prompts = new Prompts(harness.menus, PromptMode.CHAT, BedrockPlayers.NONE,
+            new PromptFakes.ManualTimer(), null, new PromptFakes.FakeLink(), player -> true, harness.clock);
+        harness.menus.animate(session, Duration.ofMillis(100), count);
+        harness.tick(1);
+
+        prompts.ask(viewer.player, new TextRequest(Component.text("Name?"), "", text -> null, text -> {
+        }, end -> {
+        }));
+        harness.tick(2);
+
+        assertThat(session.closed()).isTrue();
+        assertThat(steps).isZero();
+        assertThat(harness.tasks.queue).isEmpty();
+    }
+
+    @Test
+    void aHoldTakenInOneFrameStaysAfterALoadALaterFrameStartedHasEnded() {
+        MenuSession<Integer> session = open();
+        List<Boolean> busy = new ArrayList<>();
+
+        harness.menus.animate(session, TICK, stepped -> {
+            steps++;
+            if (steps == 1) {
+                stepped.busy(true);
+            }
+            if (steps == 3) {
+                harness.menus.load(stepped, CompletableFuture.completedFuture("now"), (loaded, value) -> {
+                });
+            }
+            busy.add(stepped.busy());
+            return steps < 4;
+        });
+        harness.tick(4);
+
+        assertThat(busy).containsExactly(true, true, true, true);
+        assertThat(session.loading()).isFalse();
+        assertThat(session.busy()).isTrue();
+    }
+
+    @Test
+    void aHoldAndALoadTakenInTheSameFrameAreReleasedWhenThatLoadEnds() {
+        MenuSession<Integer> session = open();
+        CompletableFuture<String> source = new CompletableFuture<>();
+
+        harness.menus.animate(session, TICK, stepped -> {
+            stepped.busy(true);
+            harness.menus.load(stepped, source, (loaded, value) -> {
+            });
+            return false;
+        });
+        harness.tick(2);
+
+        assertThat(session.busy()).isTrue();
+        source.complete("now");
+        assertThat(session.busy()).isFalse();
     }
 
     @Test

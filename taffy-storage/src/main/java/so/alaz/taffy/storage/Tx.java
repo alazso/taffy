@@ -6,6 +6,7 @@ import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
@@ -132,7 +133,8 @@ public final class Tx {
      *   <li>PostgreSQL returns the value of that column, wherever the table declares it. It matches the name
      *       exactly as its catalog holds it: in lower case for a column created without quotes, and in the letter
      *       case of the quoted name, written here without the quotes, for a column created with them. A name the
-     *       table does not have fails the statement.</li>
+     *       table does not have fails the statement. The statement holds no {@code RETURNING} clause of its own:
+     *       the driver adds none to a statement that has one.</li>
      *   <li>MySQL and MariaDB ignore the name and return the value of the {@code AUTO_INCREMENT} column of the
      *       table.</li>
      *   <li>SQLite ignores the name and returns the rowid of the row. That is the value of an
@@ -145,14 +147,20 @@ public final class Tx {
      *   <li>the statement counts another number of rows than 1: an insert that wrote no row, such as
      *       {@code INSERT IGNORE} or {@code ON CONFLICT DO NOTHING} over an existing row, an insert of several
      *       rows, and on MySQL and MariaDB an {@code ON DUPLICATE KEY UPDATE} that found the row, which counts 2
-     *       or 0.</li>
+     *       or 0. On SQLite an insert into a view whose {@code INSTEAD OF} trigger writes the row counts 0
+     *       too.</li>
+     *   <li>on PostgreSQL the statement has a {@code RETURNING} clause of its own, unless that clause returns the
+     *       one column {@code keyColumn}. On SQLite and MariaDB a statement with {@code RETURNING} fails in the
+     *       driver, and MySQL has no such clause.</li>
      *   <li>the database returns no key: on MySQL and MariaDB a table without an {@code AUTO_INCREMENT} column,
      *       on PostgreSQL a key column that holds {@code NULL}.</li>
      *   <li>the key is not a whole number that fits a {@code long}, such as a text or {@code UUID} column named on
-     *       PostgreSQL.</li>
+     *       PostgreSQL. On MySQL that is also the key of a row inserted with a negative value written into its
+     *       {@code AUTO_INCREMENT} column, which the driver returns as an unsigned number; MariaDB returns the
+     *       negative key.</li>
      * </ul>
-     * In the last three cases the statement has run and what it wrote is in the open transaction, so the work lets
-     * the exception through and the transaction rolls back.
+     * In every case but the first the statement has run and what it wrote is in the open transaction, so the work
+     * lets the exception through and the transaction rolls back.
      *
      * <p>Three results are not detected. On SQLite an insert into a {@code WITHOUT ROWID} table, and an
      * {@code ON CONFLICT DO UPDATE} that updated the existing row, return the rowid of an earlier insert of the
@@ -171,13 +179,15 @@ public final class Tx {
      * @param binder binds the values
      * @return the generated key of the inserted row
      * @throws SQLException if the statement fails, or in the cases listed above
-     * @throws NullPointerException if {@code keyColumn} is {@code null}
-     * @throws IllegalArgumentException if {@code keyColumn} is blank
+     * @throws NullPointerException if an argument is {@code null}; nothing is sent to the database then
+     * @throws IllegalArgumentException if {@code keyColumn} is blank; nothing is sent to the database then
      * @throws IllegalStateException if called from another thread or after the work has returned
      * @since 0.4.15
      */
     public long insert(String sql, String keyColumn, Binder binder) throws SQLException {
         check();
+        Objects.requireNonNull(sql, "sql");
+        Objects.requireNonNull(binder, "binder");
         if (Objects.requireNonNull(keyColumn, "keyColumn").isBlank()) {
             throw new IllegalArgumentException("keyColumn is blank; name the column of the generated key");
         }
@@ -192,6 +202,13 @@ public final class Tx {
                     + " rows, and insert returns the key of exactly one inserted row: " + sql);
             }
             try (ResultSet keys = statement.getGeneratedKeys()) {
+                if (dialect == Dialect.POSTGRES) {
+                    ResultSetMetaData columns = keys.getMetaData();
+                    if (columns.getColumnCount() != 1 || !columns.getColumnLabel(1).equals(keyColumn)) {
+                        throw new SQLException("the statement has a RETURNING clause of its own, and insert returns"
+                            + " the key column " + keyColumn + ": " + sql);
+                    }
+                }
                 return key(keys.next() ? keys.getObject(1) : null, sql);
             }
         }

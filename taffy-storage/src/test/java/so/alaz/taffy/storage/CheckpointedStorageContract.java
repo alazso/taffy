@@ -570,6 +570,32 @@ abstract class CheckpointedStorageContract extends StorageContract {
         }
     }
 
+    @Test
+    void anExplicitNegativeKeyThrowsOnMySqlAndIsReturnedOnMariaDb() {
+        String table = keyed();
+        String sql = "INSERT INTO " + table + " (label, id) VALUES ('negative', -5)";
+
+        CompletableFuture<Long> key = storage().async(tx -> tx.insert(sql, "id", Tx.Binder.NONE));
+
+        if (dialect() == Dialect.MYSQL) {
+            assertThatThrownBy(key::join).cause().isInstanceOf(SQLException.class).hasMessage(
+                "the generated key is a java.math.BigInteger that is not a whole number that fits a long: " + sql);
+            assertThat(keyedLabels(table)).isEmpty();
+        } else {
+            assertThat(key.join()).isEqualTo(-5L);
+        }
+    }
+
+    @Test
+    void anInsertWithAReturningClauseFails() {
+        String table = keyed();
+        String sql = "INSERT INTO " + table + " (label) VALUES ('own') RETURNING id";
+
+        assertThatThrownBy(() -> storage().async(tx -> tx.insert(sql, "id", Tx.Binder.NONE)).join())
+            .cause().isInstanceOf(SQLException.class);
+        assertThat(keyedLabels(table)).isEmpty();
+    }
+
     /** Starts storage with no migrations, recording them in {@code <prefix>schema_version}. */
     private Storage start(StorageSettings settings) {
         return TestPlugins.start(TestPlugins.plugin(name(), Path.of("unused"), Logger.getAnonymousLogger()),

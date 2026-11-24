@@ -667,6 +667,31 @@ final class PostgresStorageTest extends StorageContract {
     }
 
     @Test
+    void anInsertRefusesAReturningClauseOfItsOwnThatIsNotTheKeyColumn() {
+        String table = storage().table("returning_keyed");
+        String insert = "INSERT INTO " + table + " (label) VALUES (?) RETURNING ";
+        storage().async(tx -> {
+            tx.execute("DROP TABLE IF EXISTS " + table);
+            tx.execute("CREATE TABLE " + table + " (label VARCHAR(16), other BIGINT NOT NULL DEFAULT 777,"
+                + " id BIGSERIAL PRIMARY KEY)");
+            return null;
+        }).join();
+
+        long key = storage().async(tx -> tx.insert(insert + "id", "id", params -> params.text("same"))).join();
+
+        assertThat(storage().read(tx -> tx.queryOne("SELECT label FROM " + table + " WHERE id = ?",
+            params -> params.integer(key), row -> row.text("label"))).join()).contains("same");
+        for (String returning : List.of("other", "other, id", "id, other", "*")) {
+            String sql = insert + returning;
+            assertThatThrownBy(() -> storage().async(tx -> tx.insert(sql, "id", params -> params.text("own")))
+                .join()).cause().isInstanceOf(SQLException.class).hasMessage(
+                    "the statement has a RETURNING clause of its own, and insert returns the key column id: " + sql);
+        }
+        assertThat(storage().read(tx -> tx.query("SELECT label FROM " + table, Tx.Binder.NONE,
+            row -> row.text("label"))).join()).containsExactly("same");
+    }
+
+    @Test
     void anInsertOnConflictDoUpdateThatFindsTheRowReturnsTheKeyOfThatRow() {
         String table = keyed();
         String upsert = "INSERT INTO " + table + " (label) VALUES ('taken') ON CONFLICT (label) DO UPDATE SET"

@@ -242,6 +242,27 @@ final class TxTest {
     }
 
     @Test
+    void anInsertThroughAViewWhoseTriggerWritesTheRowCountsNoRow() throws SQLException {
+        tx.execute("CREATE TABLE p_entry (label TEXT UNIQUE, id INTEGER PRIMARY KEY AUTOINCREMENT)");
+        tx.execute("CREATE VIEW p_entries AS SELECT label FROM p_entry");
+        tx.execute("CREATE TRIGGER p_entries_insert INSTEAD OF INSERT ON p_entries BEGIN"
+            + " INSERT INTO p_entry (label) VALUES (new.label); END");
+        String sql = "INSERT INTO p_entries (label) VALUES ('A')";
+
+        assertThatThrownBy(() -> tx.insert(sql, "id", Tx.Binder.NONE)).isInstanceOf(SQLException.class)
+            .hasMessage("the statement counted 0 rows, and insert returns the key of exactly one inserted row: "
+                + sql);
+    }
+
+    @Test
+    void anInsertWithAReturningClauseFailsInTheSqliteDriver() throws SQLException {
+        tx.execute("CREATE TABLE p_entry (label TEXT UNIQUE, id INTEGER PRIMARY KEY AUTOINCREMENT)");
+
+        assertThatThrownBy(() -> tx.insert("INSERT INTO p_entry (label) VALUES ('A') RETURNING id", "id",
+            Tx.Binder.NONE)).isInstanceOf(SQLException.class);
+    }
+
+    @Test
     void anInsertRefusesAnotherStatementANullOrBlankKeyColumnAndAnEndedTransaction() throws SQLException {
         String insert = "INSERT INTO p_probe (id, state) VALUES (?, 'A')";
         Tx.Binder binder = params -> params.uuid(UUID.randomUUID());
@@ -251,6 +272,10 @@ final class TxTest {
             .hasMessage("insert runs a statement that begins with INSERT: " + update);
         assertThatThrownBy(() -> tx.insert(insert, null, binder))
             .isInstanceOf(NullPointerException.class).hasMessage("keyColumn");
+        assertThatThrownBy(() -> tx.insert(null, "id", binder))
+            .isInstanceOf(NullPointerException.class).hasMessage("sql");
+        assertThatThrownBy(() -> tx.insert(insert, "id", null))
+            .isInstanceOf(NullPointerException.class).hasMessage("binder");
         assertThatThrownBy(() -> tx.insert(insert, " ", binder)).isInstanceOf(IllegalArgumentException.class)
             .hasMessage("keyColumn is blank; name the column of the generated key");
         assertThat(tx.query("SELECT state FROM p_probe", Tx.Binder.NONE, row -> row.text("state"))).isEmpty();

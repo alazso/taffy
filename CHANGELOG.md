@@ -6,16 +6,20 @@ All notable changes to Taffy are documented here. This project follows
 ## [Unreleased]
 
 ### Added
-- `taffy-storage`: `long Tx.insert(String sql, String keyColumn, Tx.Binder binder)` runs an `INSERT` of one row and
-  returns the key the database generated for it, such as the value of an `AUTO_INCREMENT`, `BIGSERIAL` or
+- `taffy-storage`: `long Tx.insert(String sql, String keyColumn, Tx.Binder binder)` runs an `INSERT` of one row
+  and returns the key the database generated for it, such as the value of an `AUTO_INCREMENT`, `BIGSERIAL` or
   `INTEGER PRIMARY KEY` column. The statement is prepared with `keyColumn` named, so PostgreSQL returns that
   column wherever the table declares it; the name is matched there as the catalog holds it (lower case for a
   column created without quotes). MySQL and MariaDB ignore the name and return the `AUTO_INCREMENT` value, and
   SQLite ignores it and returns the rowid of the row. The call throws `SQLException` with the statement in its
   message when the statement does not begin with `INSERT` (nothing is sent then), when it counts another number
   of rows than 1 (an `INSERT IGNORE` or `ON CONFLICT DO NOTHING` that wrote no row, an insert of several rows),
-  when the database returns no key, and when the key is not a whole number that fits a `long`. It runs on the
-  database thread of its transaction like `update`, on Folia too.
+  when the database returns no key, and when the key is not a whole number that fits a `long`. The statement
+  holds no `RETURNING` clause: on PostgreSQL one that returns anything but the one column `keyColumn` throws
+  `SQLException`, and on SQLite and MariaDB the driver refuses the statement. On MySQL a row inserted with a
+  negative value written into its `AUTO_INCREMENT` column throws as a key that does not fit, where MariaDB
+  returns the negative key. A `null` argument throws `NullPointerException` and a blank `keyColumn`
+  `IllegalArgumentException`. It runs on the database thread of its transaction like `update`, on Folia too.
 - `taffy-platform`: the interface `Importer` is the shape of an import from another plugin, implemented once for
   each source: `id()` (1 to 64 ASCII letters, digits, dots, underscores and hyphens, matched without regard to
   case), `displayName()`, `present()` (cheap, callable from any thread, never cached) and
@@ -40,11 +44,13 @@ All notable changes to Taffy are documented here. This project follows
   (that frame is still drawn), when the session closes (the viewer closed it or quit, or another menu or a prompt
   opened in its place), when `Menus.shutdown` runs, and when `animate` is called again for the session, which
   replaces the running animation. A `step` or a draw that throws ends it too, logged and reported under
-  `gui.render`. Call it on the viewer's entity thread, such as in `Menu.opened` or a `ClickHandler`; elsewhere it
-  throws `IllegalStateException`, and the step and the draw run on that thread, on Folia too. It counts ticks with
-  one task a tick through `Menus.Parts.tasks()`, so `Menus.Parts` is unchanged and nothing stays scheduled once
-  the animation ended. A list row that keeps its `Frame.Entry.key` takes clicks on every frame, while a row with
-  no key whose icon changes drops the clicks of the click debounce window after each frame.
+  `gui.render`. A frame is a step of its own for `MenuSession.busy(boolean)`: a hold the step takes belongs to a
+  `Menus.load` only when the same frame starts that load. Call it on the viewer's entity thread, such as in
+  `Menu.opened` or a `ClickHandler`; elsewhere it throws `IllegalStateException`, and the step and the draw run on
+  that thread, on Folia too. It counts ticks with one task a tick through `Menus.Parts.tasks()`, so `Menus.Parts`
+  is unchanged and nothing stays scheduled once the animation ended. A list row that keeps its `Frame.Entry.key`
+  takes clicks on every frame, while a row with no key whose icon changes drops the clicks of the click debounce
+  window after each frame.
 
 ## [0.4.14] - 2026-11-24
 
