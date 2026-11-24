@@ -598,6 +598,22 @@ final class CustomItemsTest {
     }
 
     @Test
+    void aCraftEngineOrMmoItemsHintGoesToNoOtherPluginWhoseOwnKeyStillReachesSuchAnId() {
+        provider(CustomItemPlugin.ITEMSADDER).id("ia_ruby", "mmoitems:ruby").id("ia_opal", "craftengine:opal");
+        CustomItems items = detect(EnumSet.of(CustomItemPlugin.ITEMSADDER));
+
+        assertThat(items.build("mmoitems:ruby")).isEqualTo(none(CustomItems.Built.Reason.PLUGIN_OFF));
+        assertThat(items.build("craftengine:opal")).isEqualTo(none(CustomItems.Built.Reason.PLUGIN_OFF));
+        assertThat(items.create("mmoitems:ruby")).isNull();
+        assertThat(provider(CustomItemPlugin.ITEMSADDER).calls).hasValue(0);
+        assertThat(CustomItemRef.parse("mmoitems:ruby").hasKnownProvider()).isTrue();
+        assertThat(CustomItemRef.parse("craftengine:opal").provider()).isEqualTo(CustomItemPlugin.CRAFTENGINE);
+
+        assertThat(FakeItems.type(items.create("itemsadder:mmoitems:ruby"))).isEqualTo("ia_ruby");
+        assertThat(FakeItems.type(items.create("ia:craftengine:opal"))).isEqualTo("ia_opal");
+    }
+
+    @Test
     void aReferenceStartingWithAColonGivesEachPluginTheBareId() {
         provider(CustomItemPlugin.NEXO).id("ruby", "ruby");
         CustomItems items = detected();

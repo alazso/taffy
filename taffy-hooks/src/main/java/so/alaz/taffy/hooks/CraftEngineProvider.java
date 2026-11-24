@@ -23,7 +23,7 @@ import java.util.function.Function;
 // end of its first load and of every reload, or at once when CraftEngine says it is fully loaded. CraftEngine sets
 // that flag after its first CraftEngineReloadEvent, and CraftEngine 26.6 has no such flag, so a
 // CraftEngineReloadEvent seen by any provider is remembered for the server run and a provider created later builds
-// at once. Both flags only go from false to true, so they need no lock.
+// at once. On a server both flags only go from false to true, so they need no lock.
 final class CraftEngineProvider implements CustomItemProvider, Listener {
 
     private static volatile boolean seenLoad;

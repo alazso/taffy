@@ -14,12 +14,9 @@ All notable changes to Taffy are documented here. This project follows
   `MMOItems.getTypeName` and `MMOItems.getID`, with the type and the id in the case MMOItems holds them in, as in
   `mmoitems:SWORD:CUTLASS`. Built against CraftEngine 26.10 and MMOItems-API 6.10.1-SNAPSHOT. A `switch` over
   `CustomItemPlugin` needs a `default` branch, as its Javadoc states from 0.4.0.
-- A plugin that passes `EnumSet.allOf(CustomItemPlugin.class)` to `CustomItems.detect` detects both: `statuses()`
-  holds six entries where it held four, the detection log line names six plugins, and an installed CraftEngine or
-  MMOItems that the plugin's `paper-plugin.yml` does not list under `dependencies.server` is `NOT_VISIBLE` and
-  warned about. A reference that starts with `craftengine:` or `mmoitems:` names that plugin and goes only to it,
-  and `CustomItemRef.hasKnownProvider()` is `true` for it; in 0.4.11 such a hint named no plugin and the whole
-  reference was offered to each plugin in turn.
+- A plugin that passes `EnumSet.allOf(CustomItemPlugin.class)` to `CustomItems.detect` detects both, and an
+  installed CraftEngine or MMOItems that the plugin's `paper-plugin.yml` does not list under
+  `dependencies.server` is `NOT_VISIBLE` and warned about.
 - For both plugins, an id without a colon or with nothing before or after its first colon, an id the plugin does
   not know and an MMOItems type that does not exist give `Built.Reason.UNKNOWN_ID`. CraftEngine finishes its
   first load after the server has started: it is `LOADING` and `build` gives `NOT_READY` until its
@@ -49,7 +46,8 @@ All notable changes to Taffy are documented here. This project follows
   a failed check is logged as a warning at most once a minute and reported under `hook.worldguard`. A world
   WorldGuard's regions are turned off in answers `true`, and a world whose region data WorldGuard could not load
   answers `false`, as WorldGuard denies building there. Call it on the thread that owns the player, the main
-  thread on Paper; WorldGuard does not run on Folia. A `null` player or location throws `NullPointerException`.
+  thread on Paper and the player's region thread on Folia; the provider asks WorldGuard on the calling thread. A
+  `null` player or location throws `NullPointerException`.
   Built against WorldGuard 7.0.20 and WorldEdit 7.4.4, and `taffy-hooks` now also compiles against
   `com.sk89q.worldguard:worldguard-bukkit` (`alaz.worldguard.bukkit`, already in the catalog), which holds
   `WorldGuardPlugin.wrapPlayer`. Detection does not look for the methods of the build check, so `worldGuard` gives
@@ -84,6 +82,20 @@ All notable changes to Taffy are documented here. This project follows
   `lol.pyr:znpcsplus-api`). `so.alaz.taffy.repositories` declares one more repository before `jitpack`, `citizens`
   (`https://maven.citizensnpcs.co/repo`) for the group `net.citizensnpcs`, and `jitpack` also serves the group
   `com.github.Pyrbu`.
+
+### Changed
+- `taffy-hooks`: `CustomItems.statuses()` holds six entries where it held four, and the detection log line names
+  six plugins, for every plugin, whatever set it gives to `CustomItems.detect`: CraftEngine and MMOItems come
+  after HeadDatabase and are `SWITCHED_OFF` unless the set holds them. Code that expects four entries, or reads
+  HeadDatabase's status by position from the end, as `statuses().getLast()` does, reads it at index 3 or finds it
+  by `HookStatus.plugin()`.
+- `taffy-hooks`: a reference that starts with `craftengine:` or `mmoitems:` names that plugin and goes only to it,
+  whatever set `CustomItems.detect` was given, and `CustomItemRef.hasKnownProvider()` is `true` for it. In 0.4.11
+  such a hint named no plugin and the whole reference was offered to each plugin in turn, so `mmoitems:ruby`
+  built an ItemsAdder item of the namespace `mmoitems`. For such a reference `create` now returns `null` and
+  `build` gives `PLUGIN_OFF` while the named plugin has no integration on, where 0.4.11 built the other plugin's
+  item or gave `UNKNOWN_PLUGIN`. An id of another plugin that itself starts with `craftengine:` or `mmoitems:` is
+  written with that plugin's key, as in `itemsadder:mmoitems:ruby` or `ia:mmoitems:ruby`.
 
 ## [0.4.11] - 2026-11-23
 

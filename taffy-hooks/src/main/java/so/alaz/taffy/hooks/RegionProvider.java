@@ -84,8 +84,8 @@ public interface RegionProvider {
      * WorldGuard's listeners read beside {@code build}, such as {@code block-break} and {@code block-place}, are not
      * read.
      *
-     * <p>The call is made on the thread that owns the player, which is the main thread on Paper. It asks the region
-     * plugin on the calling thread. WorldGuard does not run on Folia, so its detection gives no provider there.
+     * <p>The call is made on the thread that owns the player: the main thread on Paper, the player's region thread on
+     * Folia. It asks the region plugin on the calling thread.
      *
      * <p>A provider that has no build check answers {@code true}, which is what this method does unless it is
      * overridden.
