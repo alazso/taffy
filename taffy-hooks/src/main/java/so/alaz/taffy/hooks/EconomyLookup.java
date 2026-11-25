@@ -43,6 +43,7 @@ final class EconomyLookup {
         ClassLookup own = ClassLookup.of(EconomyWatcher.ECONOMY, EconomyLookup.class.getClassLoader());
         if (!own.present()) {
             if (vault == null) {
+                warnAbsent(own, EconomyWatcher.ECONOMY, logger);
                 return off(HookState.NOT_INSTALLED, null, MissingEconomy.line(folia, false));
             }
             ClassLookup theirs = own.failure() != null ? own
@@ -86,6 +87,15 @@ final class EconomyLookup {
         return new Detected<>(new HookStatus(VAULT, HookState.ON, shown, null), provider);
     }
 
+    // A lookup that threw is logged as Classes.present logs it, and not reported.
+    private static void warnAbsent(ClassLookup lookup, String className, Logger logger) {
+        Throwable failure = lookup.failure();
+        if (failure != null) {
+            logger.warning("Could not look up " + className + ", so it is treated as absent. Another plugin on this"
+                + " server is likely broken: " + failure);
+        }
+    }
+
     private static Detected<EconomyProvider> off(HookState state, @Nullable String version, @Nullable String reason) {
         return new Detected<>(new HookStatus(VAULT, state, version, reason), null);
     }
@@ -115,6 +125,7 @@ final class EconomyLookup {
         ClassLookup own = ClassLookup.of(EconomyWatcher.UNLOCKED_ECONOMY, EconomyLookup.class.getClassLoader());
         if (!own.present()) {
             if (vault == null) {
+                warnAbsent(own, EconomyWatcher.UNLOCKED_ECONOMY, logger);
                 return unlocked(HookState.NOT_INSTALLED, null, MissingEconomy.unlocked(folia, false));
             }
             ClassLookup theirs = own.failure() != null ? own

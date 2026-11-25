@@ -25,6 +25,7 @@ import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.test.CapturedLog;
 
 import java.util.ArrayList;
+import java.util.ConcurrentModificationException;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -36,6 +37,7 @@ import java.util.function.Function;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -44,7 +46,10 @@ import static org.mockito.Mockito.when;
 
 final class WorldGuardRegionsTest {
 
+    private static final UUID WORLD_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
+
     private final Plugin plugin = mock(Plugin.class);
+    private final Server server = mock(Server.class);
     private final World world = mock(World.class);
     private final RegionManager manager = mock(RegionManager.class);
     private final ApplicableRegionSet applicable = mock(ApplicableRegionSet.class);
@@ -69,8 +74,7 @@ final class WorldGuardRegionsTest {
     @BeforeEach
     void worldGuard() {
         when(plugin.isEnabled()).thenReturn(true);
-        when(world.getUID()).thenReturn(UUID.fromString("00000000-0000-0000-0000-000000000001"));
-        Server server = mock(Server.class);
+        when(world.getUID()).thenReturn(WORLD_ID);
         when(server.getWorld(any(UUID.class))).thenAnswer(call -> loaded.stream()
             .filter(candidate -> candidate.getUID().equals(call.getArgument(0)))
             .findFirst()
@@ -136,6 +140,45 @@ final class WorldGuardRegionsTest {
         assertThat(regions().regionsAt(location)).isEmpty();
         verifyNoInteractions(managers, vectors);
         assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aLocationKeepingTheWorldOfAWorldLoadedAgainIsLookedUpInTheLoadedWorld() {
+        World again = reloaded();
+        RegionManager current = mock(RegionManager.class);
+        ApplicableRegionSet covering = mock(ApplicableRegionSet.class);
+        when(managers.apply(again)).thenReturn(current);
+        when(current.getApplicableRegions(ArgumentMatchers.<BlockVector3>any())).thenReturn(covering);
+        ProtectedRegion spawn = region("spawn");
+        when(covering.getRegions()).thenReturn(Set.of(spawn));
+
+        assertThat(regions().regionsAt(location)).containsExactly("spawn");
+        verify(managers, never()).apply(world);
+        verify(vectors).apply(ArgumentMatchers.argThat(at -> at.getWorld() == again && at.getX() == 10.5
+            && at.getY() == 64 && at.getZ() == -3.2));
+        assertThat(location.getWorld()).isSameAs(world);
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aWorldLookupThatThrowsGivesNoRegionsAndOneReport() {
+        ConcurrentModificationException racing = new ConcurrentModificationException();
+        doThrow(racing).when(server).getWorld(any(UUID.class));
+
+        assertThat(regions().regionsAt(location)).isEmpty();
+        verifyNoInteractions(managers, vectors);
+        assertThat(reported).containsExactly("hook.worldguard");
+        assertThat(failures).containsExactly(racing);
+        assertThat(logged.lines()).containsExactly("WARNING WorldGuard could not look up the regions at a location"
+            + " (java.util.ConcurrentModificationException).");
+    }
+
+    private World reloaded() {
+        World again = mock(World.class);
+        when(again.getUID()).thenReturn(WORLD_ID);
+        loaded.remove(world);
+        loaded.add(again);
+        return again;
     }
 
     @Test
@@ -290,6 +333,30 @@ final class WorldGuardRegionsTest {
         assertThat(regions().canBuild(player, location)).isTrue();
         verifyNoInteractions(bypasses, builds);
         assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aLocationKeepingTheWorldOfAWorldLoadedAgainIsCheckedInTheLoadedWorld() {
+        World again = reloaded();
+
+        assertThat(regions().canBuild(player, location)).isFalse();
+        verify(bypasses).test(player, again);
+        verify(builds).test(ArgumentMatchers.eq(player), ArgumentMatchers.argThat(at -> at.getWorld() == again
+            && at.getX() == 10.5 && at.getY() == 64 && at.getZ() == -3.2));
+        verify(bypasses, never()).test(player, world);
+        assertThat(location.getWorld()).isSameAs(world);
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aWorldLookupThatThrowsLetsThePlayerBuildWithOneReport() {
+        ConcurrentModificationException racing = new ConcurrentModificationException();
+        doThrow(racing).when(server).getWorld(any(UUID.class));
+
+        assertThat(regions().canBuild(player, location)).isTrue();
+        verifyNoInteractions(bypasses, builds);
+        assertThat(reported).containsExactly("hook.worldguard");
+        assertThat(failures).containsExactly(racing);
     }
 
     @Test

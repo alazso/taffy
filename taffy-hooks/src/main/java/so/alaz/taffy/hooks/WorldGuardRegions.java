@@ -83,16 +83,16 @@ final class WorldGuardRegions implements RegionProvider {
         if (!worldGuard.isEnabled()) {
             return List.of();
         }
-        World world = worldOf(location);
-        if (world == null) {
-            return List.of();
-        }
         try {
-            RegionManager manager = managers.apply(world);
+            Location loaded = loaded(location);
+            if (loaded == null) {
+                return List.of();
+            }
+            RegionManager manager = managers.apply(loaded.getWorld());
             if (manager == null) {
                 return List.of();
             }
-            return manager.getApplicableRegions(vectors.apply(location)).getRegions().stream()
+            return manager.getApplicableRegions(vectors.apply(loaded)).getRegions().stream()
                 .map(ProtectedRegion::getId)
                 .toList();
         } catch (Exception | LinkageError ex) {
@@ -109,12 +109,12 @@ final class WorldGuardRegions implements RegionProvider {
         if (!worldGuard.isEnabled()) {
             return true;
         }
-        World world = worldOf(location);
-        if (world == null) {
-            return true;
-        }
         try {
-            return bypasses.test(player, world) || builds.test(player, location);
+            Location loaded = loaded(location);
+            if (loaded == null) {
+                return true;
+            }
+            return bypasses.test(player, loaded.getWorld()) || builds.test(player, loaded);
         } catch (Exception | LinkageError ex) {
             throwLog.warn("build", "WorldGuard could not check whether a player may build at a location (" + ex
                 + ").", ex);
@@ -123,7 +123,30 @@ final class WorldGuardRegions implements RegionProvider {
         }
     }
 
-    private @Nullable World worldOf(Location location) {
-        return LoadedWorlds.of(worldGuard.getServer(), location);
+    // The location in the world the server has loaded under the id of the location's world, or null when no world is
+    // loaded under that id. A Location keeps returning an unloaded World while that object is referenced, and throws
+    // only once it has been collected. A world loaded again under the same id is a new World object, so the location
+    // is then copied into it. Server.getWorld(UUID) iterates the server's world map without a lock and can throw
+    // off the main thread while a world loads or unloads.
+    private @Nullable Location loaded(Location location) {
+        World world;
+        try {
+            world = location.getWorld();
+        } catch (IllegalArgumentException unloaded) {
+            return null;
+        }
+        if (world == null) {
+            return null;
+        }
+        World current = worldGuard.getServer().getWorld(world.getUID());
+        if (current == null) {
+            return null;
+        }
+        if (current == world) {
+            return location;
+        }
+        Location moved = location.clone();
+        moved.setWorld(current);
+        return moved;
     }
 }

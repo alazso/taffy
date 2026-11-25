@@ -689,6 +689,30 @@ final class AbsentIntegrationsTest {
     }
 
     @Test
+    void theVaultLookupsWithoutVaultWhoseOwnLookupThrowsWarnAndReadNotInstalled() throws Throwable {
+        IllegalStateException closed = new IllegalStateException(
+            "The plugin classloader for HologramLib has thrown a zip file error.");
+        ClassLoader loader = ThrowingCopy.of("net.milkbowl.", closed);
+        List<Throwable> reported = new ArrayList<>();
+        ErrorReports errors = new ErrorReports();
+        errors.install((source, error) -> reported.add(error));
+        CapturedLog log = new CapturedLog();
+        Plugin owner = owner(mock(PluginManager.class), log);
+
+        Object vault = vaultLookup(loader, owner, errors, true);
+        Object unlocked = unlockedLookup(loader, owner, errors, true);
+
+        assertThat(stateOf(loader, vault)).isEqualTo(HookState.NOT_INSTALLED.name());
+        assertThat(stateOf(loader, unlocked)).isEqualTo(HookState.NOT_INSTALLED.name());
+        assertThat(log.lines()).containsExactly(
+            "WARNING Could not look up " + VAULT_ECONOMY + ", so it is treated as absent. Another plugin on this"
+                + " server is likely broken: " + closed,
+            "WARNING Could not look up " + VAULTUNLOCKED_ECONOMY + ", so it is treated as absent. Another plugin on"
+                + " this server is likely broken: " + closed);
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
     void playerPointsDetectionOnTheHiddenCopyFindsPlayerPointsWithoutItsApiOrOutOfSight() throws Throwable {
         assertThatCode(() -> Class.forName(PLAYERPOINTS, false, withApis())).doesNotThrowAnyException();
         ClassLoader loader = hidden();

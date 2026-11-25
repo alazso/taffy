@@ -38,10 +38,7 @@ import org.mockito.invocation.InvocationOnMock;
 import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.platform.Scheduler;
 import so.alaz.taffy.test.CapturedLog;
-import so.alaz.taffy.test.SimulatedClasspath;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -58,9 +55,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -636,16 +635,11 @@ final class EntityHologramsTest {
         verify(standing().getFirst().entity).setPersistent(false);
     }
 
-    // Folia's server class is on the class loader of the server object, so the real Scheduler reads Folia.
-    private Server foliaServer() {
-        ClassLoader folia = SimulatedClasspath.with("io.papermc.paper.threadedregions.RegionizedServer");
-        return (Server) Proxy.newProxyInstance(folia, new Class<?>[] {Server.class}, (proxy, method, args) -> {
-            try {
-                return method.invoke(server, args);
-            } catch (InvocationTargetException thrown) {
-                throw thrown.getCause();
-            }
-        });
+    // The real Scheduler, reading Folia as it does on a Folia server.
+    private Scheduler foliaScheduler() {
+        Scheduler folia = spy(new Scheduler(owner, errors));
+        doReturn(Scheduler.Mode.FOLIA).when(folia).mode();
+        return folia;
     }
 
     // At a Folia stop the Region shutdown thread owns every location, the server answers isStopping, and Folia's
@@ -661,10 +655,8 @@ final class EntityHologramsTest {
 
     @Test
     void aFoliaServerStopForgetsEveryHologramWithoutRemovingOrReportingAnything() {
-        when(owner.getServer()).thenReturn(foliaServer());
-        Scheduler folia = new Scheduler(owner, errors);
-        assertThat(folia.mode()).isEqualTo(Scheduler.Mode.FOLIA);
-        EntityHolograms holograms = EntityHolograms.create(owner, folia, errors);
+        EntityHolograms holograms = EntityHolograms.create(owner, foliaScheduler(), errors);
+
         holograms.create("a", here, List.of("one", "two"));
         holograms.create("b", here, List.of(Component.text("three")), item());
         runQueued();
@@ -685,8 +677,8 @@ final class EntityHologramsTest {
 
     @Test
     void aFoliaServerStopForgetsTheEntitiesOfARemovalThatWaitsForItsTask() {
-        when(owner.getServer()).thenReturn(foliaServer());
-        EntityHolograms holograms = EntityHolograms.create(owner, new Scheduler(owner, errors), errors);
+        EntityHolograms holograms = EntityHolograms.create(owner, foliaScheduler(), errors);
+
         holograms.create("crate", here, List.of("line"));
         runQueued();
         owned = false;
@@ -703,8 +695,8 @@ final class EntityHologramsTest {
 
     @Test
     void aFoliaDisableWhileTheServerRunsStillRemovesTheEntities() {
-        when(owner.getServer()).thenReturn(foliaServer());
-        EntityHolograms holograms = EntityHolograms.create(owner, new Scheduler(owner, errors), errors);
+        EntityHolograms holograms = EntityHolograms.create(owner, foliaScheduler(), errors);
+
         holograms.create("crate", here, List.of("one", "two"));
         runQueued();
 

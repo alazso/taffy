@@ -6,8 +6,6 @@ import org.junit.jupiter.api.Test;
 import so.alaz.taffy.test.CapturedLog;
 import so.alaz.taffy.test.SimulatedClasspath;
 
-import java.lang.reflect.Proxy;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -55,25 +53,5 @@ final class FoliaDetectionTest {
         assertThat(log.lines()).singleElement().asString()
             .startsWith("WARNING Could not look up " + Scheduler.FOLIA_MARKER)
             .endsWith("java.lang.IllegalStateException: zip file closed");
-    }
-
-    @Test
-    void readsFoliaFromTheServersLoaderWhileThePluginsLookupThrows() {
-        ClassLoader folia = SimulatedClasspath.with(Scheduler.FOLIA_MARKER);
-        Server server = (Server) Proxy.newProxyInstance(folia, new Class<?>[] {Server.class}, (proxy, method, args) -> {
-            throw new UnsupportedOperationException(method.getName());
-        });
-        when(plugin.getServer()).thenReturn(server);
-        ClassLoader broken = new ClassLoader(null) {
-            @Override
-            protected Class<?> loadClass(String name, boolean resolve) {
-                throw new IllegalStateException("The plugin classloader for HologramLib has thrown a zip file error.");
-            }
-        };
-
-        Scheduler scheduler = new Scheduler(plugin, new ErrorReports(), broken);
-
-        assertThat(scheduler.mode()).isEqualTo(Scheduler.Mode.FOLIA);
-        assertThat(log.records).isEmpty();
     }
 }

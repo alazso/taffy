@@ -19,8 +19,8 @@ import static org.mockito.Mockito.when;
  * {@link #absentClasses} is in neither the owner's nor the plugin's loader; one in {@link #invisibleClasses} is in the
  * plugin's loader only. A lookup of a class in {@link #failingClasses} through the owner's loader, or in
  * {@link #failingInPlugin} through the plugin's loader, throws what the map holds, as a lookup does that reaches the
- * closed loader of a plugin that failed to enable. Each bound plugin is a mock made on first request and kept in {@link #plugins}, enabled unless
- * its name was in {@link #disabled} then.
+ * closed loader of a plugin that failed to enable. Each bound plugin is a mock made on first request and kept in
+ * {@link #plugins}, enabled unless its name was in {@link #disabled} then.
  */
 final class FakePresence implements Presence {
     final Set<String> missing = new HashSet<>();

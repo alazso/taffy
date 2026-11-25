@@ -14,49 +14,52 @@ All notable changes to Taffy are documented here. This project follows
   build 262, Paper 26.2 build 135 and Folia 26.3 build 28 with HologramLib 1.8.5 failing in `onEnable`:
   DecentHolograms 2.10.2 read `NOT_VISIBLE`, and its warning and reason told the owner to add a
   `dependencies.server` entry the plugin already had. Before, such a lookup logged
-  `Could not look up <class>, so it is treated as absent.` and the integration read `NOT_VISIBLE` or
-  `API_MISSING`. This holds for every detection, the class an integration is read through (WorldEdit for
-  WorldGuard, nightcore for ExcellentEconomy) and the Vault and VaultUnlocked economy lookups; the Vault economy
-  given the result before it still warns and reports once while the status stays the same. A class that is not
-  found reads as before. `EconomyProvider.coinsEngineCurrencies` still gives an empty list then, and its warning
-  now reads `The currencies of ExcellentEconomy could not be listed.` followed by the same reason.
+  `Could not look up <class>, so it is treated as absent.`, nothing was reported, and the integration read
+  `NOT_VISIBLE` or `API_MISSING`. This holds for every detection, the class an integration is read through
+  (WorldEdit for WorldGuard, nightcore for ExcellentEconomy) and the Vault and VaultUnlocked economy lookups while
+  a plugin named `Vault` is installed; the Vault economy given the result before it still warns and reports once
+  while the status stays the same. With no plugin named `Vault` installed, those two lookups still read
+  `NOT_INSTALLED`, log `Could not look up <class>, so it is treated as absent.` and report nothing, as before. A
+  class that is not found reads as before. `EconomyProvider.coinsEngineCurrencies` still gives an empty list then,
+  and its warning now reads `The currencies of ExcellentEconomy could not be listed.` followed by the same reason.
 - `taffy-comficonf`: `ComfiConfConnection.connect` gives `ComfiConfState.FAILED` when the lookup of the ComfiConf
   API class throws for the same reason, with the same reason followed by
   `These settings are edited in their files only until then.`, one warning with the stack and a report under
   `hook.comficonf`. Before, it read `NOT_VISIBLE`, whose reason asks for `join-classpath: true`, or `API_MISSING`,
-  whose reason asks for a ComfiConf update.
-- `taffy-platform`: `Scheduler` looks for Folia's server class through the class loader of the server's own class
-  first. That lookup reaches no plugin's class loader, so a broken plugin no longer makes `mode()` read `PAPER` on
-  Folia. Before, only the plugin's class loader was asked, and a lookup through it that threw read as Paper. On
-  Paper the answer and its warning are unchanged.
+  whose reason asks for a ComfiConf update, and nothing was reported.
 - `taffy-hooks`: `HologramProvider.create` and `move` of the DecentHolograms, FancyHolograms and Holograms
   providers return `false` and place nothing for a `Location` whose world has unloaded, as their Javadoc states.
   Before, a `Location` that still held the unloaded `World` object answered `true` and the call reached the
-  hologram plugin, since only a `Location.getWorld()` that throws was read as unloaded. Seen on Paper 26.3 build 262
-  and Paper 26.2 build 135 with DecentHolograms 2.10.2, FancyHolograms 2.12.0 and Holograms 1.5.4; the display
+  hologram plugin, since only a `Location.getWorld()` that throws was read as unloaded. Seen on Paper 26.3 build
+  262 and Paper 26.2 build 135 with DecentHolograms 2.10.2, FancyHolograms 2.12.0 and Holograms 1.5.4; the display
   provider already answered `false`. A world counts as loaded when the server holds that same `World` object under
-  its id. `RegionProvider.regionsAt` and `canBuild` of the WorldGuard provider read the world the same way, so such
-  a location gives no regions and lets the player build without asking WorldGuard, as documented. Before, WorldGuard
-  was asked about the unloaded world.
+  its id. `RegionProvider.regionsAt` and `canBuild` of the WorldGuard provider read a world as unloaded when the
+  server holds no world under its id, so such a location gives no regions and lets the player build without asking
+  WorldGuard, as documented; a location that holds the `World` object of a world loaded again under the same id is
+  looked up in the world loaded now. A lookup of the loaded world that throws, such as a
+  `ConcurrentModificationException` off the main thread while a world loads, is logged and reported under
+  `hook.worldguard` like any other failed lookup. Before, WorldGuard was asked about the `World` object the
+  location held.
 - `taffy-hooks`: `PermissionProvider.setPermission` and `unsetPermission` of the LuckPerms provider refuse a key
   LuckPerms keeps as another kind of node before LuckPerms is asked: they return `false`, change nothing, log one
   warning for each key and report nothing. These are the keys that start with `group.`, `displayname.`, `r=` or
   `R=`, and `weight.<number>`, `prefix.<number>.<value>`, `suffix.<number>.<value>` and `meta.<key>.<value>`. The
-  warning names `addGroup`, `addTempGroup` and `removeGroup` for a `group.` key. Before, `setPermission` with such a
-  key always failed inside LuckPerms, returned `false`, logged
-  `LuckPerms could not set a permission (java.lang.IllegalArgumentException: Attempting to build non-permission node
-  with PermissionNode.Builder. ...)` and filed a report under `hook.luckperms` on every call, so with metrics on each
-  call sent an error to FastStats; `unsetPermission` loaded the player's data and returned `false` without a word.
-  Seen on Paper 26.3 build 262, Folia 26.3 build 28 and Paper 26.2 build 135 with LuckPerms 5.5.71 for
-  `setPermission(player, "group.<name>", true)`. A write on a server thread still throws `IllegalStateException`
-  first, and a failure inside LuckPerms for a plain permission is still logged and reported.
+  warning names `addGroup`, `addTempGroup` and `removeGroup` for a `group.` key. Before, `setPermission` with such
+  a key always failed inside LuckPerms, returned `false`, logged
+  `LuckPerms could not set a permission (java.lang.IllegalArgumentException: Attempting to build non-permission
+  node with PermissionNode.Builder. ...)` and filed a report under `hook.luckperms` on every call, so with metrics
+  on each call sent an error to FastStats; `unsetPermission` loaded the player's data and returned `false`
+  without a word. Seen on Paper 26.3 build 262, Folia 26.3 build 28 and Paper 26.2 build 135 with LuckPerms 5.5.71
+  for `setPermission(player, "group.<name>", true)`. A write on a server thread still throws
+  `IllegalStateException` first, and a failure inside LuckPerms for a plain permission is still logged and reported.
 - `taffy-hooks`: while a Folia server stops (`Server.isStopping()` answers `true`), the display provider of
-  `HologramProvider.displays` removes no entity at its owner's `PluginDisableEvent`, `close()` or `removeAll()`:
-  it forgets every hologram and logs and reports nothing, and the non-persistent entities go with the server, which
-  never saves them. Before, `Entity.remove()` threw `NullPointerException` inside Folia on the `Region shutdown
-  thread` (`ServerLevel.getCurrentWorldData()` is `null` there), so every stop logged
-  `Display holograms could not remove a hologram (...)` with a stack trace and filed a report under
-  `hook.displays` for each entity. Seen on Folia 26.3 build 28. A disable while the server runs, and every Paper stop, still remove the entities as before.
+  `HologramProvider.displays` removes no entity at all, at its owner's `PluginDisableEvent`, `close()`,
+  `removeAll()` or `remove(id)`: it forgets every hologram and logs and reports nothing, and the non-persistent
+  entities go with the server, which never saves them. Before, `Entity.remove()` threw `NullPointerException`
+  inside Folia on the `Region shutdown thread` (`ServerLevel.getCurrentWorldData()` is `null` there), so every
+  stop logged `Display holograms could not remove a hologram (...)` with a stack trace and filed a report under
+  `hook.displays` for each entity. Seen on Folia 26.3 build 28. A disable while the server runs, and every Paper
+  stop, still remove the entities as before.
 - `taffy-hooks`: the Javadoc of `HologramPlugin.HOLOGRAMLIB` and `HologramProvider.detect` and the README state
   that HologramLib 1.8.5, the release the hook is built against, does not enable on Paper 26.2 and 26.3, so the
   `HOLOGRAMLIB` hook is untested there. Seen on Paper 26.2 build 135, Paper 26.3 build 262 and Folia 26.3 build 28

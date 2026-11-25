@@ -14,6 +14,10 @@ import java.util.logging.Logger;
  * except an {@link Error} other than a {@link LinkageError}, which propagates. A lookup of region ids may run on any
  * thread, since WorldGuard's region index supports concurrent reads. A build check runs on the thread that owns the
  * player.
+ *
+ * <p>A location's world has unloaded when the server holds no world under the id of the location's {@link
+ * org.bukkit.World}, also while the caller still holds that {@code World} object. A location that holds the {@code
+ * World} object of a world unloaded and loaded again under the same id is looked up in the world loaded now.
  */
 public interface RegionProvider {
 
