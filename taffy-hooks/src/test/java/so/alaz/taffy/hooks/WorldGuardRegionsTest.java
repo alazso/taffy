@@ -25,9 +25,11 @@ import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.test.CapturedLog;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.BiPredicate;
 import java.util.function.Function;
 
@@ -60,10 +62,20 @@ final class WorldGuardRegionsTest {
     private final List<Throwable> failures = new ArrayList<>();
     private final ErrorReports errors = new ErrorReports();
     private final CapturedLog logged = new CapturedLog();
+    private final Set<World> loaded = new HashSet<>(Set.of(world));
 
+    // Paper's Server.getWorld answers only for a loaded world, while a Location keeps answering with the World
+    // object it was given for as long as that object is referenced.
     @BeforeEach
     void worldGuard() {
         when(plugin.isEnabled()).thenReturn(true);
+        when(world.getUID()).thenReturn(UUID.fromString("00000000-0000-0000-0000-000000000001"));
+        Server server = mock(Server.class);
+        when(server.getWorld(any(UUID.class))).thenAnswer(call -> loaded.stream()
+            .filter(candidate -> candidate.getUID().equals(call.getArgument(0)))
+            .findFirst()
+            .orElse(null));
+        when(plugin.getServer()).thenReturn(server);
         when(managers.apply(world)).thenReturn(manager);
         when(manager.getApplicableRegions(ArgumentMatchers.<BlockVector3>any())).thenReturn(applicable);
         errors.install((source, error) -> {
@@ -113,6 +125,15 @@ final class WorldGuardRegionsTest {
         when(stale.getWorld()).thenThrow(new IllegalArgumentException("World unloaded"));
 
         assertThat(regions().regionsAt(stale)).isEmpty();
+        verifyNoInteractions(managers, vectors);
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aLocationKeepingAnUnloadedWorldGivesNoRegionsAndNoReport() {
+        loaded.remove(world);
+
+        assertThat(regions().regionsAt(location)).isEmpty();
         verifyNoInteractions(managers, vectors);
         assertThat(reported).isEmpty();
     }
@@ -258,6 +279,15 @@ final class WorldGuardRegionsTest {
         when(stale.getWorld()).thenThrow(new IllegalArgumentException("World unloaded"));
 
         assertThat(regions().canBuild(player, stale)).isTrue();
+        verifyNoInteractions(bypasses, builds);
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aLocationKeepingAnUnloadedWorldLetsAPlayerBuildWithoutACheck() {
+        loaded.remove(world);
+
+        assertThat(regions().canBuild(player, location)).isTrue();
         verifyNoInteractions(bypasses, builds);
         assertThat(reported).isEmpty();
     }

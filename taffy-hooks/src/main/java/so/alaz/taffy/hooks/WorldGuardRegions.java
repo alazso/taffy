@@ -123,12 +123,7 @@ final class WorldGuardRegions implements RegionProvider {
         }
     }
 
-    private static @Nullable World worldOf(Location location) {
-        try {
-            return location.getWorld();
-        } catch (IllegalArgumentException unloaded) {
-            // Location.getWorld throws when the world it referred to has unloaded.
-            return null;
-        }
+    private @Nullable World worldOf(Location location) {
+        return LoadedWorlds.of(worldGuard.getServer(), location);
     }
 }

@@ -29,6 +29,15 @@ All notable changes to Taffy are documented here. This project follows
   first. That lookup reaches no plugin's class loader, so a broken plugin no longer makes `mode()` read `PAPER` on
   Folia. Before, only the plugin's class loader was asked, and a lookup through it that threw read as Paper. On
   Paper the answer and its warning are unchanged.
+- `taffy-hooks`: `HologramProvider.create` and `move` of the DecentHolograms, FancyHolograms and Holograms
+  providers return `false` and place nothing for a `Location` whose world has unloaded, as their Javadoc states.
+  Before, a `Location` that still held the unloaded `World` object answered `true` and the call reached the
+  hologram plugin, since only a `Location.getWorld()` that throws was read as unloaded. Seen on Paper 26.3 build 262
+  and Paper 26.2 build 135 with DecentHolograms 2.10.2, FancyHolograms 2.12.0 and Holograms 1.5.4; the display
+  provider already answered `false`. A world counts as loaded when the server holds that same `World` object under
+  its id. `RegionProvider.regionsAt` and `canBuild` of the WorldGuard provider read the world the same way, so such
+  a location gives no regions and lets the player build without asking WorldGuard, as documented. Before, WorldGuard
+  was asked about the unloaded world.
 
 ## [0.4.15] - 2026-11-24
 

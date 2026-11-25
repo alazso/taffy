@@ -9,7 +9,6 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.server.PluginDisableEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.plugin.Plugin;
-import org.jetbrains.annotations.Nullable;
 import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.platform.ThrowLog;
 
@@ -108,7 +107,7 @@ final class PluginHolograms implements HologramProvider, Listener {
         if (!available()) {
             return false;
         }
-        World world = world(location);
+        World world = LoadedWorlds.of(owner.getServer(), location);
         if (world == null) {
             return false;
         }
@@ -151,7 +150,7 @@ final class PluginHolograms implements HologramProvider, Listener {
         if (!available() || !placed.containsKey(id)) {
             return false;
         }
-        World world = world(location);
+        World world = LoadedWorlds.of(owner.getServer(), location);
         if (world == null) {
             return false;
         }
@@ -282,16 +281,6 @@ final class PluginHolograms implements HologramProvider, Listener {
             throw new IllegalArgumentException("invalid hologram id '" + id + "': expected " + EXPECTED);
         }
         return id;
-    }
-
-    // The location's world, or null when it has none or its world has unloaded.
-    static @Nullable World world(Location location) {
-        try {
-            return location.getWorld();
-        } catch (IllegalArgumentException unloaded) {
-            // Location.getWorld throws when the world it referred to has unloaded.
-            return null;
-        }
     }
 
     private void fail(String action, Throwable failure) {

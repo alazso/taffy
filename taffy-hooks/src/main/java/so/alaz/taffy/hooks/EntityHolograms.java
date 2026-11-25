@@ -146,7 +146,7 @@ final class EntityHolograms implements DisplayHolograms, Listener {
         PluginHolograms.requireId(id);
         Objects.requireNonNull(location, "location");
         List<String> text = List.copyOf(lines);
-        if (!available() || holograms.containsKey(id) || loadedWorld(location) == null) {
+        if (!available() || holograms.containsKey(id) || LoadedWorlds.of(server, location) == null) {
             return false;
         }
         List<Component> parsed = parse("create", text);
@@ -184,7 +184,7 @@ final class EntityHolograms implements DisplayHolograms, Listener {
         if (!available()) {
             return false;
         }
-        World world = loadedWorld(location);
+        World world = LoadedWorlds.of(server, location);
         if (world == null) {
             return false;
         }
@@ -310,7 +310,7 @@ final class EntityHolograms implements DisplayHolograms, Listener {
         if (!available()) {
             return false;
         }
-        World world = loadedWorld(location);
+        World world = LoadedWorlds.of(server, location);
         if (world == null) {
             return false;
         }
@@ -561,12 +561,6 @@ final class EntityHolograms implements DisplayHolograms, Listener {
                 entity.remove();
             }
         }
-    }
-
-    // The location's world when it is one the server has loaded, or null.
-    private @Nullable World loadedWorld(Location location) {
-        World world = PluginHolograms.world(location);
-        return world != null && server.getWorld(world.getUID()) == world ? world : null;
     }
 
     private void fail(String action, Throwable failure) {

@@ -39,9 +39,11 @@ final class PluginHologramsTest {
 
     private final PluginManager pluginManager = mock(PluginManager.class);
     private final CapturedLog logged = new CapturedLog();
+    private final World world = mock(World.class);
+    private final Set<World> loaded = new HashSet<>(Set.of(world));
+    private final Server server = server();
     private final Plugin owner = owner();
     private final Plugin bound = mock(Plugin.class);
-    private final World world = mock(World.class);
     private final Location here = new Location(world, 1.5, 64, -2);
     private final Map<String, List<String>> lines = new HashMap<>();
     private final Map<String, Location> places = new HashMap<>();
@@ -253,6 +255,46 @@ final class PluginHologramsTest {
     }
 
     @Test
+    void aLocationKeepingAnUnloadedWorldPlacesNothing() {
+        PluginHolograms holograms = holograms();
+        loaded.remove(world);
+
+        assertThat(holograms.create("a", here, List.of("stale world"))).isFalse();
+
+        assertThat(calls).isEmpty();
+        assertThat(holograms.ids()).isEmpty();
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aLocationKeepingAnUnloadedWorldMovesNothing() {
+        PluginHolograms holograms = holograms();
+        World other = mock(World.class);
+        when(other.getUID()).thenReturn(UUID.fromString("00000000-0000-0000-0000-000000000002"));
+        holograms.create("a", here, List.of());
+
+        assertThat(holograms.move("a", new Location(other, 0, 70, 0))).isFalse();
+
+        assertThat(calls).containsExactly("create slate_a");
+        assertThat(places.get("slate_a")).isEqualTo(here);
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aWorldLoadedAgainUnderTheSameIdIsNotReachedThroughALocationOfTheOldWorld() {
+        PluginHolograms holograms = holograms();
+        World again = mock(World.class);
+        when(again.getUID()).thenReturn(UUID.fromString("00000000-0000-0000-0000-000000000001"));
+        loaded.remove(world);
+        loaded.add(again);
+
+        assertThat(holograms.create("a", here, List.of())).isFalse();
+        assertThat(holograms.create("a", new Location(again, 1.5, 64, -2), List.of())).isTrue();
+
+        assertThat(calls).containsExactly("create slate_a");
+    }
+
+    @Test
     void aHologramIsRemovedOnceAndThenNoLongerStands() {
         PluginHolograms holograms = holograms();
         holograms.create("a", here, List.of());
@@ -295,6 +337,7 @@ final class PluginHologramsTest {
         PluginHolograms holograms = holograms();
         World other = mock(World.class);
         when(other.getUID()).thenReturn(UUID.fromString("00000000-0000-0000-0000-000000000002"));
+        loaded.add(other);
         holograms.create("here", here, List.of());
         holograms.create("there", new Location(other, 0, 70, 0), List.of());
         holograms.create("moved", new Location(other, 0, 70, 0), List.of());
@@ -492,10 +535,20 @@ final class PluginHologramsTest {
         assertThat(holograms.available()).isFalse();
     }
 
-    private Plugin owner() {
-        Plugin owner = mock(Plugin.class);
+    // Paper's Server.getWorld answers only for a loaded world, while a Location keeps answering with the World
+    // object it was given for as long as that object is referenced.
+    private Server server() {
         Server server = mock(Server.class);
         when(server.getPluginManager()).thenReturn(pluginManager);
+        when(server.getWorld(any(UUID.class))).thenAnswer(call -> loaded.stream()
+            .filter(candidate -> candidate.getUID().equals(call.getArgument(0)))
+            .findFirst()
+            .orElse(null));
+        return server;
+    }
+
+    private Plugin owner() {
+        Plugin owner = mock(Plugin.class);
         when(owner.getServer()).thenReturn(server);
         when(owner.getName()).thenReturn("Slate");
         when(owner.getLogger()).thenReturn(logged.logger);
