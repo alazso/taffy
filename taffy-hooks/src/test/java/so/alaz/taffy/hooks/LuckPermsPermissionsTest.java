@@ -31,6 +31,7 @@ import so.alaz.taffy.test.CapturedLog;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -42,6 +43,7 @@ import java.util.function.Supplier;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -625,6 +627,118 @@ final class LuckPermsPermissionsTest {
         assertThat(permissions().unsetPermission(PLAYER, "fly.use")).isFalse();
         verify(data, never()).clear(any(Predicate.class));
         verify(users, never()).saveUser(any());
+    }
+
+    // LuckPerms 5.5.71 builds a permission node only for a key it parses as a permission: for any other key build()
+    // throws this IllegalArgumentException, naming the builder of the node type it parses the key as.
+    private void refusedByTheBuilder(String key, String builder) {
+        PermissionNode.Builder named = mock(PermissionNode.Builder.class);
+        PermissionNode.Builder valued = mock(PermissionNode.Builder.class);
+        when(permission.permission(key)).thenReturn(named);
+        when(named.value(anyBoolean())).thenReturn(valued);
+        when(valued.build()).thenThrow(new IllegalArgumentException("Attempting to build non-permission node with"
+            + " PermissionNode.Builder. permission = '" + key + "', correct builder type = "
+            + "me.lucko.luckperms.common.node.types." + builder + "$Builder"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aGroupKeyIsRefusedBeforeLuckPermsIsAskedWithOneWarningAndNoReport() {
+        refusedByTheBuilder("group.vip", "Inheritance");
+        when(data.toCollection()).thenReturn(List.of(vip));
+        LuckPermsPermissions permissions = permissions();
+
+        assertThat(permissions.setPermission(PLAYER, "group.vip", true)).isFalse();
+        assertThat(permissions.setPermission(PLAYER, "group.vip", false)).isFalse();
+        assertThat(permissions.unsetPermission(PLAYER, "group.vip")).isFalse();
+
+        assertThat(reported).isEmpty();
+        verifyNoInteractions(luckPerms);
+        verify(data, never()).add(any());
+        verify(data, never()).clear(any(Predicate.class));
+        verify(users, never()).saveUser(any());
+        assertThat(logged.lines()).containsExactly("WARNING LuckPerms keeps group.vip as a group membership, not as a"
+            + " permission, so setPermission and unsetPermission leave it as it is and return false. Use addGroup,"
+            + " addTempGroup or removeGroup for a group.");
+    }
+
+    @Test
+    void eachKeyLuckPermsKeepsAsAnotherNodeTypeIsRefusedWithoutAReport() {
+        Map<String, String> keys = Map.of("GROUP.Vip", "Inheritance", "group.", "Inheritance",
+            "displayname.Admin", "DisplayName", "weight.10", "Weight", "prefix.100.&c[Admin]", "Prefix",
+            "Suffix.5.x", "Suffix", "meta.color.red", "Meta", "r=fly\\..*", "RegexPermission",
+            "R=fly", "RegexPermission");
+        keys.forEach(this::refusedByTheBuilder);
+        LuckPermsPermissions permissions = permissions();
+
+        for (String key : keys.keySet()) {
+            assertThat(permissions.setPermission(PLAYER, key, true)).as(key).isFalse();
+        }
+        assertThat(reported).isEmpty();
+        verifyNoInteractions(luckPerms);
+        assertThat(logged.lines()).hasSize(keys.size())
+            .allMatch(line -> line.startsWith("WARNING LuckPerms keeps ") && line.contains(", not as a permission,"));
+    }
+
+    @Test
+    void theNodeTypeOfAKeyIsReadAsLuckPermsParsesIt() {
+        assertThat(LuckPermsPermissions.otherNodeType("group.vip")).isEqualTo("a group membership");
+        assertThat(LuckPermsPermissions.otherNodeType("Group.VIP")).isEqualTo("a group membership");
+        assertThat(LuckPermsPermissions.otherNodeType("displayname.Admin")).isEqualTo("a display name");
+        assertThat(LuckPermsPermissions.otherNodeType("weight.-5")).isEqualTo("a weight");
+        assertThat(LuckPermsPermissions.otherNodeType("prefix.10.")).isEqualTo("a prefix");
+        assertThat(LuckPermsPermissions.otherNodeType("suffix.1.a.b")).isEqualTo("a suffix");
+        assertThat(LuckPermsPermissions.otherNodeType("meta.a.b")).isEqualTo("a meta value");
+        assertThat(LuckPermsPermissions.otherNodeType("r=.*")).isEqualTo("a regex permission");
+        assertThat(LuckPermsPermissions.otherNodeType("fly.use")).isNull();
+        assertThat(LuckPermsPermissions.otherNodeType("groups.vip")).isNull();
+        assertThat(LuckPermsPermissions.otherNodeType("group")).isNull();
+        assertThat(LuckPermsPermissions.otherNodeType("weight.heavy")).isNull();
+        assertThat(LuckPermsPermissions.otherNodeType("prefix.admin")).isNull();
+        assertThat(LuckPermsPermissions.otherNodeType("prefix.10")).isNull();
+        assertThat(LuckPermsPermissions.otherNodeType("prefix.high.x")).isNull();
+        assertThat(LuckPermsPermissions.otherNodeType("meta.color")).isNull();
+        assertThat(LuckPermsPermissions.otherNodeType("meta.a\\.b")).isNull();
+        assertThat(LuckPermsPermissions.otherNodeType("rank=vip")).isNull();
+    }
+
+    @Test
+    void aRefusedKeyIsWarnedAboutOnceForEachKeyAndProvider() {
+        LuckPermsPermissions permissions = permissions();
+
+        permissions.setPermission(PLAYER, "group.vip", true);
+        permissions.unsetPermission(PLAYER, "group.vip");
+        permissions.setPermission(PLAYER, "group.mvp", true);
+        permissions().setPermission(PLAYER, "group.vip", true);
+
+        assertThat(logged.lines()).hasSize(3);
+        assertThat(logged.lines().get(0)).contains("group.vip");
+        assertThat(logged.lines().get(1)).contains("group.mvp");
+        assertThat(logged.lines().get(2)).contains("group.vip");
+        assertThat(reported).isEmpty();
+    }
+
+    @Test
+    void aRefusedKeyOnAServerThreadStillThrows() {
+        when(server.isPrimaryThread()).thenReturn(true);
+        LuckPermsPermissions permissions = permissions();
+
+        assertThatThrownBy(() -> permissions.setPermission(PLAYER, "group.vip", true))
+            .isInstanceOf(IllegalStateException.class).hasMessageContaining("Scheduler.async");
+        assertThatThrownBy(() -> permissions.unsetPermission(PLAYER, "group.vip"))
+            .isInstanceOf(IllegalStateException.class).hasMessageContaining("Scheduler.async");
+        assertThat(logged.lines()).isEmpty();
+    }
+
+    @Test
+    void aPermissionTheBuilderRefusesIsStillReported() {
+        PermissionNode.Builder valued = mock(PermissionNode.Builder.class);
+        when(permission.value(true)).thenReturn(valued);
+        when(valued.build()).thenThrow(new IllegalArgumentException("refused"));
+
+        assertThat(permissions().setPermission(PLAYER, "fly.use", true)).isFalse();
+        assertThat(reported).containsExactly("hook.luckperms");
+        assertThat(logged.lines()).anyMatch(line -> line.contains("LuckPerms could not set a permission"));
     }
 
     @Test

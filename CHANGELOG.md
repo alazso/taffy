@@ -38,6 +38,18 @@ All notable changes to Taffy are documented here. This project follows
   its id. `RegionProvider.regionsAt` and `canBuild` of the WorldGuard provider read the world the same way, so such
   a location gives no regions and lets the player build without asking WorldGuard, as documented. Before, WorldGuard
   was asked about the unloaded world.
+- `taffy-hooks`: `PermissionProvider.setPermission` and `unsetPermission` of the LuckPerms provider refuse a key
+  LuckPerms keeps as another kind of node before LuckPerms is asked: they return `false`, change nothing, log one
+  warning for each key and report nothing. These are the keys that start with `group.`, `displayname.`, `r=` or
+  `R=`, and `weight.<number>`, `prefix.<number>.<value>`, `suffix.<number>.<value>` and `meta.<key>.<value>`. The
+  warning names `addGroup`, `addTempGroup` and `removeGroup` for a `group.` key. Before, `setPermission` with such a
+  key always failed inside LuckPerms, returned `false`, logged
+  `LuckPerms could not set a permission (java.lang.IllegalArgumentException: Attempting to build non-permission node
+  with PermissionNode.Builder. ...)` and filed a report under `hook.luckperms` on every call, so with metrics on each
+  call sent an error to FastStats; `unsetPermission` loaded the player's data and returned `false` without a word.
+  Seen on Paper 26.3 build 262, Folia 26.3 build 28 and Paper 26.2 build 135 with LuckPerms 5.5.71 for
+  `setPermission(player, "group.<name>", true)`. A write on a server thread still throws `IllegalStateException`
+  first, and a failure inside LuckPerms for a plain permission is still logged and reported.
 
 ## [0.4.15] - 2026-11-24
 

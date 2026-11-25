@@ -24,12 +24,13 @@ import java.util.logging.Logger;
  * refused the same way: {@code Scheduler.async} returns {@code false} there and never runs the task, and
  * {@code Scheduler.asyncOrRun} runs it on the calling server thread, where the write throws, so such a write is made
  * before the plugin disables. A write returns {@code true} only when the data changed and was saved, and
- * {@code false} when nothing changed, the plugin is not available, or the write failed. Once a change is saved it is pushed through the permission plugin's messaging service, when one is
- * set up, so the other servers of a network apply it without waiting for their next sync. A push that fails is
- * logged and reported like any other failure and the write still returns {@code true}, since the change is saved;
- * with no messaging service nothing is pushed. A failure inside the permission plugin is logged as a warning and
- * reported, not thrown, except an {@link Error} other than a {@link LinkageError}, which propagates. A {@code null}
- * argument throws {@link NullPointerException}.
+ * {@code false} when nothing changed, the plugin is not available, the permission key was refused as
+ * {@link #setPermission} describes, or the write failed. Once a change is saved it is pushed through the permission
+ * plugin's messaging service, when one is set up, so the other servers of a network apply it without waiting for
+ * their next sync. A push that fails is logged and reported like any other failure and the write still returns
+ * {@code true}, since the change is saved; with no messaging service nothing is pushed. A failure inside the
+ * permission plugin is logged as a warning and reported, not thrown, except an {@link Error} other than a
+ * {@link LinkageError}, which propagates. A {@code null} argument throws {@link NullPointerException}.
  */
 public interface PermissionProvider {
 
@@ -127,28 +128,40 @@ public interface PermissionProvider {
      * Sets a permission node on the player, without context and without an expiry. A node of the same name already
      * set directly on the player without context is replaced, whatever its value or expiry: a granted node becomes
      * denied, a denied one granted, and a temporary one permanent. A node of the same name set in a context is left as
-     * it is. Only a plain permission node is counted as held and replaced: a node the permission plugin keeps as
-     * another kind under that name, such as the group membership {@code group.vip}, is left as it is. Only saved data
-     * is changed: a node held for the session only is left in place. When the permission plugin refuses the new node
-     * once the held ones are cleared, that is logged and reported as a failure and the write still saves and returns
-     * {@code true}, since the held nodes are gone.
+     * it is. Only a plain permission node is counted as held and replaced. Only saved data is changed: a node held
+     * for the session only is left in place. When the permission plugin refuses the new node once the held ones are
+     * cleared, that is logged and reported as a failure and the write still saves and returns {@code true}, since the
+     * held nodes are gone.
+     *
+     * <p>A key the permission plugin keeps as another kind of node, not as a permission, is refused after the thread
+     * check and before the permission plugin is asked: the call returns {@code false}, changes nothing, logs a
+     * warning the first time this provider is given that key, and reports nothing. A group membership such as
+     * {@code group.vip} is changed through {@link #addGroup}, {@link #addTempGroup} and {@link #removeGroup}. For
+     * LuckPerms these are the keys that start with {@code group.}, {@code displayname.}, {@code r=} or {@code R=},
+     * and the keys {@code weight.<number>}, {@code prefix.<number>.<value>}, {@code suffix.<number>.<value>} and
+     * {@code meta.<key>.<value>}, where {@code <number>} is a whole number and the dot before the value is one that
+     * does not follow a backslash. The words {@code group}, {@code displayname}, {@code weight}, {@code prefix},
+     * {@code suffix} and {@code meta} are matched without regard to case.
      *
      * @param player the player's unique id
      * @param node the permission node
      * @param value {@code true} to grant the node, {@code false} to deny it
      * @return {@code true} if the data changed and was saved, {@code false} if the player already holds the node
-     *     without context and without an expiry at this value
+     *     without context and without an expiry at this value, or the key is refused
      * @throws IllegalStateException if called on a server thread
      */
     boolean setPermission(UUID player, String node, boolean value);
 
     /**
      * Clears a permission node set directly on the player, whatever its value or context. Only saved data is changed:
-     * a node held for the session only is left in place.
+     * a node held for the session only is left in place. A key the permission plugin keeps as another kind of node is
+     * refused as {@link #setPermission} refuses it, with {@code false}, one warning for each key and no report: a
+     * group membership such as {@code group.vip} is removed through {@link #removeGroup}.
      *
      * @param player the player's unique id
      * @param node the permission node
-     * @return {@code true} if the node was set and the change was saved
+     * @return {@code true} if the node was set and the change was saved, {@code false} if it was not set or the key
+     *     is refused
      * @throws IllegalStateException if called on a server thread
      */
     boolean unsetPermission(UUID player, String node);

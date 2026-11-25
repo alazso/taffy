@@ -28,10 +28,13 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Predicate;
@@ -43,15 +46,20 @@ import java.util.logging.Logger;
 final class LuckPermsPermissions implements PermissionProvider {
 
     private static final String SOURCE = "hook.luckperms";
+    private static final String GROUP = "a group membership";
 
     private final Plugin luckPerms;
     private final Supplier<LuckPerms> api;
+    private final Logger logger;
     private final ThrowLog throwLog;
     private final ErrorReports errors;
+    // Every refused key is kept for as long as the provider is.
+    private final Set<String> refusedKeys = ConcurrentHashMap.newKeySet();
 
     LuckPermsPermissions(Plugin luckPerms, Supplier<LuckPerms> api, Logger logger, ErrorReports errors) {
         this.luckPerms = luckPerms;
         this.api = api;
+        this.logger = logger;
         this.throwLog = new ThrowLog(logger);
         this.errors = errors;
     }
@@ -188,7 +196,7 @@ final class LuckPermsPermissions implements PermissionProvider {
         Objects.requireNonNull(node, "node");
         // NodeMap.add refuses a node whose key and contexts are already held, whatever its value or expiry, so the
         // held nodes are cleared first. The key is read from the built node, which carries it as LuckPerms stores it.
-        return mutate(player, "set a permission", (luckPerms, user) -> {
+        return mutate(player, "set a permission", node, (luckPerms, user) -> {
             PermissionNode set = luckPerms.getNodeBuilderRegistry().forPermission().permission(node).value(value)
                 .build();
             String key = set.getPermission();
@@ -215,7 +223,7 @@ final class LuckPermsPermissions implements PermissionProvider {
         Objects.requireNonNull(node, "node");
         // Matches the node by name, whatever its stored value or contexts, in the saved data only: transient nodes are
         // neither looked at nor cleared.
-        return mutate(player, "unset a permission", (luckPerms, user) -> {
+        return mutate(player, "unset a permission", node, (luckPerms, user) -> {
             Predicate<Node> matches = candidate ->
                 candidate instanceof PermissionNode permission && permission.getPermission().equals(node);
             boolean exists = user.data().toCollection().stream().anyMatch(matches);
@@ -240,11 +248,21 @@ final class LuckPermsPermissions implements PermissionProvider {
     }
 
     private boolean mutate(UUID player, String what, BiFunction<LuckPerms, User, Boolean> action) {
+        return mutate(player, what, null, action);
+    }
+
+    // A permission key that LuckPerms keeps as another node type is refused after the thread check and before
+    // LuckPerms is asked.
+    private boolean mutate(UUID player, String what, @Nullable String permissionKey,
+                           BiFunction<LuckPerms, User, Boolean> action) {
         Objects.requireNonNull(player, "player");
         // True on the main thread of Paper and on every region thread and the global region thread of Folia.
         if (luckPerms.getServer().isPrimaryThread()) {
             throw new IllegalStateException("a LuckPerms write blocks until the data is saved and runs off the server"
                 + " thread, not on " + Thread.currentThread().getName() + "; run it through Scheduler.async(...)");
+        }
+        if (permissionKey != null && refused(permissionKey)) {
+            return false;
         }
         try {
             LuckPerms luckPerms = api();
@@ -268,6 +286,19 @@ final class LuckPermsPermissions implements PermissionProvider {
         }
     }
 
+    private boolean refused(String key) {
+        String kind = otherNodeType(key);
+        if (kind == null) {
+            return false;
+        }
+        if (refusedKeys.add(key)) {
+            logger.warning("LuckPerms keeps " + key + " as " + kind + ", not as a permission, so setPermission and"
+                + " unsetPermission leave it as it is and return false."
+                + (kind.equals(GROUP) ? " Use addGroup, addTempGroup or removeGroup for a group." : ""));
+        }
+        return true;
+    }
+
     // Runs after the save. A failure leaves the change saved, and the other servers read it at their next sync.
     private void push(LuckPerms luckPerms, User user) {
         try {
@@ -281,5 +312,63 @@ final class LuckPermsPermissions implements PermissionProvider {
     private void fail(String what, Throwable failure) {
         throwLog.warn(what, "LuckPerms could not " + what + " (" + failure + ").", failure);
         errors.report(SOURCE, failure);
+    }
+
+    /**
+     * The node type LuckPerms builds for {@code key} when it is not a permission, as LuckPerms 5.5 parses a key:
+     * {@code group.} and {@code displayname.} followed by anything, {@code weight.} followed by a whole number,
+     * {@code prefix.} and {@code suffix.} followed by a whole number, a separator and a value, {@code meta.} followed
+     * by a key, a separator and a value, each prefix matched without regard to case, and {@code r=} or {@code R=}
+     * followed by a pattern. A separator is a dot that does not follow a backslash.
+     *
+     * @return the node type, or {@code null} when LuckPerms keeps the key as a permission
+     */
+    static @Nullable String otherNodeType(String key) {
+        String lower = key.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("group.")) {
+            return GROUP;
+        }
+        if (lower.startsWith("displayname.")) {
+            return "a display name";
+        }
+        if (key.startsWith("r=") || key.startsWith("R=")) {
+            return "a regex permission";
+        }
+        if (lower.startsWith("weight.") && isWholeNumber(key.substring("weight.".length()))) {
+            return "a weight";
+        }
+        if (lower.startsWith("prefix.") && isPriorityAndValue(key.substring("prefix.".length()))) {
+            return "a prefix";
+        }
+        if (lower.startsWith("suffix.") && isPriorityAndValue(key.substring("suffix.".length()))) {
+            return "a suffix";
+        }
+        if (lower.startsWith("meta.") && separator(key.substring("meta.".length())) >= 0) {
+            return "a meta value";
+        }
+        return null;
+    }
+
+    private static boolean isPriorityAndValue(String rest) {
+        int separator = separator(rest);
+        return separator >= 0 && isWholeNumber(rest.substring(0, separator));
+    }
+
+    private static boolean isWholeNumber(String text) {
+        try {
+            Integer.parseInt(text);
+            return true;
+        } catch (NumberFormatException notANumber) {
+            return false;
+        }
+    }
+
+    private static int separator(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == '.' && (i == 0 || text.charAt(i - 1) != '\\')) {
+                return i;
+            }
+        }
+        return -1;
     }
 }
