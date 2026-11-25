@@ -60,7 +60,9 @@ public interface HologramProvider {
      * read only when it is switched on, installed, enabled and its API classes are visible, and it is
      * {@link HookState#FAILED} when a method the provider calls is missing; otherwise the result carries the state that
      * stopped it and no provider. A hologram plugin that is not visible or lacks the API is warned about; one that
-     * could not be hooked is warned about and reported under {@code hook.<plugin key>}.
+     * could not be hooked is warned about and reported under {@code hook.<plugin key>}. A hologram plugin that is
+     * installed but failed to enable reads {@link HookState#NOT_ENABLED} with no warning and no report, as
+     * HologramLib 1.8.5 does on Paper 26.2 and 26.3, where it does not enable and its hook is untested.
      *
      * <p>Call on the server thread while the owner is enabled, normally from its {@code onEnable}: the provider
      * registers a listener for the owner that removes a hologram when its world unloads and removes every hologram

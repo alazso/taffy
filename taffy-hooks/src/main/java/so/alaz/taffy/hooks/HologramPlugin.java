@@ -17,7 +17,9 @@ public enum HologramPlugin {
     HOLOGRAMS("Holograms", "holograms", "net.thenextlvl.hologram.HologramProvider", true),
     /**
      * HologramLib, key {@code hologramlib}. It needs PacketEvents installed, and fills a placeholder when a player
-     * starts seeing the hologram and when its lines are replaced.
+     * starts seeing the hologram and when its lines are replaced. HologramLib 1.8.5 does not enable on Paper 26.2
+     * and 26.3: its {@code onEnable} throws {@link NoSuchMethodError} for {@code UnsafeValues.nextEntityId()}, so
+     * this hook is untested there and detection reads {@link HookState#NOT_ENABLED}.
      */
     HOLOGRAMLIB("HologramLib", "hologramlib", "com.maximde.hologramlib.HologramLib", true);
 

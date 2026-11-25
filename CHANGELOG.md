@@ -57,6 +57,13 @@ All notable changes to Taffy are documented here. This project follows
   thread` (`ServerLevel.getCurrentWorldData()` is `null` there), so every stop logged
   `Display holograms could not remove a hologram (...)` with a stack trace and filed a report under
   `hook.displays` for each entity. Seen on Folia 26.3 build 28. A disable while the server runs, and every Paper stop, still remove the entities as before.
+- `taffy-hooks`: the Javadoc of `HologramPlugin.HOLOGRAMLIB` and `HologramProvider.detect` and the README state
+  that HologramLib 1.8.5, the release the hook is built against, does not enable on Paper 26.2 and 26.3, so the
+  `HOLOGRAMLIB` hook is untested there. Seen on Paper 26.2 build 135, Paper 26.3 build 262 and Folia 26.3 build 28
+  with packetevents 2.14.0: HologramLib's `onEnable` throws
+  `NoSuchMethodError: 'int org.bukkit.UnsafeValues.nextEntityId()'`, and detection then reads `NOT_ENABLED`
+  (`HologramLib installed but not enabled`) with no warning and no report. Before, nothing said the hook had not
+  run on these servers. No behaviour changes.
 
 ## [0.4.15] - 2026-11-24
 
