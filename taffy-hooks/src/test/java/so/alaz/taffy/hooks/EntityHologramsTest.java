@@ -38,7 +38,10 @@ import org.mockito.invocation.InvocationOnMock;
 import so.alaz.taffy.platform.ErrorReports;
 import so.alaz.taffy.platform.Scheduler;
 import so.alaz.taffy.test.CapturedLog;
+import so.alaz.taffy.test.SimulatedClasspath;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -55,6 +58,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -630,6 +634,97 @@ final class EntityHologramsTest {
         assertThat(holograms.available()).isFalse();
         assertThat(standing()).hasSize(1);
         verify(standing().getFirst().entity).setPersistent(false);
+    }
+
+    // Folia's server class is on the class loader of the server object, so the real Scheduler reads Folia.
+    private Server foliaServer() {
+        ClassLoader folia = SimulatedClasspath.with("io.papermc.paper.threadedregions.RegionizedServer");
+        return (Server) Proxy.newProxyInstance(folia, new Class<?>[] {Server.class}, (proxy, method, args) -> {
+            try {
+                return method.invoke(server, args);
+            } catch (InvocationTargetException thrown) {
+                throw thrown.getCause();
+            }
+        });
+    }
+
+    // At a Folia stop the Region shutdown thread owns every location, the server answers isStopping, and Folia's
+    // Entity.remove throws because that thread holds no region's world data.
+    private void stopLikeFolia() {
+        when(server.isStopping()).thenReturn(true);
+        owned = true;
+        for (Spawn spawn : spawns) {
+            doThrow(new NullPointerException("the return value of \"ServerLevel.getCurrentWorldData()\" is null"))
+                .when(spawn.entity).remove();
+        }
+    }
+
+    @Test
+    void aFoliaServerStopForgetsEveryHologramWithoutRemovingOrReportingAnything() {
+        when(owner.getServer()).thenReturn(foliaServer());
+        Scheduler folia = new Scheduler(owner, errors);
+        assertThat(folia.mode()).isEqualTo(Scheduler.Mode.FOLIA);
+        EntityHolograms holograms = EntityHolograms.create(owner, folia, errors);
+        holograms.create("a", here, List.of("one", "two"));
+        holograms.create("b", here, List.of(Component.text("three")), item());
+        runQueued();
+        stopLikeFolia();
+
+        holograms.onPluginDisable(disabling(owner));
+        holograms.close();
+
+        assertThat(holograms.ids()).isEmpty();
+        assertThat(spawns).hasSize(4);
+        for (Spawn spawn : spawns) {
+            verify(spawn.entity, never()).remove();
+        }
+        assertThat(reported).isEmpty();
+        assertThat(logged.lines()).isEmpty();
+        assertThat(queued).isEmpty();
+    }
+
+    @Test
+    void aFoliaServerStopForgetsTheEntitiesOfARemovalThatWaitsForItsTask() {
+        when(owner.getServer()).thenReturn(foliaServer());
+        EntityHolograms holograms = EntityHolograms.create(owner, new Scheduler(owner, errors), errors);
+        holograms.create("crate", here, List.of("line"));
+        runQueued();
+        owned = false;
+        holograms.remove("crate");
+        stopLikeFolia();
+
+        holograms.close();
+        runQueued();
+
+        verify(spawns.getFirst().entity, never()).remove();
+        assertThat(reported).isEmpty();
+        assertThat(logged.lines()).isEmpty();
+    }
+
+    @Test
+    void aFoliaDisableWhileTheServerRunsStillRemovesTheEntities() {
+        when(owner.getServer()).thenReturn(foliaServer());
+        EntityHolograms holograms = EntityHolograms.create(owner, new Scheduler(owner, errors), errors);
+        holograms.create("crate", here, List.of("one", "two"));
+        runQueued();
+
+        holograms.onPluginDisable(disabling(owner));
+
+        assertThat(standing()).isEmpty();
+        assertThat(holograms.ids()).isEmpty();
+    }
+
+    @Test
+    void aPaperServerStopStillRemovesTheEntities() {
+        EntityHolograms holograms = holograms();
+        holograms.create("crate", here, List.of("one", "two"));
+        runQueued();
+        when(server.isStopping()).thenReturn(true);
+
+        holograms.onPluginDisable(disabling(owner));
+
+        assertThat(standing()).isEmpty();
+        assertThat(holograms.ids()).isEmpty();
     }
 
     @Test

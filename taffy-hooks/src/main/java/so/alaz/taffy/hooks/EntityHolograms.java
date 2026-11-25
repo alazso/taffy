@@ -54,6 +54,7 @@ final class EntityHolograms implements DisplayHolograms, Listener {
     private final Plugin owner;
     private final Server server;
     private final Scheduler scheduler;
+    private final boolean folia;
     private final ErrorReports errors;
     private final ThrowLog throwLog;
     private final PdcKey<String, String> tag;
@@ -116,6 +117,7 @@ final class EntityHolograms implements DisplayHolograms, Listener {
         this.owner = owner;
         this.server = owner.getServer();
         this.scheduler = scheduler;
+        this.folia = scheduler.mode() == Scheduler.Mode.FOLIA;
         this.errors = errors;
         this.throwLog = new ThrowLog(owner.getLogger());
         this.tag = new PdcKey<>(new NamespacedKey(owner, TAG), PersistentDataType.STRING);
@@ -355,7 +357,7 @@ final class EntityHolograms implements DisplayHolograms, Listener {
             }
         }
         for (Hologram hologram : List.copyOf(leaving)) {
-            if (owned(hologram)) {
+            if (owned(hologram) || foliaStopping()) {
                 despawn(hologram);
             }
         }
@@ -418,7 +420,7 @@ final class EntityHolograms implements DisplayHolograms, Listener {
     // stays in leaving while that task has not run.
     private void discard(Hologram hologram, boolean atOnce) {
         hologram.gone = true;
-        if (atOnce && owned(hologram)) {
+        if (atOnce && (owned(hologram) || foliaStopping())) {
             despawn(hologram);
             return;
         }
@@ -526,13 +528,24 @@ final class EntityHolograms implements DisplayHolograms, Listener {
         tag.set(display, hologram.id);
     }
 
-    // Runs on the thread that owns the hologram's location.
+    // Folia throws from Entity.remove on the thread that disables plugins at a stop, which holds no region's world
+    // data.
+    private boolean foliaStopping() {
+        return folia && server.isStopping();
+    }
+
+    // Runs on the thread that owns the hologram's location, or on any thread while Folia stops, when it leaves the
+    // entities to go with the server, which does not save them.
     private void despawn(Hologram hologram) {
         leaving.remove(hologram);
         Spawned spawned = hologram.spawned;
         hologram.spawned = NOTHING;
+        boolean leave = foliaStopping();
         for (Display entity : spawned.entities()) {
             live.remove(entity.getUniqueId());
+            if (leave) {
+                continue;
+            }
             try {
                 entity.remove();
             } catch (Exception | LinkageError ex) {

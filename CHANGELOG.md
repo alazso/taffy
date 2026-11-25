@@ -50,6 +50,13 @@ All notable changes to Taffy are documented here. This project follows
   Seen on Paper 26.3 build 262, Folia 26.3 build 28 and Paper 26.2 build 135 with LuckPerms 5.5.71 for
   `setPermission(player, "group.<name>", true)`. A write on a server thread still throws `IllegalStateException`
   first, and a failure inside LuckPerms for a plain permission is still logged and reported.
+- `taffy-hooks`: while a Folia server stops (`Server.isStopping()` answers `true`), the display provider of
+  `HologramProvider.displays` removes no entity at its owner's `PluginDisableEvent`, `close()` or `removeAll()`:
+  it forgets every hologram and logs and reports nothing, and the non-persistent entities go with the server, which
+  never saves them. Before, `Entity.remove()` threw `NullPointerException` inside Folia on the `Region shutdown
+  thread` (`ServerLevel.getCurrentWorldData()` is `null` there), so every stop logged
+  `Display holograms could not remove a hologram (...)` with a stack trace and filed a report under
+  `hook.displays` for each entity. Seen on Folia 26.3 build 28. A disable while the server runs, and every Paper stop, still remove the entities as before.
 
 ## [0.4.15] - 2026-11-24
 

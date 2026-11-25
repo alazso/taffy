@@ -69,6 +69,8 @@ import java.util.List;
  * included. On Folia a disabling plugin can schedule nothing, so only the
  * entities whose location the disabling thread owns are removed. The others stay in the world until their chunk
  * unloads or the server stops, are never saved, and are removed by the next display provider the owner builds.
+ * While a Folia server stops ({@code Server.isStopping()}), the provider removes no entity at all: it forgets every
+ * hologram, logs and reports nothing, and the non-persistent entities go with the server, which never saves them.
  */
 public interface DisplayHolograms extends HologramProvider {
 
