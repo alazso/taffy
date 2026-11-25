@@ -46,7 +46,7 @@ public interface RegionProvider {
         Logger logger = owner.getLogger();
         return Detection.run("WorldGuard", "com.sk89q.worldguard.WorldGuard",
             new Detection.Through("WorldEdit", "com.sk89q.worldedit.bukkit.BukkitAdapter"), switchedOn,
-            new PluginPresence(owner.getServer().getPluginManager(), logger),
+            new PluginPresence(owner.getServer().getPluginManager()),
             plugin -> WorldGuardRegions.create(plugin, logger, errors), logger, errors);
     }
 

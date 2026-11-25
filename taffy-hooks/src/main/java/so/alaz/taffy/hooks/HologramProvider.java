@@ -82,7 +82,7 @@ public interface HologramProvider {
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(plugin, "plugin");
         return PluginHolograms.detect(owner, errors, switchedOn, plugin,
-            new PluginPresence(owner.getServer().getPluginManager(), owner.getLogger()),
+            new PluginPresence(owner.getServer().getPluginManager()),
             bound -> switch (plugin) {
                 case DECENTHOLOGRAMS -> DecentHologramsBackend.create();
                 case FANCYHOLOGRAMS -> FancyHologramsBackend.create();

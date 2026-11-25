@@ -125,13 +125,20 @@ public final class Scheduler implements Dispatcher {
         this.mode = detect(plugin, loader);
     }
 
+    // The class loader of the server's own class holds Folia's server class on Folia, and a lookup through it reaches
+    // no plugin's class loader, so a broken plugin cannot make it throw there.
     private static Mode detect(Plugin plugin, ClassLoader loader) {
+        Server running = plugin.getServer();
+        if (running != null && Classes.present(FOLIA_MARKER, running.getClass().getClassLoader(), plugin.getLogger())) {
+            return Mode.FOLIA;
+        }
         return Classes.present(FOLIA_MARKER, loader, plugin.getLogger()) ? Mode.FOLIA : Mode.PAPER;
     }
 
     /**
-     * {@link Mode#FOLIA} when Folia's server class was loadable at construction, otherwise
-     * {@link Mode#PAPER}. A lookup that failed reads as Paper, with a warning in the plugin's log.
+     * {@link Mode#FOLIA} when Folia's server class was loadable at construction, from the class loader of the
+     * server's own class or from this class's loader, otherwise {@link Mode#PAPER}. A lookup that failed counts as
+     * not loadable, with a warning in the plugin's log.
      */
     public Mode mode() {
         return mode;

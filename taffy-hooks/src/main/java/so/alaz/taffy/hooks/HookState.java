@@ -4,7 +4,8 @@ package so.alaz.taffy.hooks;
  * What became of one integration. Detection stops at the first check that fails and gives its state. The checks run
  * in the order of the constants, except for the Vault economy, whose lookup never checks that Vault is enabled: it
  * checks the switch, then that the economy API is visible, then that an economy is registered, and gives
- * {@link #NOT_INSTALLED} at either of the last two when no Vault plugin is installed.
+ * {@link #NOT_INSTALLED} at either of the last two when no Vault plugin is installed. A class lookup that throws
+ * stops detection with {@link #FAILED} at the check that made it.
  *
  * <p>A status read after detection can move from {@link #ON} or {@link #LOADING} to {@link #NOT_ENABLED} while the
  * integration plugin is disabled, and back once it is enabled again. The Vault economy's status does not move: it
@@ -46,7 +47,12 @@ public enum HookState {
      * {@code has nothing registered with it} then too, and the reason names the currency.
      */
     NOT_REGISTERED,
-    /** The API is present, but building or registering the integration failed, so it stays off. */
+    /**
+     * The API is present, but building or registering the integration failed, so it stays off. It is also the state
+     * when looking up an API class threw, as it does while another plugin on the server is broken, such as one whose
+     * jar was closed after it failed to enable: the reason then says so and quotes the exception. The failure is
+     * logged once with its stack and reported under {@code hook.<plugin in lower case>}.
+     */
     FAILED,
     /** The integration is on. */
     ON,

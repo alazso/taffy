@@ -255,7 +255,7 @@ public interface EconomyProvider {
         Logger logger = owner.getLogger();
         Server server = owner.getServer();
         return Detection.run("PlayerPoints", PlayerPointsEconomy.API, switchedOn,
-            new PluginPresence(server.getPluginManager(), logger),
+            new PluginPresence(server.getPluginManager()),
             plugin -> PlayerPointsEconomy.create(plugin, server, logger), logger, errors);
     }
 

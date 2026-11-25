@@ -265,6 +265,43 @@ final class AbsentBridgeTest {
     }
 
     @Test
+    void aBridgeOnAClosedLoaderFailsWithAReasonThatNamesTheBrokenPluginAndNoRegistration() throws Throwable {
+        IllegalStateException failure = new IllegalStateException(
+            "The plugin classloader for HologramLib has thrown a zip file error.");
+        // As Paper leaves the loader of a plugin that failed to enable once its jar is closed.
+        ClassLoader closed = new ClassLoader(withApi()) {
+            @Override
+            protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+                for (String shared : List.of("java.", "jdk.", "sun.", "com.sun.", "org.bukkit.", "io.papermc.",
+                    "com.destroystokyo.", "net.kyori.", "net.md_5.", "org.slf4j.", "org.apache.logging.",
+                    "org.jetbrains.", "com.google.")) {
+                    if (name.startsWith(shared)) {
+                        return super.loadClass(name, resolve);
+                    }
+                }
+                throw failure;
+            }
+        };
+        ClassLoader loader = hidden();
+        Plugin owner = ownerWith(bridgeOn(closed, "0.1.0"));
+
+        Object status = connectOn(loader, owner, errors, neverCalled());
+
+        String reason = "A class lookup failed because another plugin on this server is broken"
+            + " (java.lang.IllegalStateException: The plugin classloader for HologramLib has thrown a zip file"
+            + " error.). Fix or remove that plugin, then restart the server. These settings are edited in their files"
+            + " only until then.";
+        assertThat(stateOf(status)).isEqualTo(ComfiConfState.FAILED.name());
+        assertThat(read(status, "version")).isEqualTo("0.1.0");
+        assertThat(read(status, "reason")).isEqualTo(reason);
+        assertThat(log.lines()).containsExactly("WARNING ComfiConf 0.1.0 could not be connected, so this plugin's"
+            + " settings are edited in their files only. " + reason);
+        assertThat(log.records.getFirst().getThrown()).isSameAs(failure);
+        assertThat(registrations).hasValue(0);
+        assertThat(reports).containsExactly(Map.entry("hook.comficonf", failure));
+    }
+
+    @Test
     void aBridgeWithoutTheApiIsApiMissingAtTheProbeWithOneWarningAndNoRegistration() throws Throwable {
         ClassLoader loader = hidden();
         Plugin owner = ownerWith(bridgeOn(loader, "0.0.9"));

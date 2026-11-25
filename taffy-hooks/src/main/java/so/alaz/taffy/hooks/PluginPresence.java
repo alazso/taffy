@@ -3,19 +3,14 @@ package so.alaz.taffy.hooks;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
 import org.jetbrains.annotations.Nullable;
-import so.alaz.taffy.platform.Classes;
 
-import java.util.logging.Logger;
-
-// classPresent looks through the loader of this class, which is the loader of the plugin that shades the module.
+// classLookup looks through the loader of this class, which is the loader of the plugin that shades the module.
 final class PluginPresence implements Presence {
 
     private final PluginManager plugins;
-    private final Logger logger;
 
-    PluginPresence(PluginManager plugins, Logger logger) {
+    PluginPresence(PluginManager plugins) {
         this.plugins = plugins;
-        this.logger = logger;
     }
 
     @Override
@@ -29,13 +24,13 @@ final class PluginPresence implements Presence {
     }
 
     @Override
-    public boolean classPresent(String name) {
-        return Classes.present(name, PluginPresence.class, logger);
+    public ClassLookup classLookup(String name) {
+        return ClassLookup.of(name, PluginPresence.class.getClassLoader());
     }
 
     @Override
-    public boolean classPresentIn(Plugin plugin, String name) {
-        return Classes.present(name, plugin.getClass(), logger);
+    public ClassLookup classLookupIn(Plugin plugin, String name) {
+        return ClassLookup.of(name, plugin.getClass().getClassLoader());
     }
 
     @Override

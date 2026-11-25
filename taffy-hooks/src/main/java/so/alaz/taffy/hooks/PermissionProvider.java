@@ -57,7 +57,7 @@ public interface PermissionProvider {
         Objects.requireNonNull(errors, "errors");
         Logger logger = owner.getLogger();
         return Detection.run("LuckPerms", "net.luckperms.api.LuckPerms", switchedOn,
-            new PluginPresence(owner.getServer().getPluginManager(), logger),
+            new PluginPresence(owner.getServer().getPluginManager()),
             plugin -> LuckPermsPermissions.create(plugin, logger, errors), logger, errors);
     }
 

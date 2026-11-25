@@ -2,7 +2,6 @@ package so.alaz.taffy.comficonf;
 
 import org.bukkit.plugin.Plugin;
 import org.jetbrains.annotations.Nullable;
-import so.alaz.taffy.platform.Classes;
 import so.alaz.taffy.platform.ErrorReports;
 
 import java.nio.file.Path;
@@ -74,7 +73,9 @@ public final class ComfiConfConnection {
      * <p>The checks run in the order of {@link ComfiConfState}: the switch, then the bridge plugin installed,
      * enabled and its API visible to this plugin, and only then {@code registration}. Nothing is logged when the
      * connection is switched off or the bridge is not installed or not enabled. A bridge this plugin cannot see, its
-     * own copy of the API included, or one that lacks an API class, logs one warning and reports nothing. A
+     * own copy of the API included, or one that lacks an API class, logs one warning and reports nothing. A lookup
+     * of the API class that throws, as it does while another plugin on the server is broken, gives
+     * {@link ComfiConfState#FAILED}, logs one warning with the stack and is reported under {@code hook.comficonf}. A
      * registration that throws or returns {@code null} logs one warning with the stack and is reported under
      * {@code hook.comficonf}. A {@link LinkageError} means the bridge lacks an API class when its message names a
      * {@code com.comficonf} class or it has no message; any other, such as a class of the plugin that failed to
@@ -122,8 +123,14 @@ public final class ComfiConfConnection {
             return off(ComfiConfState.NOT_ENABLED, logger);
         }
         String version = bridge.getPluginMeta().getVersion();
-        if (!Classes.present(PROBE, ComfiConfConnection.class, logger)) {
-            if (Classes.present(PROBE, bridge.getClass(), logger)) {
+        Lookup own = Lookup.of(ComfiConfConnection.class.getClassLoader());
+        if (!own.present()) {
+            Lookup theirs = own.failure() != null ? own : Lookup.of(bridge.getClass().getClassLoader());
+            Throwable failure = theirs.failure();
+            if (failure != null) {
+                return lookupFailed(bridge, version, failure, logger, errors);
+            }
+            if (theirs.present()) {
                 logger.warning(PLUGIN_NAME + " " + version + " is not visible to this plugin, so this plugin's"
                     + " settings are edited in their files only: this plugin's paper-plugin.yml does not list "
                     + PLUGIN_NAME + " under dependencies.server with join-classpath: true.");
@@ -336,6 +343,18 @@ public final class ComfiConfConnection {
             message), logger);
     }
 
+    private static ComfiConfConnection lookupFailed(Plugin bridge, String version, Throwable failure, Logger logger,
+                                                    ErrorReports errors) {
+        String reason = "A class lookup failed because another plugin on this server is broken (" + failure + "). Fix"
+            + " or remove that plugin, then restart the server. These settings are edited in their files only until"
+            + " then.";
+        logger.log(Level.WARNING, PLUGIN_NAME + " " + version + " could not be connected, so this plugin's settings"
+            + " are edited in their files only. " + reason, failure);
+        errors.report(SOURCE, failure);
+        return new ComfiConfConnection(bridge, null, null, new ComfiConfStatus(ComfiConfState.FAILED, version, reason),
+            logger);
+    }
+
     private static ComfiConfConnection failed(Plugin bridge, String version, Throwable failure, Logger logger,
                                               ErrorReports errors) {
         logger.log(Level.WARNING, PLUGIN_NAME + " " + version + " could not register this plugin's settings ("
@@ -344,5 +363,20 @@ public final class ComfiConfConnection {
         return new ComfiConfConnection(bridge, null, null, new ComfiConfStatus(ComfiConfState.FAILED, version,
             "Registering with ComfiConf failed, so these settings are edited in their files only. The server log"
             + " holds the error."), logger);
+    }
+
+    // A lookup of the API class that threw is neither present nor absent: failure holds what it threw.
+    private record Lookup(boolean present, @Nullable Throwable failure) {
+
+        static Lookup of(@Nullable ClassLoader loader) {
+            try {
+                Class.forName(PROBE, false, loader);
+                return new Lookup(true, null);
+            } catch (ClassNotFoundException absent) {
+                return new Lookup(false, null);
+            } catch (LinkageError | RuntimeException failure) {
+                return new Lookup(false, failure);
+            }
+        }
     }
 }

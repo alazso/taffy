@@ -14,7 +14,7 @@ import java.util.stream.Collectors;
 
 // The factory is the only place an adapter class is named, and it runs only after every presence check passed, so
 // an adapter class never loads without its plugin and API. NOT_VISIBLE and API_MISSING log one warning and report
-// nothing; FAILED logs one warning and reports under hook.<plugin in lower case>.
+// nothing; FAILED, a class lookup that threw included, logs one warning and reports under hook.<plugin in lower case>.
 final class Detection {
 
     // A class of another plugin that the integration is read through.
@@ -35,12 +35,17 @@ final class Detection {
         if (!switchedOn) {
             return off(plugin, HookState.SWITCHED_OFF, null);
         }
-        HookStatus stopped = check(plugin, probe, presence, logger);
+        HookStatus stopped = check(plugin, probe, presence, logger, errors);
         if (stopped != null) {
             return new Detected<>(stopped, null);
         }
         String version = presence.version(plugin);
-        if (through != null && !presence.classPresent(through.probe())) {
+        ClassLookup throughLookup = through == null ? ClassLookup.PRESENT : presence.classLookup(through.probe());
+        Throwable throughFailure = throughLookup.failure();
+        if (throughFailure != null) {
+            return new Detected<>(lookupFailed(plugin, version, throughFailure, logger, errors), null);
+        }
+        if (through != null && !throughLookup.present()) {
             logger.warning(plugin + " " + version + " stays off, because " + through.plugin() + ", which it is read"
                 + " through, is not visible to this plugin: this plugin's paper-plugin.yml does not list "
                 + through.plugin() + " under dependencies.server.");
@@ -63,23 +68,51 @@ final class Detection {
     }
 
     // The status of the first presence check that fails, or null when the plugin is installed, enabled and its probe
-    // class is visible. A probe that is not visible is warned about, naming whether the plugin's own loader has it.
-    static @Nullable HookStatus check(String plugin, String probe, Presence presence, Logger logger) {
+    // class is visible. A probe that is not visible is warned about, naming whether the plugin's own loader has it. A
+    // lookup of the probe that threw gives FAILED, logged and reported.
+    static @Nullable HookStatus check(String plugin, String probe, Presence presence, Logger logger,
+                                      ErrorReports errors) {
         if (!presence.installed(plugin)) {
             return new HookStatus(plugin, HookState.NOT_INSTALLED, null, null);
         }
         if (!presence.enabled(plugin)) {
             return new HookStatus(plugin, HookState.NOT_ENABLED, null, null);
         }
-        if (presence.classPresent(probe)) {
+        ClassLookup own = presence.classLookup(probe);
+        if (own.present()) {
             return null;
         }
         String version = presence.version(plugin);
+        Throwable ownFailure = own.failure();
+        if (ownFailure != null) {
+            return lookupFailed(plugin, version, ownFailure, logger, errors);
+        }
         Plugin installed = presence.plugin(plugin);
-        if (installed != null && presence.classPresentIn(installed, probe)) {
+        ClassLookup theirs = installed == null ? ClassLookup.ABSENT : presence.classLookupIn(installed, probe);
+        Throwable theirFailure = theirs.failure();
+        if (theirFailure != null) {
+            return lookupFailed(plugin, version, theirFailure, logger, errors);
+        }
+        if (theirs.present()) {
             return notVisible(plugin, version, notVisible(plugin), logger);
         }
         return apiMissing(plugin, version, null, logger);
+    }
+
+    // The owner's reason for a FAILED status of a class lookup that threw.
+    static String lookupFailed(Throwable failure) {
+        return "A class lookup failed because another plugin on this server is broken (" + failure + "). Fix or"
+            + " remove that plugin, then restart the server.";
+    }
+
+    // Logs the failed lookup with its stack and reports it under the integration's source.
+    static HookStatus lookupFailed(String plugin, String version, Throwable failure, Logger logger,
+                                   ErrorReports errors) {
+        String reason = lookupFailed(failure);
+        logger.log(Level.WARNING, plugin + " " + version + " could not be hooked, so it stays off. " + reason,
+            failure);
+        errors.report(source(plugin), failure);
+        return new HookStatus(plugin, HookState.FAILED, version, reason);
     }
 
     // The owner's reason for a NOT_VISIBLE status.

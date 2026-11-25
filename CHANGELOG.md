@@ -3,6 +3,33 @@
 All notable changes to Taffy are documented here. This project follows
 [Semantic Versioning](https://semver.org).
 
+## [Unreleased]
+
+### Fixed
+- `taffy-hooks`: an integration whose API class lookup throws is `HookState.FAILED`, with the reason
+  `A class lookup failed because another plugin on this server is broken (<exception>). Fix or remove that plugin,
+  then restart the server.`, one warning with the stack and a report under `hook.<plugin in lower case>`. Paper
+  closes the class loader of a plugin that failed to enable, and a later lookup that reaches it throws
+  `IllegalStateException: The plugin classloader for <plugin> has thrown a zip file error.` Seen on Paper 26.3
+  build 262, Paper 26.2 build 135 and Folia 26.3 build 28 with HologramLib 1.8.5 failing in `onEnable`:
+  DecentHolograms 2.10.2 read `NOT_VISIBLE`, and its warning and reason told the owner to add a
+  `dependencies.server` entry the plugin already had. Before, such a lookup logged
+  `Could not look up <class>, so it is treated as absent.` and the integration read `NOT_VISIBLE` or
+  `API_MISSING`. This holds for every detection, the class an integration is read through (WorldEdit for
+  WorldGuard, nightcore for ExcellentEconomy) and the Vault and VaultUnlocked economy lookups; the Vault economy
+  given the result before it still warns and reports once while the status stays the same. A class that is not
+  found reads as before. `EconomyProvider.coinsEngineCurrencies` still gives an empty list then, and its warning
+  now reads `The currencies of ExcellentEconomy could not be listed.` followed by the same reason.
+- `taffy-comficonf`: `ComfiConfConnection.connect` gives `ComfiConfState.FAILED` when the lookup of the ComfiConf
+  API class throws for the same reason, with the same reason followed by
+  `These settings are edited in their files only until then.`, one warning with the stack and a report under
+  `hook.comficonf`. Before, it read `NOT_VISIBLE`, whose reason asks for `join-classpath: true`, or `API_MISSING`,
+  whose reason asks for a ComfiConf update.
+- `taffy-platform`: `Scheduler` looks for Folia's server class through the class loader of the server's own class
+  first. That lookup reaches no plugin's class loader, so a broken plugin no longer makes `mode()` read `PAPER` on
+  Folia. Before, only the plugin's class loader was asked, and a lookup through it that threw read as Paper. On
+  Paper the answer and its warning are unchanged.
+
 ## [0.4.15] - 2026-11-24
 
 Built against paper-api 26.3.build.256-stable and tested with FastStats 0.33.0 and bStats 3.2.1.

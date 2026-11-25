@@ -218,7 +218,7 @@ public final class CustomItems {
         factories.put(CustomItemPlugin.MMOITEMS,
             plugin -> MMOItemsProvider.create(owner, loaded.apply(CustomItemPlugin.MMOITEMS)));
         return detect(owner, errors, switchedOn,
-            new PluginPresence(owner.getServer().getPluginManager(), owner.getLogger()), factories);
+            new PluginPresence(owner.getServer().getPluginManager()), factories);
     }
 
     static Runnable itemsLoaded(CustomItemPlugin plugin, Consumer<CustomItemPlugin> onItemsLoaded, ThrowLog throwLog,

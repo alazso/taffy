@@ -257,7 +257,7 @@ public final class PlaceholderExpansionBuilder {
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(errors, "errors");
         Logger logger = owner.getLogger();
-        return register(owner, errors, switchedOn, new PluginPresence(owner.getServer().getPluginManager(), logger),
+        return register(owner, errors, switchedOn, new PluginPresence(owner.getServer().getPluginManager()),
             logger);
     }
 
@@ -305,7 +305,7 @@ public final class PlaceholderExpansionBuilder {
         if (!switchedOn) {
             return new Detected<>(new HookStatus(backend, HookState.SWITCHED_OFF, null, null), null);
         }
-        HookStatus stopped = Detection.check(backend, probe, presence, logger);
+        HookStatus stopped = Detection.check(backend, probe, presence, logger, errors);
         if (stopped != null) {
             if (stopped.state() == HookState.NOT_ENABLED) {
                 logger.warning(backend + " is installed but not enabled, so the placeholders are not registered with"

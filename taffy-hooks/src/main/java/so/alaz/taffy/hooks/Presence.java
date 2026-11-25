@@ -9,11 +9,11 @@ interface Presence {
 
     boolean enabled(String plugin);
 
-    // Through the loader of the plugin that shades the module, without initializing the class.
-    boolean classPresent(String name);
+    // Through the loader of the plugin that shades the module, without initializing the class. Nothing is logged.
+    ClassLookup classLookup(String name);
 
-    // Through the loader of the given plugin, without initializing the class.
-    boolean classPresentIn(Plugin plugin, String name);
+    // Through the loader of the given plugin, without initializing the class. Nothing is logged.
+    ClassLookup classLookupIn(Plugin plugin, String name);
 
     String version(String plugin);
 

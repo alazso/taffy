@@ -46,7 +46,7 @@ public interface BedrockProvider {
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(errors, "errors");
         Logger logger = owner.getLogger();
-        return PluginBedrock.detect(switchedOn, new PluginPresence(owner.getServer().getPluginManager(), logger),
+        return PluginBedrock.detect(switchedOn, new PluginPresence(owner.getServer().getPluginManager()),
             plugin -> FloodgateBedrock.create(plugin, logger, errors),
             plugin -> GeyserBedrock.create(plugin, logger, errors), logger, errors);
     }

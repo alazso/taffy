@@ -65,7 +65,7 @@ public interface NpcProvider {
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(plugin, "plugin");
         return PluginNpcs.detect(owner, errors, switchedOn, plugin,
-            new PluginPresence(owner.getServer().getPluginManager(), owner.getLogger()),
+            new PluginPresence(owner.getServer().getPluginManager()),
             clicks -> switch (plugin) {
                 case CITIZENS -> CitizensNpcBackend.create(clicks);
                 case FANCYNPCS -> FancyNpcsBackend.create(clicks);

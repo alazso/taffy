@@ -171,6 +171,59 @@ final class DetectionTest {
         assertThat(reports).isEmpty();
     }
 
+    private static final String CLOSED = "The plugin classloader for HologramLib has thrown a zip file error.";
+
+    private static final String LOOKUP_FAILED = "A class lookup failed because another plugin on this server is"
+        + " broken (java.lang.IllegalStateException: " + CLOSED + "). Fix or remove that plugin, then restart the"
+        + " server.";
+
+    @Test
+    void aProbeLookupThatThrowsWhileThePluginsOwnLoaderHasTheClassFailsAndNamesTheBrokenPlugin() {
+        IllegalStateException closed = new IllegalStateException(CLOSED);
+        presence.failingClasses.put(PROBE, closed);
+        presence.invisibleClasses.add(PROBE);
+
+        Detected<String> detected = detect("DecentHolograms");
+
+        assertThat(detected.status()).isEqualTo(new HookStatus("DecentHolograms", HookState.FAILED, "1.0",
+            LOOKUP_FAILED));
+        assertThat(detected.status().line()).isEqualTo("DecentHolograms 1.0 could not be hooked. " + LOOKUP_FAILED);
+        assertThat(detected.provider()).isNull();
+        assertThat(built).isEmpty();
+        assertThat(log.lines()).containsExactly("WARNING DecentHolograms 1.0 could not be hooked, so it stays off. "
+            + LOOKUP_FAILED);
+        assertThat(log.records.getFirst().getThrown()).isSameAs(closed);
+        assertThat(reports).containsExactly(Map.entry("hook.decentholograms", closed));
+    }
+
+    @Test
+    void aProbeLookupThatThrowsInThePluginsOwnLoaderFails() {
+        IllegalStateException closed = new IllegalStateException(CLOSED);
+        presence.absentClasses.add(PROBE);
+        presence.failingInPlugin.put(PROBE, closed);
+
+        Detected<String> detected = detect("Nexo");
+
+        assertThat(detected.status()).isEqualTo(new HookStatus("Nexo", HookState.FAILED, "1.0", LOOKUP_FAILED));
+        assertThat(built).isEmpty();
+        assertThat(log.lines()).containsExactly("WARNING Nexo 1.0 could not be hooked, so it stays off. "
+            + LOOKUP_FAILED);
+        assertThat(reports).containsExactly(Map.entry("hook.nexo", closed));
+    }
+
+    @Test
+    void aProbeLookupThatFailsToLinkFailsWithTheError() {
+        NoClassDefFoundError broken = new NoClassDefFoundError("net/example/api/Base");
+        presence.failingClasses.put(PROBE, broken);
+
+        HookStatus status = Detection.check("Nexo", PROBE, presence, log.logger, errors);
+
+        assertThat(status).isEqualTo(new HookStatus("Nexo", HookState.FAILED, "1.0", "A class lookup failed"
+            + " because another plugin on this server is broken (java.lang.NoClassDefFoundError:"
+            + " net/example/api/Base). Fix or remove that plugin, then restart the server."));
+        assertThat(reports).containsExactly(Map.entry("hook.nexo", broken));
+    }
+
     private static final Detection.Through THROUGH =
         new Detection.Through("WorldEdit", "com.sk89q.worldedit.bukkit.BukkitAdapter");
 
@@ -208,6 +261,22 @@ final class DetectionTest {
             + " through, is not visible to this plugin: this plugin's paper-plugin.yml does not list WorldEdit under"
             + " dependencies.server.");
         assertThat(reports).isEmpty();
+    }
+
+    @Test
+    void aThroughClassLookupThatThrowsFailsAndNamesTheBrokenPlugin() {
+        IllegalStateException closed = new IllegalStateException(CLOSED);
+        presence.failingClasses.put(THROUGH.probe(), closed);
+
+        Detected<String> detected = detectThrough(true);
+
+        assertThat(detected.status()).isEqualTo(new HookStatus("WorldGuard", HookState.FAILED, "1.0",
+            LOOKUP_FAILED));
+        assertThat(detected.bound()).isNull();
+        assertThat(built).isEmpty();
+        assertThat(log.lines()).containsExactly("WARNING WorldGuard 1.0 could not be hooked, so it stays off. "
+            + LOOKUP_FAILED);
+        assertThat(reports).containsExactly(Map.entry("hook.worldguard", closed));
     }
 
     @Test
@@ -332,16 +401,16 @@ final class DetectionTest {
         presence.missing.add("Oraxen");
         presence.disabled.add("Nexo");
 
-        assertThat(Detection.check("Oraxen", PROBE, presence, log.logger).reason()).isNull();
-        assertThat(Detection.check("Nexo", PROBE, presence, log.logger).reason()).isNull();
+        assertThat(Detection.check("Oraxen", PROBE, presence, log.logger, errors).reason()).isNull();
+        assertThat(Detection.check("Nexo", PROBE, presence, log.logger, errors).reason()).isNull();
         presence.absentClasses.add(PROBE);
-        assertThat(Detection.check("Vault", PROBE, presence, log.logger).reason()).isNull();
+        assertThat(Detection.check("Vault", PROBE, presence, log.logger, errors).reason()).isNull();
         presence.absentClasses.clear();
         presence.invisibleClasses.add(PROBE);
-        assertThat(Detection.check("Vault", PROBE, presence, log.logger).reason())
+        assertThat(Detection.check("Vault", PROBE, presence, log.logger, errors).reason())
             .isEqualTo(Detection.notVisible("Vault"));
         presence.invisibleClasses.clear();
-        assertThat(Detection.check("Vault", PROBE, presence, log.logger)).isNull();
+        assertThat(Detection.check("Vault", PROBE, presence, log.logger, errors)).isNull();
     }
 
     @Test

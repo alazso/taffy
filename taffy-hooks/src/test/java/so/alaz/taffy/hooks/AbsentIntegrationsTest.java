@@ -282,7 +282,7 @@ final class AbsentIntegrationsTest {
         Class<?> detectedType = Class.forName(Detected.class.getName(), true, loader);
         Class<?> statusType = Class.forName(HookStatus.class.getName(), true, loader);
         MethodHandle construct = MethodHandles.privateLookupIn(pluginPresenceType, MethodHandles.lookup())
-            .findConstructor(pluginPresenceType, MethodType.methodType(void.class, PluginManager.class, Logger.class));
+            .findConstructor(pluginPresenceType, MethodType.methodType(void.class, PluginManager.class));
         MethodHandle run = MethodHandles.privateLookupIn(detectionType, MethodHandles.lookup()).findStatic(
             detectionType, "run", MethodType.methodType(detectedType, String.class, String.class, boolean.class,
                 presenceType, Function.class, Logger.class, ErrorReports.class));
@@ -293,7 +293,7 @@ final class AbsentIntegrationsTest {
         Function<Plugin, Object> factory = bound -> {
             throw new AssertionError("built without its API");
         };
-        Object presence = construct.invoke(plugins, log.logger);
+        Object presence = construct.invoke(plugins);
 
         Object detected = run.invoke("Vault", VAULT_ECONOMY, true, presence, factory, log.logger, errors);
 
@@ -640,6 +640,52 @@ final class AbsentIntegrationsTest {
         assertThat(status.invoke(fourth)).isEqualTo(status.invoke(third));
         assertThat(hiddenLog.lines()).containsExactly("WARNING Vault 1.7.3 is not visible to this plugin, so it stays"
             + " off: this plugin's paper-plugin.yml does not list Vault under dependencies.server.");
+    }
+
+    @Test
+    void theVaultLookupsOnTheHiddenCopyWithAVaultOnAClosedLoaderFailAndNameTheBrokenPlugin() throws Throwable {
+        IllegalStateException closed = new IllegalStateException(
+            "The plugin classloader for HologramLib has thrown a zip file error.");
+        String reason = "A class lookup failed because another plugin on this server is broken"
+            + " (java.lang.IllegalStateException: The plugin classloader for HologramLib has thrown a zip file"
+            + " error.). Fix or remove that plugin, then restart the server.";
+        ClassLoader loader = hidden();
+        Class<?> providerType = Class.forName(EconomyProvider.class.getName(), true, loader);
+        Class<?> optionsType = Class.forName(VaultOptions.class.getName(), true, loader);
+        Class<?> detectedType = Class.forName(Detected.class.getName(), true, loader);
+        Class<?> statusType = Class.forName(HookStatus.class.getName(), true, loader);
+        MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+        MethodHandle of = lookup.findStatic(optionsType, "of",
+            MethodType.methodType(optionsType, Plugin.class, ErrorReports.class, boolean.class));
+        MethodHandle vault = lookup.findStatic(providerType, "vault",
+            MethodType.methodType(detectedType, optionsType, detectedType));
+        MethodHandle status = lookup.findVirtual(detectedType, "status", MethodType.methodType(statusType));
+        List<Throwable> reported = new ArrayList<>();
+        ErrorReports errors = new ErrorReports();
+        errors.install((source, error) -> reported.add(error));
+        CapturedLog log = new CapturedLog();
+        Plugin owner = owner(installed(pluginOn(ClosedLoader.of(closed), "1.7.3"), "Vault"), log);
+
+        Object options = of.invoke(owner, errors, false);
+        Object first = vault.invoke(options, null);
+        Object second = vault.invoke(options, first);
+
+        assertThat(stateOf(loader, status.invoke(first))).isEqualTo(HookState.FAILED.name());
+        assertThat(read(loader, status.invoke(first), "line", String.class))
+            .isEqualTo("Vault 1.7.3 could not be hooked. " + reason);
+        assertThat(status.invoke(second)).isEqualTo(status.invoke(first));
+        assertThat(log.lines()).containsExactly("WARNING Vault 1.7.3 could not be hooked, so it stays off. " + reason);
+        assertThat(reported).containsExactly(closed);
+
+        Object unlocked = unlockedLookup(loader, owner, errors, true);
+
+        assertThat(stateOf(loader, unlocked)).isEqualTo(HookState.FAILED.name());
+        assertThat(read(loader, unlocked, "line", String.class))
+            .isEqualTo("VaultUnlocked 1.7.3 could not be hooked. " + reason);
+        assertThat(log.lines()).hasSize(2).last()
+            .isEqualTo("WARNING VaultUnlocked 1.7.3 could not be hooked, so it stays off. " + reason);
+        assertThat(reported).containsExactly(closed, closed);
+        verify(owner.getServer(), never()).getServicesManager();
     }
 
     @Test

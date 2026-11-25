@@ -64,13 +64,13 @@ final class ApiLinkTest {
         }
 
         @Override
-        public boolean classPresent(String name) {
-            return true;
+        public ClassLookup classLookup(String name) {
+            return ClassLookup.PRESENT;
         }
 
         @Override
-        public boolean classPresentIn(Plugin plugin, String name) {
-            return true;
+        public ClassLookup classLookupIn(Plugin plugin, String name) {
+            return ClassLookup.PRESENT;
         }
 
         @Override

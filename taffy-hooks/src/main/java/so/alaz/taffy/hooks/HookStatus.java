@@ -16,8 +16,9 @@ import java.util.Objects;
  *     {@link HookState#NOT_ENABLED}, and a version, possibly {@code unknown}, with every other state,
  *     {@link HookState#NOT_REGISTERED} included
  * @param reason one or more full sentences for the server owner on what is missing or what went wrong, and what to
- *     do when there is something to do, each ending with a full stop, or {@code null} when {@link #describe()} says enough. It is given for every
- *     {@link HookState#NOT_VISIBLE} status, for the Vault economy's {@link HookState#NOT_INSTALLED},
+ *     do when there is something to do, each ending with a full stop, or {@code null} when {@link #describe()}
+ *     says enough. It is given for every {@link HookState#NOT_VISIBLE} status, for every
+ *     {@link HookState#FAILED} of a class lookup that threw, for the Vault economy's {@link HookState#NOT_INSTALLED},
  *     {@link HookState#NOT_REGISTERED}, {@link HookState#API_MISSING} and {@link HookState#FAILED}, for the same
  *     four states of {@link EconomyProvider#vaultUnlocked}, for the {@link HookState#NOT_REGISTERED} of
  *     {@link EconomyProvider#coinsEngine} and its {@link HookState#NOT_INSTALLED} while a plugin named

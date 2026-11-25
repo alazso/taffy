@@ -4,13 +4,11 @@ import io.papermc.paper.plugin.configuration.PluginMeta;
 import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.PluginManager;
 import org.junit.jupiter.api.Test;
-import so.alaz.taffy.test.CapturedLog;
 import so.alaz.taffy.test.SimulatedClasspath;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
-import java.util.logging.Logger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -18,9 +16,8 @@ import static org.mockito.Mockito.when;
 
 final class PluginPresenceTest {
 
-    private final CapturedLog log = new CapturedLog();
     private final PluginManager plugins = mock(PluginManager.class);
-    private final PluginPresence presence = new PluginPresence(plugins, log.logger);
+    private final PluginPresence presence = new PluginPresence(plugins);
 
     private Plugin installed(String name, String version, boolean enabled) {
         Plugin plugin = mock(Plugin.class);
@@ -57,25 +54,26 @@ final class PluginPresenceTest {
 
     @Test
     void aClassOnTheClasspathIsPresentAndAnUnknownOneIsNot() {
-        assertThat(presence.classPresent("java.lang.String")).isTrue();
-        assertThat(presence.classPresent("org.junit.jupiter.api.Test")).isTrue();
-        assertThat(presence.classPresent("so.alaz.taffy.hooks.NoSuchApi")).isFalse();
-        assertThat(log.lines()).isEmpty();
+        assertThat(presence.classLookup("java.lang.String")).isEqualTo(ClassLookup.PRESENT);
+        assertThat(presence.classLookup("org.junit.jupiter.api.Test")).isEqualTo(ClassLookup.PRESENT);
+        assertThat(presence.classLookup("so.alaz.taffy.hooks.NoSuchApi")).isEqualTo(ClassLookup.ABSENT);
     }
 
     @Test
     void aClassIsLookedUpThroughTheLoaderThatDefinedThisClass() throws Exception {
         ClassLoader loader = SimulatedClasspath.hiding("so.alaz.taffy.hooks.", "org.junit.");
         Class<?> copy = Class.forName(PluginPresence.class.getName(), true, loader);
-        Constructor<?> constructor = copy.getDeclaredConstructor(PluginManager.class, Logger.class);
+        Constructor<?> constructor = copy.getDeclaredConstructor(PluginManager.class);
         constructor.setAccessible(true);
-        Object hidden = constructor.newInstance(plugins, log.logger);
-        Method classPresent = copy.getDeclaredMethod("classPresent", String.class);
-        classPresent.setAccessible(true);
+        Object hidden = constructor.newInstance(plugins);
+        Method classLookup = copy.getDeclaredMethod("classLookup", String.class);
+        classLookup.setAccessible(true);
+        Method present = classLookup.getReturnType().getDeclaredMethod("present");
+        present.setAccessible(true);
 
-        assertThat(classPresent.invoke(hidden, "org.junit.jupiter.api.Test")).isEqualTo(false);
-        assertThat(classPresent.invoke(hidden, "java.lang.String")).isEqualTo(true);
-        assertThat(presence.classPresent("org.junit.jupiter.api.Test")).isTrue();
+        assertThat(present.invoke(classLookup.invoke(hidden, "org.junit.jupiter.api.Test"))).isEqualTo(false);
+        assertThat(present.invoke(classLookup.invoke(hidden, "java.lang.String"))).isEqualTo(true);
+        assertThat(presence.classLookup("org.junit.jupiter.api.Test")).isEqualTo(ClassLookup.PRESENT);
     }
 
     @Test
@@ -90,10 +88,25 @@ final class PluginPresenceTest {
                 throw new UnsupportedOperationException(method.getName());
             });
 
-        assertThat(presence.classPresentIn(hidden, "org.junit.jupiter.api.Test")).isFalse();
-        assertThat(presence.classPresentIn(hidden, "java.lang.String")).isTrue();
-        assertThat(presence.classPresentIn(visible, "org.junit.jupiter.api.Test")).isTrue();
-        assertThat(presence.classPresentIn(visible, "so.alaz.taffy.hooks.NoSuchApi")).isFalse();
-        assertThat(log.lines()).isEmpty();
+        assertThat(presence.classLookupIn(hidden, "org.junit.jupiter.api.Test")).isEqualTo(ClassLookup.ABSENT);
+        assertThat(presence.classLookupIn(hidden, "java.lang.String")).isEqualTo(ClassLookup.PRESENT);
+        assertThat(presence.classLookupIn(visible, "org.junit.jupiter.api.Test")).isEqualTo(ClassLookup.PRESENT);
+        assertThat(presence.classLookupIn(visible, "so.alaz.taffy.hooks.NoSuchApi")).isEqualTo(ClassLookup.ABSENT);
+    }
+
+    @Test
+    void aLookupInAPluginWhoseLoaderThrowsGivesWhatItThrew() {
+        IllegalStateException closed = new IllegalStateException(
+            "The plugin classloader for HologramLib has thrown a zip file error.");
+        Plugin broken = (Plugin) Proxy.newProxyInstance(ClosedLoader.of(closed), new Class<?>[] {Plugin.class},
+            (proxy, method, args) -> {
+                throw new UnsupportedOperationException(method.getName());
+            });
+
+        ClassLookup lookup = presence.classLookupIn(broken, "eu.decentsoftware.holograms.api.DHAPI");
+
+        assertThat(lookup.present()).isFalse();
+        assertThat(lookup.failure()).isSameAs(closed);
+        assertThat(presence.classLookupIn(broken, "java.lang.String")).isEqualTo(ClassLookup.PRESENT);
     }
 }

@@ -480,7 +480,7 @@ final class PlayerPointsEconomyTest extends EconomyProviderContract {
         held = 7;
 
         Detected<EconomyProvider> found = Detection.run("PlayerPoints", PlayerPointsEconomy.API, true,
-            new PluginPresence(plugins, log.logger),
+            new PluginPresence(plugins),
             bound -> new PlayerPointsEconomy(server, bound, api, log.logger, true, true), log.logger,
             new ErrorReports());
 

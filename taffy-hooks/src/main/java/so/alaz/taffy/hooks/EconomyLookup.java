@@ -40,11 +40,21 @@ final class EconomyLookup {
         Plugin vault = server.getPluginManager().getPlugin(VAULT);
         String version = vault == null ? null : vault.getPluginMeta().getVersion();
         HookStatus before = previous == null ? null : previous.status();
-        if (!Classes.present(EconomyWatcher.ECONOMY, EconomyLookup.class, logger)) {
+        ClassLookup own = ClassLookup.of(EconomyWatcher.ECONOMY, EconomyLookup.class.getClassLoader());
+        if (!own.present()) {
             if (vault == null) {
                 return off(HookState.NOT_INSTALLED, null, MissingEconomy.line(folia, false));
             }
-            if (Classes.present(EconomyWatcher.ECONOMY, vault.getClass(), logger)) {
+            ClassLookup theirs = own.failure() != null ? own
+                : ClassLookup.of(EconomyWatcher.ECONOMY, vault.getClass().getClassLoader());
+            Throwable failure = theirs.failure();
+            if (failure != null) {
+                String shown = version == null ? "unknown" : version;
+                HookStatus failed = new HookStatus(VAULT, HookState.FAILED, shown, Detection.lookupFailed(failure));
+                return new Detected<>(failed.equals(before) ? failed
+                    : Detection.lookupFailed(VAULT, shown, failure, logger, errors), null);
+            }
+            if (theirs.present()) {
                 HookStatus hidden = new HookStatus(VAULT, HookState.NOT_VISIBLE, version,
                     MissingEconomy.notVisible(folia));
                 return new Detected<>(hidden.equals(before) ? hidden
@@ -102,11 +112,19 @@ final class EconomyLookup {
         Logger logger = owner.getLogger();
         Plugin vault = server.getPluginManager().getPlugin(VAULT);
         String version = vault == null ? null : vault.getPluginMeta().getVersion();
-        if (!Classes.present(EconomyWatcher.UNLOCKED_ECONOMY, EconomyLookup.class, logger)) {
+        ClassLookup own = ClassLookup.of(EconomyWatcher.UNLOCKED_ECONOMY, EconomyLookup.class.getClassLoader());
+        if (!own.present()) {
             if (vault == null) {
                 return unlocked(HookState.NOT_INSTALLED, null, MissingEconomy.unlocked(folia, false));
             }
-            if (Classes.present(EconomyWatcher.UNLOCKED_ECONOMY, vault.getClass(), logger)) {
+            ClassLookup theirs = own.failure() != null ? own
+                : ClassLookup.of(EconomyWatcher.UNLOCKED_ECONOMY, vault.getClass().getClassLoader());
+            Throwable failure = theirs.failure();
+            if (failure != null) {
+                String shown = version == null ? "unknown" : version;
+                return new Detected<>(Detection.lookupFailed(UNLOCKED, shown, failure, logger, errors), null);
+            }
+            if (theirs.present()) {
                 logger.warning(UNLOCKED + " " + version + " is not visible to this plugin, so it stays off: this"
                     + " plugin's paper-plugin.yml does not list Vault, the name of the VaultUnlocked plugin, under"
                     + " dependencies.server.");

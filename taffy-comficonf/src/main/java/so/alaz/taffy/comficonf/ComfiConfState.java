@@ -4,9 +4,10 @@ package so.alaz.taffy.comficonf;
  * What became of this plugin's ComfiConf connection.
  *
  * <p>At connect, the checks run in the order of {@link #SWITCHED_OFF}, {@link #NOT_INSTALLED}, {@link #NOT_ENABLED},
- * {@link #NOT_VISIBLE} and {@link #API_MISSING}, and connect stops at the first that fails with its state. When every
- * check passes, the registration either fails, giving {@link #FAILED} or, for an API class the bridge lacks,
- * {@link #API_MISSING}, or succeeds, giving {@link #ON}.
+ * {@link #NOT_VISIBLE} and {@link #API_MISSING}, and connect stops at the first that fails with its state. A lookup
+ * of the API class that throws, as it does while another plugin on the server is broken, stops it with
+ * {@link #FAILED} instead. When every check passes, the registration either fails, giving {@link #FAILED} or, for an
+ * API class the bridge lacks, {@link #API_MISSING}, or succeeds, giving {@link #ON}.
  *
  * <p>A status read after connect moves from {@link #ON} to {@link #NOT_ENABLED} while the bridge plugin is disabled,
  * to {@link #NOT_REGISTERED} while the bridge is enabled but no longer holds this plugin's resource, and to
@@ -45,7 +46,9 @@ public enum ComfiConfState {
     NOT_REGISTERED,
     /**
      * The API is visible, but registering this plugin's settings with the bridge failed, so they stay off it, or, in
-     * a status read after connect, the link failed when asked whether the bridge holds the resource.
+     * a status read after connect, the link failed when asked whether the bridge holds the resource. It is also the
+     * state when looking up the API class threw, as it does while another plugin on the server is broken: the reason
+     * then says so and quotes the exception.
      */
     FAILED,
     /** This plugin's settings are registered with the bridge and editable in ComfiConf. */

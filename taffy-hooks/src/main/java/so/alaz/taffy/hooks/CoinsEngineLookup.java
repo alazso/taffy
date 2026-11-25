@@ -45,7 +45,7 @@ final class CoinsEngineLookup {
         }
         Logger logger = owner.getLogger();
         Server server = owner.getServer();
-        return detect(new PluginPresence(server.getPluginManager(), logger), owner, currency, errors);
+        return detect(new PluginPresence(server.getPluginManager()), owner, currency, errors);
     }
 
     static Detected<EconomyProvider> detect(Presence presence, Plugin owner, String currency, ErrorReports errors) {
@@ -70,20 +70,31 @@ final class CoinsEngineLookup {
             detected.bound(), () -> presence.plugin(PLUGIN));
     }
 
-    // An empty list when ExcellentEconomy is not installed, not enabled or not visible, and when it throws, which is
-    // logged and reported.
+    // An empty list when ExcellentEconomy is not installed, not enabled or not visible, when a lookup of its classes
+    // throws, which is logged, and when it throws, which is logged and reported.
     static List<EconomyCurrency> currencies(Plugin owner, ErrorReports errors) {
         Objects.requireNonNull(owner, "owner");
         Objects.requireNonNull(errors, "errors");
         Logger logger = owner.getLogger();
         Server server = owner.getServer();
-        return currencies(new PluginPresence(server.getPluginManager(), logger), server, logger, errors);
+        return currencies(new PluginPresence(server.getPluginManager()), server, logger, errors);
     }
 
     static List<EconomyCurrency> currencies(Presence presence, Server server, Logger logger, ErrorReports errors) {
-        if (!presence.installed(PLUGIN) || !presence.enabled(PLUGIN) || !presence.classPresent(API)
-            || !presence.classPresent(NIGHTCORE_PROBE)) {
+        if (!presence.installed(PLUGIN) || !presence.enabled(PLUGIN)) {
             return List.of();
+        }
+        for (String probe : List.of(API, NIGHTCORE_PROBE)) {
+            ClassLookup lookup = presence.classLookup(probe);
+            Throwable failure = lookup.failure();
+            if (failure != null) {
+                logger.warning("The currencies of " + PLUGIN + " could not be listed. "
+                    + Detection.lookupFailed(failure));
+                return List.of();
+            }
+            if (!lookup.present()) {
+                return List.of();
+            }
         }
         try {
             return CoinsEngineEconomy.currencies(server);
